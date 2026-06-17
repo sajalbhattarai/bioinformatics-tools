@@ -24,6 +24,13 @@ class CacheSifError(Exception):
 CACHE_DIR = Path.home() / ".cache" / "bioinformatics-tools"
 
 
+def _resolve_cache_dir(local_sif_dir: str | Path | None = None) -> Path:
+    """Return the configured cache directory or the default cache location."""
+    if local_sif_dir:
+        return Path(local_sif_dir).expanduser()
+    return CACHE_DIR
+
+
 def verify_sha256(file_path: Path, expected_sha256: str) -> bool:
     """Verify file SHA256 checksum"""
     sha256 = hashlib.sha256()
@@ -73,15 +80,15 @@ def find_apptainer_command(apptainer_path: str | None = None) -> str | None:
     return None
 
 
-def init_cache():
+def init_cache(local_sif_dir: str | Path | None = None):
     '''standard or custom cache location'''
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    _resolve_cache_dir(local_sif_dir).mkdir(parents=True, exist_ok=True)
 
 
-def get_cached_file(filename: Path) -> Path | None:
+def get_cached_file(filename: Path, local_sif_dir: str | Path | None = None) -> Path | None:
     '''Search default cache directory for a file'''
     # TODO: Later, put the version in the cached name
-    cached_file = CACHE_DIR / filename
+    cached_file = _resolve_cache_dir(local_sif_dir) / filename
     if cached_file.exists():
         print('Found file in cache. Using that')
         return cached_file
@@ -96,7 +103,8 @@ def run_apptainer():
     pass
 
 
-def pull_container_from_ghcr(container_name: Path, tag: str, output_filename: str | None = None) -> Path:
+def pull_container_from_ghcr(container_name: Path, tag: str, output_filename: str | None = None,
+                             local_sif_dir: str | Path | None = None) -> Path:
     '''Pull container from GitHub Container Registry using apptainer
 
     Args:
@@ -122,12 +130,13 @@ def pull_container_from_ghcr(container_name: Path, tag: str, output_filename: st
     docker_url = f'docker://ghcr.io/wintermutant/{str_container_name}:{tag}'
 
     # Check if already cached
-    if cached := get_cached_file(Path(output_filename)):
+    cached = get_cached_file(Path(output_filename), local_sif_dir=local_sif_dir)
+    if cached:
         LOGGER.info('Found %s in cache', output_filename)
         _emit_container_metadata(str_container_name, tag, str(cached), "cached", docker_url)
         return cached
 
-    dest = CACHE_DIR / output_filename
+    dest = _resolve_cache_dir(local_sif_dir) / output_filename
 
     LOGGER.info('Pulling %s from GitHub Container Registry...', docker_url)
 
@@ -156,7 +165,7 @@ def get_sif_files(sif_paths: list[Path]):
     pass
 
 
-def cache_sif_files(sif_paths: list[tuple[str, str]]):
+def cache_sif_files(sif_paths: list[tuple[str, str]], local_sif_dir: str | Path | None = None):
     '''ensure all paths are in ~/.cache and accessible
 
     Raises:
@@ -164,33 +173,44 @@ def cache_sif_files(sif_paths: list[tuple[str, str]]):
     '''
     for sif_name, sif_version in sif_paths:
         try:
-            get_verified_sif_file(sif_name, sif_version)
+            get_verified_sif_file(sif_name, sif_version, local_sif_dir=local_sif_dir)
         except Exception as e:
             LOGGER.critical('Issue getting a cached file: %s:%s', sif_name, sif_version)
             raise CacheSifError(f'Failed to cache {sif_name}:{sif_version}') from e
 
 
-def get_verified_sif_file(sif_name: str, sif_version: str):
+def get_verified_sif_file(sif_name: str, sif_version: str,
+                          local_sif_dir: str | Path | None = None):
     '''search cache for sif file, if does not exist then download'''
     # sif_path = [(prodigal, 2.6.3), (program, version)]
     sif_path = Path(sif_name)
     LOGGER.info('SIF path: %s Version: %s', sif_path, sif_version)
     docker_url = f'docker://ghcr.io/wintermutant/{sif_path}:{sif_version}'  # TODO: Add a list of container repos
 
-    if cached := get_cached_file(sif_path):
-        _emit_container_metadata(sif_name, sif_version, str(cached), "cached", docker_url)
+    cached = get_cached_file(sif_path, local_sif_dir=local_sif_dir)
+    if cached:
+        source = "local" if local_sif_dir else "cached"
+        _emit_container_metadata(sif_name, sif_version, str(cached), source, docker_url)
         return cached
-    dest = CACHE_DIR / sif_path
+    dest = _resolve_cache_dir(local_sif_dir) / sif_path
     LOGGER.info('Destination: %s', dest)
     #TODO: un-hardcode this
-    verified_sif_file = pull_container_from_ghcr(sif_path, sif_version)
+    verified_sif_file = pull_container_from_ghcr(sif_path, sif_version, local_sif_dir=local_sif_dir)
     LOGGER.info('Verified sif: %s', verified_sif_file)
     return verified_sif_file
 
 
 def _emit_container_metadata(name: str, version: str, path: str, source: str, docker_url: str):
     """Log structured container metadata for the task runner to parse."""
-    metadata = {"name": name, "version": version, "path": path, "source": source, "docker_url": docker_url}
+    metadata = {
+        "name": name,
+        "version": version,
+        "path": path,
+        "resolved_path": path,
+        "source": source,
+        "registry_url": docker_url,
+        "docker_url": docker_url,
+    }
     LOGGER.info('__CONTAINER__:%s', json.dumps(metadata))
 
 

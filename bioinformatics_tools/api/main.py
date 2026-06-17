@@ -6,8 +6,14 @@ Usage:
     Production: dane-api (after installing with pip install .[api])
 """
 import logging
+from pathlib import Path
+
 from dotenv import load_dotenv
-load_dotenv()  # Must run before local imports that read env vars at import time
+
+# Load project-root .env first, then allow shell environment to override values.
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(dotenv_path=_PROJECT_ROOT / '.env', override=False)
+load_dotenv(override=False)  # Must run before local imports that read env vars at import time
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

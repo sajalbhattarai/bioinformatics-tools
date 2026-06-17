@@ -41,6 +41,13 @@ def get_input_stem(config):
     return Path(input_file).stem
 
 
+def config_path(value: str | Path | None) -> str:
+    """Expand user-home markers for config-supplied filesystem paths."""
+    if value is None:
+        return ''
+    return str(Path(value).expanduser())
+
+
 def get_workflow_prefix(config) -> str | Path:
     """
     Get output directory prefix with stem subdirectory and trailing slash.
@@ -108,3 +115,32 @@ def build_filepath(config_string: str, suffix: str, default: str = None, config=
 def db_token(tool, config=None):
     """Generate database token path: {tool}/{tool}_db.tkn"""
     return fixed_path(f'{tool}/{tool}_db.tkn', config=config)
+
+
+def sif_dir(config=None) -> str:
+    """Return the configured SIF directory, expanded to an absolute user path."""
+    if config is None:
+        raise ValueError("config parameter is required")
+
+    return config_path(rc('sif_path', '~/.cache/bioinformatics-tools', config=config))
+
+
+def sif_path(filename: str, config=None) -> str:
+    """Resolve a container filename relative to the configured SIF directory."""
+    if config is None:
+        raise ValueError("config parameter is required")
+
+    return str(Path(sif_dir(config=config)) / filename)
+
+
+def db_path(tool: str, config=None, default_root: str = '/depot/lindems/data/Databases') -> str:
+    """Resolve a tool database path from either db.<tool> or db_root/<tool>."""
+    if config is None:
+        raise ValueError("config parameter is required")
+
+    explicit = rc(f'db.{tool}', None, config=config)
+    if explicit:
+        return config_path(explicit)
+
+    db_root = rc('db_root', default_root, config=config)
+    return str(Path(config_path(db_root)) / tool)

@@ -212,7 +212,6 @@ class WorkflowBase(ProgramBase):
     def _run_pipeline(self, key_name: str, smk_config: dict, cache_map: dict = None, mode='dev', compute_config: dict = None):
         '''Shared pipeline execution: cache containers, restore outputs, run snakemake, store outputs.'''
         run_id = str(uuid.uuid4())
-        LOGGER.info('Finished installing bioinformatics-tools repository')
         LOGGER.info('Starting workflow "%s" run_id=%s', key_name, run_id)
 
         selected_wf = WORKFLOWS.get(key_name)
@@ -223,7 +222,7 @@ class WorkflowBase(ProgramBase):
         # Download / ensure .sif files are cached (skip if none needed, e.g. selftest)
         if selected_wf.sif_files:
             try:
-                cache_sif_files(selected_wf.sif_files)
+                cache_sif_files(selected_wf.sif_files, local_sif_dir=self.conf.get('sif_path'))
             except CacheSifError as e:
                 LOGGER.critical('Error with cache_sif_files: %s', e)
                 self.failed(f'Error with cache_sif_files: {e}')
@@ -435,3 +434,48 @@ class WorkflowBase(ProgramBase):
         }
 
         self._run_pipeline('margie', config_overrides, cache_map, mode=mode, compute_config=compute_config)
+
+    @command
+    def do_margie_sb(self, mode='slurm'):
+        '''run margie_sb workflow'''
+        input_file = self.conf.get('input')
+        if not input_file:
+            LOGGER.error('No input file specified. Use: dane_wf margie_sb input: <file>')
+            self.failed('No input file specified')
+            return 1
+
+        main_database = self.conf.get('main_database', None)
+        if not main_database:
+            LOGGER.error('main_database not set in config. Add main_database: <path> to your ~/.config/bioinformatics-tools/config.yaml')
+            self.failed('main_database configuration is required')
+            return 1
+
+        main_database = str(Path(main_database).expanduser())
+
+        compute_config = None
+        if mode != 'dev':
+            compute_config = self.conf.get('compute', {}).get('cluster_default', {})
+            slurm_account = compute_config.get('account', '').strip()
+            if not slurm_account:
+                LOGGER.error('compute.cluster_default.account not set in config. Add account: <your-slurm-account> to your ~/.config/bioinformatics-tools/config.yaml')
+                self.failed('SLURM account configuration is required for cluster execution')
+                return 1
+
+        stem = Path(input_file).stem
+        prefix = self._output_prefix()
+
+        config_overrides = {
+            'input_fasta': input_file,
+            'output_dir': prefix.rstrip('/'),
+            'main_database': main_database,
+        }
+
+        prefix_with_stem = f"{prefix}{stem}/"
+        out_ready = f"{prefix_with_stem}margie_sb/margie_sb_ready.txt"
+        out_token = f"{prefix_with_stem}margie_sb/margie_sb_db.tkn"
+
+        cache_map = {
+            'margie_sb': [out_ready, out_token],
+        }
+
+        self._run_pipeline('margie_sb', config_overrides, cache_map, mode=mode, compute_config=compute_config)

@@ -323,8 +323,7 @@ async def run_workflow(genome_data: GenomeSend, current_user: dict = Depends(get
     job_store.update(job_id, work_dir=output_dir)
 
     command = (
-        f"echo 'Installing bioinformatics-tools repository...' && "
-        f"UV_NO_PROGRESS=1 NO_COLOR=1 uvx --from ~/bioinformatics-tools/ --force-reinstall --quiet"
+        f"UV_NO_PROGRESS=1 NO_COLOR=1 uvx --from ~/bioinformatics-tools/ --quiet"
         f" dane_wf {genome_data.workflow} input: {genome_data.genome_path} output_dir: {output_dir}"
     )
     job_runner.submit_job(job_id, command, connection=conn)

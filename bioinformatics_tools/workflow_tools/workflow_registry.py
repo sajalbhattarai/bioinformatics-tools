@@ -232,6 +232,51 @@ WORKFLOWS: dict[str, WorkflowKey] = {
         ],
         docs_url=None
     ),
+    'margie_sb': WorkflowKey(
+        cmd_identifier='margie_sb',
+        snakemake_file='margie_sb.smk',
+        other=[''],
+        sif_files=[],
+        label='MARGIE (SB)',
+        description='Custom  MARGIE workflow by sajalbhattarai',
+        full_description='Initial outline for the custom MARGIE(SB) workflow. This entry validates registry and Snakemake wiring and will be expanded into the full end-to-end genome pipeline in subsequent commits.',
+        configurable_params=[
+            {
+                'param': 'margie_sb.threads',
+                'default': 1,
+                'description': 'Thread count for MARGIE(SB) scaffold rule',
+                'type': 'int'
+            },
+            {
+                'param': 'margie_sb.mem_mb',
+                'default': 1024,
+                'description': 'Memory limit in MB for MARGIE(SB) scaffold rule',
+                'type': 'int'
+            },
+            {
+                'param': 'margie_sb.runtime',
+                'default': 5,
+                'description': 'Runtime limit in minutes for MARGIE(SB) scaffold rule',
+                'type': 'int'
+            },
+            {
+                'param': 'db_root',
+                'default': '/depot/lindems/data/Databases',
+                'description': 'Root directory for per-tool databases (future MARGIE(SB) stages)',
+                'type': 'path'
+            },
+            {
+                'param': 'sif_path',
+                'default': '~/.cache/bioinformatics-tools',
+                'description': 'Directory containing Apptainer SIF files for future MARGIE(SB) stages',
+                'type': 'path'
+            }
+        ],
+        database_deps=[
+            'Input FASTA file'
+        ],
+        docs_url=None
+    ),
     'selftest': WorkflowKey(
         cmd_identifier='selftest',
         snakemake_file='selftest.smk',
