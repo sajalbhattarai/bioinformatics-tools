@@ -45,6 +45,99 @@ REQUIRED_SYSTEM_PARAMS = [
 ]
 
 
+MARGIE_SB_PHASED_TOOLS = [
+    {'key': 'quast', 'label': 'QUAST', 'phase': 1, 'sif': 'quast.sif', 'purpose': 'Assembly quality metrics'},
+    {'key': 'checkm', 'label': 'CheckM', 'phase': 1, 'sif': 'checkm.sif', 'purpose': 'Genome quality/completeness checks'},
+    {'key': 'gtdbtk', 'label': 'GTDB-Tk', 'phase': 2, 'sif': 'gtdbtk.sif', 'purpose': 'Taxonomic assignment'},
+    {'key': 'classifier', 'label': 'Classifier', 'phase': 2, 'sif': 'classifier.sif', 'purpose': 'Bacteria/archaea classification'},
+    {'key': 'rasttk', 'label': 'RASTtk', 'phase': 3, 'sif': 'rasttk.sif', 'purpose': 'Core annotation stage gate'},
+    {'key': 'cog', 'label': 'COG', 'phase': 4, 'sif': 'cog.sif', 'purpose': 'Functional category annotation'},
+    {'key': 'kegg', 'label': 'KEGG', 'phase': 4, 'sif': 'kegg.sif', 'purpose': 'Pathway annotation'},
+    {'key': 'eggnog', 'label': 'eggNOG', 'phase': 4, 'sif': 'eggnog.sif', 'purpose': 'Orthology annotation'},
+    {'key': 'uniprot', 'label': 'UniProt', 'phase': 4, 'sif': 'uniprot.sif', 'purpose': 'Protein annotation'},
+    {'key': 'pfam', 'label': 'Pfam', 'phase': 4, 'sif': 'pfam.sif', 'purpose': 'Protein family annotation'},
+    {'key': 'tigrfam', 'label': 'TIGRFAM', 'phase': 4, 'sif': 'tigrfam.sif', 'purpose': 'Protein family annotation'},
+    {'key': 'merops', 'label': 'MEROPS', 'phase': 4, 'sif': 'merops.sif', 'purpose': 'Protease annotation'},
+    {'key': 'tcdb', 'label': 'TCDB', 'phase': 4, 'sif': 'tcdb.sif', 'purpose': 'Transporter annotation'},
+    {'key': 'dbcan', 'label': 'dbCAN', 'phase': 4, 'sif': 'dbcan.sif', 'purpose': 'CAZyme annotation'},
+    {'key': 'pgap', 'label': 'PGAP', 'phase': 4, 'sif': 'pgap.sif', 'purpose': 'Genome annotation support'},
+    {'key': 'geneprop', 'label': 'GeneProp', 'phase': 4, 'sif': 'geneprop.sif', 'purpose': 'Gene property annotation (after TIGRFAM)'},
+    {'key': 'interpro', 'label': 'InterPro', 'phase': 4, 'sif': 'interpro.sif', 'purpose': 'Domain/signature annotation'},
+    {'key': 'operon', 'label': 'Operon', 'phase': 4, 'sif': 'operon.sif', 'purpose': 'Operon prediction'},
+    {'key': 'tmbed', 'label': 'TMbed', 'phase': 4, 'sif': 'tmbed.sif', 'purpose': 'Membrane topology support'},
+    {'key': 'envelope', 'label': 'Envelope', 'phase': 5, 'sif': 'envelope.sif', 'purpose': 'Gram envelope type inference'},
+    {'key': 'tmhmm', 'label': 'TMHMM', 'phase': 6, 'sif': 'tmhmm.sif', 'purpose': 'Transmembrane helix prediction'},
+    {'key': 'tatfinder', 'label': 'TatFinder', 'phase': 6, 'sif': 'tatfinder.sif', 'purpose': 'Tat signal detection'},
+    {'key': 'phobius', 'label': 'Phobius', 'phase': 6, 'sif': 'phobius.sif', 'purpose': 'Signal peptide and topology prediction'},
+    {'key': 'psortb', 'label': 'PSORTb', 'phase': 6, 'sif': 'psortb.sif', 'purpose': 'Subcellular localization'},
+    {'key': 'deepsig', 'label': 'DeepSig', 'phase': 6, 'sif': 'deepsig.sif', 'purpose': 'Signal peptide prediction'},
+    {'key': 'signalp4', 'label': 'SignalP4', 'phase': 6, 'sif': 'signalP4.sif', 'purpose': 'Signal peptide prediction'},
+    {'key': 'consolidation', 'label': 'Consolidation', 'phase': 7, 'sif': 'consolidation.sif', 'purpose': 'Consolidate upstream outputs'},
+    {'key': 'labeling', 'label': 'Labeling', 'phase': 8, 'sif': 'labeling.sif', 'purpose': 'Label assignment'},
+    {'key': 'fingerprint', 'label': 'Fingerprint', 'phase': 9, 'sif': 'fingerprint.sif', 'purpose': 'Feature fingerprinting'},
+    {'key': 'scoring_heuristic', 'label': 'Scoring Heuristic', 'phase': 10, 'sif': 'scoring-heuristic.sif', 'purpose': 'Heuristic scoring'},
+    {'key': 'fingerprint_database', 'label': 'Fingerprint Database', 'phase': 11, 'sif': 'fingerprint-database.sif', 'purpose': 'Fingerprint DB stage'},
+    {'key': 'ani', 'label': 'ANI', 'phase': 12, 'sif': 'ani.sif', 'purpose': 'Average nucleotide identity'},
+    {'key': 'aai', 'label': 'AAI', 'phase': 12, 'sif': 'aai.sif', 'purpose': 'Average amino acid identity'},
+    {'key': 'closest', 'label': 'Closest', 'phase': 12, 'sif': 'closest.sif', 'purpose': 'Closest genome matching'},
+    {'key': 'synteny', 'label': 'Synteny', 'phase': 12, 'sif': 'synteny.sif', 'purpose': 'Synteny calculation'},
+    {'key': 'llm', 'label': 'LLM', 'phase': 13, 'sif': 'llm.sif', 'purpose': 'LLM-based analysis'},
+]
+
+
+def _margie_sb_default_threads(tool_key: str) -> int:
+    if tool_key in {'kegg', 'eggnog'}:
+        return 16
+    return 8
+
+
+def _margie_sb_tool_params() -> list[dict]:
+    params: list[dict] = []
+    for tool in MARGIE_SB_PHASED_TOOLS:
+        key = tool['key']
+        label = tool['label']
+        phase = tool['phase']
+        params.extend([
+            {
+                'param': f'margie_sb.{key}.threads',
+                'default': _margie_sb_default_threads(key),
+                'description': f'Phase {phase}: thread count for {label}',
+                'type': 'int'
+            },
+            {
+                'param': f'margie_sb.{key}.partition',
+                'default': 'cpu',
+                'description': f'Phase {phase}: SLURM partition for {label}',
+                'type': 'string'
+            },
+            {
+                'param': f'margie_sb.{key}.mem_mb',
+                'default': 4000,
+                'description': f'Phase {phase}: memory limit (MB) for {label}',
+                'type': 'int'
+            },
+            {
+                'param': f'margie_sb.{key}.runtime',
+                'default': 120,
+                'description': f'Phase {phase}: runtime limit (minutes) for {label}',
+                'type': 'int'
+            },
+            {
+                'param': f'margie_sb.{key}.db',
+                'default': f'/depot/lindems/data/Databases/{key}',
+                'description': f'Phase {phase}: database path for {label}',
+                'type': 'path'
+            },
+            {
+                'param': f'margie_sb.{key}.sif',
+                'default': tool['sif'],
+                'description': f'Phase {phase}: SIF filename for {label} under sif_path',
+                'type': 'string'
+            },
+        ])
+    return params
+
+
 WORKFLOWS: dict[str, WorkflowKey] = {
     'example': WorkflowKey(
         cmd_identifier='example',
@@ -236,44 +329,145 @@ WORKFLOWS: dict[str, WorkflowKey] = {
         cmd_identifier='margie_sb',
         snakemake_file='margie_sb.smk',
         other=[''],
-        sif_files=[],
+        sif_files=[(tool['sif'], 'latest') for tool in MARGIE_SB_PHASED_TOOLS],
         label='MARGIE (SB)',
-        description='Custom  MARGIE workflow by sajalbhattarai',
-        full_description='Initial outline for the custom MARGIE(SB) workflow. This entry validates registry and Snakemake wiring and will be expanded into the full end-to-end genome pipeline in subsequent commits.',
+        description='Custom phased MARGIE workflow by sajalbhattarai',
+        full_description='Phased MARGIE(SB) workflow wiring with full container inventory and per-tool resource/path configuration. Phase1 and phase2 can continue with warnings if a tool fails, phase3+ enforce strict dependency gates before downstream phases proceed.',
+        tools=[
+            {
+                'name': tool['label'],
+                'purpose': f"Phase {tool['phase']}: {tool['purpose']}",
+                'version': 'latest',
+                'output': 'Phase report in margie_sb/phases plus stage-specific outputs in later functional commits'
+            }
+            for tool in MARGIE_SB_PHASED_TOOLS
+        ],
         configurable_params=[
             {
-                'param': 'margie_sb.threads',
-                'default': 1,
-                'description': 'Thread count for MARGIE(SB) scaffold rule',
+                'param': 'margie_sb.default_threads',
+                'default': 8,
+                'description': 'Default thread count for MARGIE(SB) tools unless overridden per tool',
                 'type': 'int'
             },
             {
-                'param': 'margie_sb.mem_mb',
-                'default': 1024,
-                'description': 'Memory limit in MB for MARGIE(SB) scaffold rule',
+                'param': 'margie_sb.default_mem_mb',
+                'default': 4000,
+                'description': 'Default memory limit in MB for MARGIE(SB) tools unless overridden per tool',
                 'type': 'int'
             },
             {
-                'param': 'margie_sb.runtime',
-                'default': 5,
-                'description': 'Runtime limit in minutes for MARGIE(SB) scaffold rule',
+                'param': 'margie_sb.default_runtime',
+                'default': 120,
+                'description': 'Default runtime limit in minutes for MARGIE(SB) tools unless overridden per tool',
                 'type': 'int'
             },
             {
                 'param': 'db_root',
                 'default': '/depot/lindems/data/Databases',
-                'description': 'Root directory for per-tool databases (future MARGIE(SB) stages)',
+                'description': 'Root directory for per-tool databases (all MARGIE(SB) stages)',
                 'type': 'path'
             },
             {
                 'param': 'sif_path',
                 'default': '~/.cache/bioinformatics-tools',
-                'description': 'Directory containing Apptainer SIF files for future MARGIE(SB) stages',
+                'description': 'Directory containing Apptainer SIF files for all MARGIE(SB) stages',
                 'type': 'path'
-            }
-        ],
+            },
+            {
+                'param': 'margie_sb.phase4.max_parallel_tools',
+                'default': 4,
+                'description': 'Max parallel phase4 annotation tools per genome',
+                'type': 'int'
+            },
+            {
+                'param': 'margie_sb.phase6.max_parallel_tools',
+                'default': 4,
+                'description': 'Max parallel phase6 localization tools per genome',
+                'type': 'int'
+            },
+            {
+                'param': 'margie_sb.phase1.partition',
+                'default': 'cpu',
+                'description': 'Default SLURM partition for phase1 tools',
+                'type': 'string'
+            },
+            {
+                'param': 'margie_sb.phase2.partition',
+                'default': 'cpu',
+                'description': 'Default SLURM partition for phase2 tools',
+                'type': 'string'
+            },
+            {
+                'param': 'margie_sb.phase3.partition',
+                'default': 'cpu',
+                'description': 'Default SLURM partition for phase3 tools',
+                'type': 'string'
+            },
+            {
+                'param': 'margie_sb.phase4.partition',
+                'default': 'cpu',
+                'description': 'Default SLURM partition for phase4 tools',
+                'type': 'string'
+            },
+            {
+                'param': 'margie_sb.phase5.partition',
+                'default': 'cpu',
+                'description': 'Default SLURM partition for phase5 tools',
+                'type': 'string'
+            },
+            {
+                'param': 'margie_sb.phase6.partition',
+                'default': 'cpu',
+                'description': 'Default SLURM partition for phase6 tools',
+                'type': 'string'
+            },
+            {
+                'param': 'margie_sb.phase7.partition',
+                'default': 'cpu',
+                'description': 'Default SLURM partition for phase7 tools',
+                'type': 'string'
+            },
+            {
+                'param': 'margie_sb.phase8.partition',
+                'default': 'cpu',
+                'description': 'Default SLURM partition for phase8 tools',
+                'type': 'string'
+            },
+            {
+                'param': 'margie_sb.phase9.partition',
+                'default': 'cpu',
+                'description': 'Default SLURM partition for phase9 tools',
+                'type': 'string'
+            },
+            {
+                'param': 'margie_sb.phase10.partition',
+                'default': 'cpu',
+                'description': 'Default SLURM partition for phase10 tools',
+                'type': 'string'
+            },
+            {
+                'param': 'margie_sb.phase11.partition',
+                'default': 'cpu',
+                'description': 'Default SLURM partition for phase11 tools',
+                'type': 'string'
+            },
+            {
+                'param': 'margie_sb.phase12.partition',
+                'default': 'cpu',
+                'description': 'Default SLURM partition for phase12 tools',
+                'type': 'string'
+            },
+            {
+                'param': 'margie_sb.phase13.partition',
+                'default': 'cpu',
+                'description': 'Default SLURM partition for phase13 tools',
+                'type': 'string'
+            },
+        ] + _margie_sb_tool_params(),
         database_deps=[
-            'Input FASTA file'
+            'Input FASTA file',
+            'Configurable db_root with per-tool db overrides',
+            'Configurable sif_path with per-tool sif filename overrides'
         ],
         docs_url=None
     ),
