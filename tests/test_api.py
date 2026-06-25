@@ -159,6 +159,42 @@ class TestJobStore:
         assert slurm_jobs[0]["rule"] == "fastp"
         assert slurm_jobs[0]["status"] == "SUBMITTED"
 
+    def test_finalize_updates_in_memory_status_and_phase(self):
+        job_store.create("j5", "/g")
+        job_store.finalize("j5", status="completed", phase="Done")
+        job = job_store.get("j5")
+        assert job["status"] == "completed"
+        assert job["phase"] == "Done"
+
+    def test_finalize_on_missing_job_is_a_noop(self):
+        job_store.finalize("nonexistent-job", status="completed", phase="Done")  # must not raise
+
+    @patch("bioinformatics_tools.api.services.job_store.job_history_client")
+    def test_finalize_persists_full_snapshot(self, mock_history):
+        mock_conn = MagicMock()
+        job_store.create(
+            "j6", "/g", persist_db_path="~/my-db.db", persist_connection=mock_conn,
+        )
+        job_store.append_log("j6", "line one")
+        job_store.add_slurm_job("j6", slurm_id="111", rule="quast")
+        job_store.add_container("j6", {"name": "quast", "version": "5.0"})
+
+        job_store.finalize("j6", status="completed", phase="Done")
+
+        mock_history.record_job_updated.assert_called_once()
+        _, kwargs = mock_history.record_job_updated.call_args
+        assert kwargs["status"] == "completed"
+        assert kwargs["phase"] == "Done"
+        assert "line one" in kwargs["logs"]
+        assert kwargs["slurm_jobs"][0]["job_id"] == "111"
+        assert kwargs["containers"][0]["name"] == "quast"
+
+    @patch("bioinformatics_tools.api.services.job_store.job_history_client")
+    def test_finalize_without_persistence_configured_skips_history_call(self, mock_history):
+        job_store.create("j7", "/g")  # no persist_db_path/persist_connection
+        job_store.finalize("j7", status="failed", phase="Error")
+        mock_history.record_job_updated.assert_not_called()
+
 
 class TestJobStatusEndpoint:
     """HTTP-level tests for job_status (requires auth, enforces ownership)."""
@@ -185,6 +221,176 @@ class TestJobStatusEndpoint:
     def test_job_status_requires_auth(self, client):
         resp = client.get("/v1/ssh/job_status/any-job")
         assert resp.status_code == 401
+
+
+class TestJobStatusHistoryReconciliation:
+    """get_job_status's history-fallback branch (job not in job_store, e.g.
+    after a dane-api restart) -- for non-terminal statuses, checks squeue
+    to see whether the job is genuinely still active on the cluster."""
+
+    @staticmethod
+    def _history_row(status="running", work_dir="/scratch/x/2026-06-21-1118"):
+        return {
+            "job_id": "resumed-job", "status": status, "phase": "Running Snakemake",
+            "work_dir": work_dir, "workflow": "margie_sb",
+            "genome_path": "/g/e.fasta", "created_at": "2026-06-21T11:18:00Z",
+        }
+
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_slurm")
+    @patch("bioinformatics_tools.api.routers.ssh.job_history_client")
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_sftp")
+    @patch("bioinformatics_tools.api.routers.ssh._build_connection")
+    def test_still_active_true_when_squeue_matches(
+        self, mock_build_conn, mock_sftp, mock_history, mock_slurm, authed_client,
+    ):
+        mock_sftp.read_remote_yaml.return_value = {"main_database": "~/my-db.db"}
+        mock_history.get_job.return_value = self._history_row()
+        mock_slurm.find_active_jobs_in_workdir.return_value = [{"job_id": "39600517", "state": "RUNNING"}]
+
+        resp = authed_client.get("/v1/ssh/job_status/resumed-job")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "running"  # unchanged -- additive only
+        assert body["still_active"] is True
+        assert "39600517" in body["status_note"]
+
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_slurm")
+    @patch("bioinformatics_tools.api.routers.ssh.job_history_client")
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_sftp")
+    @patch("bioinformatics_tools.api.routers.ssh._build_connection")
+    def test_still_active_false_when_no_squeue_match(
+        self, mock_build_conn, mock_sftp, mock_history, mock_slurm, authed_client,
+    ):
+        mock_sftp.read_remote_yaml.return_value = {"main_database": "~/my-db.db"}
+        mock_history.get_job.return_value = self._history_row()
+        mock_slurm.find_active_jobs_in_workdir.return_value = []
+
+        resp = authed_client.get("/v1/ssh/job_status/resumed-job")
+        body = resp.json()
+        assert body["status"] == "running"  # status field itself untouched
+        assert body["still_active"] is False
+        assert "Running Snakemake" in body["status_note"]
+
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_slurm")
+    @patch("bioinformatics_tools.api.routers.ssh.job_history_client")
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_sftp")
+    @patch("bioinformatics_tools.api.routers.ssh._build_connection")
+    def test_terminal_status_skips_squeue_call_entirely(
+        self, mock_build_conn, mock_sftp, mock_history, mock_slurm, authed_client,
+    ):
+        mock_sftp.read_remote_yaml.return_value = {"main_database": "~/my-db.db"}
+        mock_history.get_job.return_value = self._history_row(status="completed")
+
+        resp = authed_client.get("/v1/ssh/job_status/resumed-job")
+        body = resp.json()
+        assert body["status"] == "completed"
+        assert "still_active" not in body
+        mock_slurm.find_active_jobs_in_workdir.assert_not_called()
+
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_slurm")
+    @patch("bioinformatics_tools.api.routers.ssh.job_history_client")
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_sftp")
+    @patch("bioinformatics_tools.api.routers.ssh._build_connection")
+    def test_squeue_failure_does_not_break_endpoint(
+        self, mock_build_conn, mock_sftp, mock_history, mock_slurm, authed_client,
+    ):
+        """A transient SSH/squeue failure during reconciliation must not
+        turn an otherwise-200 history-fallback response into a 500."""
+        mock_sftp.read_remote_yaml.return_value = {"main_database": "~/my-db.db"}
+        mock_history.get_job.return_value = self._history_row()
+        mock_slurm.find_active_jobs_in_workdir.side_effect = Exception("ssh timeout")
+
+        resp = authed_client.get("/v1/ssh/job_status/resumed-job")
+        assert resp.status_code == 200
+        assert resp.json()["still_active"] is False
+
+    def test_live_job_in_job_store_unaffected(self, authed_client):
+        """Confirms the in-memory branch (job_store hit) never reaches the
+        new SLURM-reconciliation code at all -- no still_active/status_note
+        key should appear on a normal in-memory job response."""
+        job_store.create("live-job-1", "/genomes/test.fasta", user_id=1)
+        job_store.update("live-job-1", status="running")
+        resp = authed_client.get("/v1/ssh/job_status/live-job-1")
+        body = resp.json()
+        assert body["status"] == "running"
+        assert "still_active" not in body
+        assert "status_note" not in body
+
+
+class TestFileEndpointsHistoryFallback:
+    """job_files/download_file/view_file must work for a job resumed from
+    history (not in job_store), not just live in-memory jobs -- previously
+    all three 404'd unconditionally for any job dane-api wasn't actively
+    tracking, even though job_status already resolved a valid work_dir for
+    the same job via history fallback."""
+
+    @staticmethod
+    def _history_row(work_dir="/scratch/x/2026-06-21-1118"):
+        return {
+            "job_id": "resumed-job", "status": "completed", "phase": "Done",
+            "work_dir": work_dir, "workflow": "margie_sb",
+            "genome_path": "/g/e.fasta", "created_at": "2026-06-21T11:18:00Z",
+        }
+
+    @patch("bioinformatics_tools.api.routers.ssh.job_history_client")
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_sftp")
+    @patch("bioinformatics_tools.api.routers.ssh._build_connection")
+    def test_job_files_resolves_via_history(self, mock_build_conn, mock_sftp, mock_history, authed_client):
+        mock_sftp.read_remote_yaml.return_value = {"main_database": "~/my-db.db"}
+        mock_history.get_job.return_value = self._history_row()
+        mock_sftp.list_remote_dir.return_value = [{"name": "results.tsv", "type": "file", "size": 123}]
+
+        resp = authed_client.get("/v1/ssh/job_files/resumed-job")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["work_dir"] == "/scratch/x/2026-06-21-1118"
+        assert body["entries"][0]["name"] == "results.tsv"
+
+    @patch("bioinformatics_tools.api.routers.ssh.job_history_client")
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_sftp")
+    @patch("bioinformatics_tools.api.routers.ssh._build_connection")
+    def test_download_file_resolves_via_history(self, mock_build_conn, mock_sftp, mock_history, authed_client):
+        mock_sftp.read_remote_yaml.return_value = {"main_database": "~/my-db.db"}
+        mock_history.get_job.return_value = self._history_row()
+        mock_sftp.stream_remote_file.return_value = iter([b"chunk"])
+
+        resp = authed_client.get("/v1/ssh/download_file/resumed-job", params={"path": "results.tsv"})
+        assert resp.status_code == 200
+
+    @patch("bioinformatics_tools.api.routers.ssh.job_history_client")
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_sftp")
+    @patch("bioinformatics_tools.api.routers.ssh._build_connection")
+    def test_view_file_resolves_via_history(self, mock_build_conn, mock_sftp, mock_history, authed_client):
+        mock_sftp.read_remote_yaml.return_value = {"main_database": "~/my-db.db"}
+        mock_history.get_job.return_value = self._history_row()
+        mock_sftp.stat_remote_file.return_value = (1700000000.0, 1234)
+        mock_sftp.read_remote_file_page.return_value = {
+            "total_lines": 2, "header": "a\tb", "lines": ["1\t2"],
+        }
+
+        resp = authed_client.get("/v1/ssh/view_file/resumed-job", params={"path": "results.tsv"})
+        assert resp.status_code == 200
+        assert resp.json()["columns"] == ["a", "b"]
+
+    @patch("bioinformatics_tools.api.routers.ssh.job_history_client")
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_sftp")
+    @patch("bioinformatics_tools.api.routers.ssh._build_connection")
+    def test_job_files_404_when_not_in_store_or_history(self, mock_build_conn, mock_sftp, mock_history, authed_client):
+        mock_sftp.read_remote_yaml.return_value = {"main_database": "~/my-db.db"}
+        mock_history.get_job.return_value = None
+
+        resp = authed_client.get("/v1/ssh/job_files/nonexistent-job")
+        assert resp.status_code == 404
+
+    def test_path_traversal_still_checked_before_any_lookup(self, authed_client):
+        """Reordering validation ahead of the job/connection resolution
+        (needed so history fallback can build a connection) must not weaken
+        the traversal guard -- it should still reject before touching SSH
+        at all, with no mocks needed since nothing real should be called."""
+        resp = authed_client.get(
+            "/v1/ssh/job_files/any-job", params={"subdir": "../../etc"},
+        )
+        assert resp.status_code == 400
 
 
 # ---------------------------------------------------------------------------
@@ -249,9 +455,169 @@ class TestSSHEndpointsMocked:
         assert resp.status_code == 401
 
 
+class TestJobsHistoryPagination:
+    """GET /v1/ssh/jobs -- paginated job history listing."""
+
+    @patch("bioinformatics_tools.api.routers.ssh.job_history_client")
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_sftp")
+    @patch("bioinformatics_tools.api.routers.ssh._build_connection")
+    def test_response_includes_pagination_fields(self, mock_build_conn, mock_sftp, mock_history, authed_client):
+        mock_sftp.read_remote_yaml.return_value = {"main_database": "~/my-db.db"}
+        mock_history.list_jobs.return_value = [
+            {"job_id": "j1", "status": "completed", "workflow": "margie_sb", "created_at": "t1"},
+        ]
+        mock_history.count_jobs.return_value = 45
+
+        resp = authed_client.get("/v1/ssh/jobs", params={"page": 2, "page_size": 20})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["page"] == 2
+        assert body["page_size"] == 20
+        assert body["total_jobs"] == 45
+        assert body["total_pages"] == 3  # ceil(45 / 20)
+        assert len(body["jobs"]) == 1
+
+    @patch("bioinformatics_tools.api.routers.ssh.job_history_client")
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_sftp")
+    @patch("bioinformatics_tools.api.routers.ssh._build_connection")
+    def test_offset_computed_from_page(self, mock_build_conn, mock_sftp, mock_history, authed_client):
+        mock_sftp.read_remote_yaml.return_value = {"main_database": "~/my-db.db"}
+        mock_history.list_jobs.return_value = []
+        mock_history.count_jobs.return_value = 0
+
+        authed_client.get("/v1/ssh/jobs", params={"page": 3, "page_size": 20})
+
+        _, kwargs = mock_history.list_jobs.call_args
+        assert kwargs["offset"] == 40  # (3 - 1) * 20
+        assert kwargs["limit"] == 20
+
+    def test_page_size_bounds(self, authed_client):
+        resp = authed_client.get("/v1/ssh/jobs", params={"page_size": 9999})
+        assert resp.status_code == 422
+
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_sftp")
+    @patch("bioinformatics_tools.api.routers.ssh._build_connection")
+    def test_empty_when_no_config(self, mock_build_conn, mock_sftp, authed_client):
+        mock_sftp.read_remote_yaml.side_effect = Exception("no config")
+        resp = authed_client.get("/v1/ssh/jobs")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["jobs"] == []
+        assert body["total_pages"] == 1
+
+
 # ---------------------------------------------------------------------------
 # Tier 4 — Path traversal security tests
 # ---------------------------------------------------------------------------
+
+class TestResumeAndRestartJob:
+    """/v1/ssh/resume_job and /v1/ssh/restart_job -- relaunch a prior job,
+    with or without copying its work_dir forward."""
+
+    def _create_job(self, status="failed", work_dir="/remote/work/2026-06-21-1118", selected_tools=None):
+        jid = str(uuid.uuid4())
+        job_store.create(
+            jid, "/genomes/test.fasta", user_id=1, workflow="margie_sb",
+            selected_tools=selected_tools,
+        )
+        job_store.update(jid, status=status, work_dir=work_dir)
+        return jid
+
+    @patch("bioinformatics_tools.api.routers.ssh._build_connection")
+    @patch("bioinformatics_tools.api.routers.ssh.job_runner")
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_sftp")
+    def test_resume_job_copies_and_relaunches(self, mock_sftp, mock_runner, mock_build_conn, authed_client):
+        jid = self._create_job(status="failed", selected_tools="quast,gtdbtk")
+        mock_sftp.read_remote_yaml.return_value = {"main_database": "~/my-db.db"}
+
+        resp = authed_client.post(f"/v1/ssh/resume_job/{jid}")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["job_id"] != jid
+
+        mock_sftp.copy_remote_directory.assert_called_once()
+        copy_args = mock_sftp.copy_remote_directory.call_args[0]
+        assert copy_args[0] == "/remote/work/2026-06-21-1118"
+
+        mock_runner.submit_job.assert_called_once()
+        command = mock_runner.submit_job.call_args[0][1]
+        assert "margie_sb.resume: true" in command
+        assert "margie_sb.selected_tools: quast,gtdbtk" in command
+
+        new_job = job_store.get(body["job_id"])
+        assert new_job["relaunched_from"] == jid
+        assert new_job["selected_tools"] == "quast,gtdbtk"
+
+    @patch("bioinformatics_tools.api.routers.ssh._build_connection")
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_sftp")
+    def test_resume_job_rejects_completed_status(self, mock_sftp, mock_build_conn, authed_client):
+        jid = self._create_job(status="completed")
+        resp = authed_client.post(f"/v1/ssh/resume_job/{jid}")
+        assert resp.status_code == 400
+        mock_sftp.copy_remote_directory.assert_not_called()
+
+    @patch("bioinformatics_tools.api.routers.ssh._build_connection")
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_slurm")
+    @patch("bioinformatics_tools.api.routers.ssh.job_runner")
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_sftp")
+    def test_resume_job_allows_stale_non_terminal_when_not_active(
+        self, mock_sftp, mock_runner, mock_slurm, mock_build_conn, authed_client,
+    ):
+        """A job stuck showing 'running' from before a dane-api restart
+        should still be resumable once confirmed not actually active."""
+        jid = self._create_job(status="running")
+        mock_sftp.read_remote_yaml.return_value = {"main_database": "~/my-db.db"}
+        mock_slurm.find_active_jobs_in_workdir.return_value = []
+
+        resp = authed_client.post(f"/v1/ssh/resume_job/{jid}")
+        assert resp.status_code == 200
+
+    @patch("bioinformatics_tools.api.routers.ssh._build_connection")
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_slurm")
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_sftp")
+    def test_resume_job_rejects_when_still_genuinely_active(
+        self, mock_sftp, mock_slurm, mock_build_conn, authed_client,
+    ):
+        jid = self._create_job(status="running")
+        mock_sftp.read_remote_yaml.return_value = {"main_database": "~/my-db.db"}
+        mock_slurm.find_active_jobs_in_workdir.return_value = [{"job_id": "1", "state": "RUNNING"}]
+
+        resp = authed_client.post(f"/v1/ssh/resume_job/{jid}")
+        assert resp.status_code == 400
+        mock_sftp.copy_remote_directory.assert_not_called()
+
+    @patch("bioinformatics_tools.api.routers.ssh._build_connection")
+    @patch("bioinformatics_tools.api.routers.ssh.job_runner")
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_sftp")
+    def test_restart_job_works_from_completed_status_with_no_copy(
+        self, mock_sftp, mock_runner, mock_build_conn, authed_client,
+    ):
+        jid = self._create_job(status="completed", selected_tools="quast")
+        mock_sftp.read_remote_yaml.return_value = {"main_database": "~/my-db.db"}
+
+        resp = authed_client.post(f"/v1/ssh/restart_job/{jid}")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["job_id"] != jid
+
+        mock_sftp.copy_remote_directory.assert_not_called()
+        command = mock_runner.submit_job.call_args[0][1]
+        assert "margie_sb.resume: true" not in command
+        assert "margie_sb.selected_tools: quast" in command
+
+        new_job = job_store.get(body["job_id"])
+        assert new_job["relaunched_from"] == jid
+
+    @patch("bioinformatics_tools.api.routers.ssh._build_connection")
+    @patch("bioinformatics_tools.api.routers.ssh.job_history_client")
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_sftp")
+    def test_resume_job_404_for_unknown_job(self, mock_sftp, mock_history, mock_build_conn, authed_client):
+        mock_sftp.read_remote_yaml.return_value = {"main_database": "~/my-db.db"}
+        mock_history.get_job.return_value = None
+        resp = authed_client.post("/v1/ssh/resume_job/nonexistent-job-id")
+        assert resp.status_code == 404
+
 
 class TestPathTraversalSecurity:
     """Ensure path-based endpoints reject directory traversal attempts."""
@@ -284,6 +650,98 @@ class TestPathTraversalSecurity:
         assert resp.status_code == 400
         assert "Invalid" in resp.json()["detail"]
         mock_sftp.stream_remote_file.assert_not_called()
+
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_sftp")
+    def test_view_file_path_traversal(self, mock_sftp, authed_client):
+        jid = self._create_job_with_workdir()
+        resp = authed_client.get(
+            f"/v1/ssh/view_file/{jid}",
+            params={"path": "../../etc/passwd"},
+        )
+        assert resp.status_code == 400
+        assert "Invalid" in resp.json()["detail"]
+        mock_sftp.read_remote_file_page.assert_not_called()
+        mock_sftp.stat_remote_file.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Tier 4b — Paginated file viewer (view_file)
+# ---------------------------------------------------------------------------
+
+class TestViewFile:
+    """/v1/ssh/view_file -- paginated read of a job's output file."""
+
+    def _create_job_with_workdir(self):
+        jid = str(uuid.uuid4())
+        job_store.create(jid, "/genomes/test.fasta", user_id=1)
+        job_store.update(jid, work_dir="/remote/work/dir")
+        return jid
+
+    @patch("bioinformatics_tools.api.routers.ssh._build_connection")
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_sftp")
+    def test_view_file_happy_path(self, mock_sftp, mock_build_conn, authed_client):
+        jid = self._create_job_with_workdir()
+        mock_sftp.stat_remote_file.return_value = (1700000000.0, 1234)
+        mock_sftp.read_remote_file_page.return_value = {
+            "total_lines": 5,  # header + 4 data rows
+            "header": "gene_id\tphase",
+            "lines": ["g1\t3", "g2\t4"],
+        }
+
+        resp = authed_client.get(
+            f"/v1/ssh/view_file/{jid}",
+            params={"path": "results.tsv", "page": 1, "page_size": 2},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["columns"] == ["gene_id", "phase"]
+        assert body["rows"] == [["g1", "3"], ["g2", "4"]]
+        assert body["total_rows"] == 4
+        assert body["total_pages"] == 2
+        assert body["page"] == 1
+        assert body["page_size"] == 2
+
+        # Cache was empty, so the first call must not claim a known total.
+        _, kwargs = mock_sftp.read_remote_file_page.call_args
+        assert kwargs["known_total_lines"] is None
+
+    @patch("bioinformatics_tools.api.routers.ssh._build_connection")
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_sftp")
+    def test_view_file_reuses_cached_total_lines(self, mock_sftp, mock_build_conn, authed_client):
+        """Second page request for the same unchanged file should skip the
+        wc -l pass entirely -- this is what keeps paging through a huge
+        file from re-paying a full scan on every click."""
+        jid = self._create_job_with_workdir()
+        mock_sftp.stat_remote_file.return_value = (1700000000.0, 1234)
+        mock_sftp.read_remote_file_page.return_value = {
+            "total_lines": 5,
+            "header": "gene_id\tphase",
+            "lines": ["g1\t3"],
+        }
+
+        resp1 = authed_client.get(
+            f"/v1/ssh/view_file/{jid}",
+            params={"path": "results.tsv", "page": 1, "page_size": 1},
+        )
+        assert resp1.status_code == 200
+        assert mock_sftp.read_remote_file_page.call_args.kwargs["known_total_lines"] is None
+
+        resp2 = authed_client.get(
+            f"/v1/ssh/view_file/{jid}",
+            params={"path": "results.tsv", "page": 2, "page_size": 1},
+        )
+        assert resp2.status_code == 200
+        assert mock_sftp.read_remote_file_page.call_args.kwargs["known_total_lines"] == 5
+
+    def test_view_file_page_size_bounds(self, authed_client):
+        # FastAPI's Query(..., le=500) must reject this before the handler
+        # body (and therefore any SSH call) ever runs -- this is what
+        # actually prevents a client from forcing a full-file sed range.
+        resp = authed_client.get(
+            "/v1/ssh/view_file/any-job-id",
+            params={"path": "results.tsv", "page_size": 99999},
+        )
+        assert resp.status_code == 422
 
 
 # ---------------------------------------------------------------------------

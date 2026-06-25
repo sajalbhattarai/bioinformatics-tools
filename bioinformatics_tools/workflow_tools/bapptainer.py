@@ -21,6 +21,11 @@ class CacheSifError(Exception):
     """Raised when there's an error caching SIF files"""
     pass
 
+
+class ApptainerRunError(Exception):
+    """Raised when a container run (via its baked-in runscript) exits non-zero"""
+    pass
+
 CACHE_DIR = Path.home() / ".cache" / "bioinformatics-tools"
 
 
@@ -200,6 +205,19 @@ def get_verified_sif_file(sif_name: str, sif_version: str,
     return verified_sif_file
 
 
+def locate_local_sif_files(sif_paths: list[tuple[str, str]], local_sif_dir: str | Path | None = None):
+    '''Resolve each SIF file against the local filesystem only — never contacts
+    the container registry. Emits container metadata for every file found so
+    the job's container table shows exactly where it was loaded from.'''
+    cache_dir = _resolve_cache_dir(local_sif_dir)
+    for sif_name, sif_version in sif_paths:
+        resolved = cache_dir / sif_name
+        if resolved.exists():
+            _emit_container_metadata(sif_name, sif_version, str(resolved), "local", "")
+        else:
+            LOGGER.warning('SIF file not found locally (no registry pull attempted): %s', resolved)
+
+
 def _emit_container_metadata(name: str, version: str, path: str, source: str, docker_url: str):
     """Log structured container metadata for the task runner to parse."""
     metadata = {
@@ -253,3 +271,60 @@ def run_apptainer_container(app_obj: ApptainerKey, container_args: list[str]) ->
     except Exception as e:
         LOGGER.error("Failed to run container: %s", e)
         return 1
+
+
+def run_apptainer_run(sif_path: str | Path, args: list[str], binds: list[tuple[str, str, str]],
+                       log_path: str | Path | None = None, env: dict[str, str] | None = None) -> None:
+    """Run a margie_sb container via its baked-in runscript (`apptainer run`, not
+    `exec`) — every margie_sb entrypoint.sh is installed as the container's
+    runscript and documents its own `apptainer run <sif> ...` usage.
+
+    Args:
+        sif_path: resolved, already-existing local .sif path.
+        args: CLI args passed straight to the container's entrypoint (e.g. ['-i', '/input', '-o', '/output']).
+        binds: list of (host_path, container_path, mode) tuples, mode is 'ro' or 'rw'.
+        log_path: if given, stdout+stderr are teed to this file instead of streamed only.
+        env: optional environment variables to set inside the container (e.g. a
+            few entrypoints, like gtdbtk's, branch on env vars rather than flags).
+
+    Raises:
+        ApptainerRunError: apptainer is missing, the sif is missing, a 'ro' bind
+            source does not exist, or the container exits non-zero.
+    """
+    apptainer_command = find_apptainer_command()
+    if apptainer_command is None:
+        raise ApptainerRunError('Apptainer not found. Please install Apptainer/Singularity.')
+
+    resolved_sif = Path(sif_path)
+    if not resolved_sif.exists():
+        raise ApptainerRunError(f'SIF file not found: {resolved_sif}')
+
+    bind_args = []
+    for host_path, container_path, mode in dict.fromkeys(binds):  # de-dupe, preserve order
+        host = Path(host_path)
+        if mode == 'ro' and not host.exists():
+            raise ApptainerRunError(f'Bind source does not exist: {host} (-> {container_path})')
+        host.mkdir(parents=True, exist_ok=True)
+        bind_args += ['-B', f'{host}:{container_path}:{mode}']
+
+    env_args = []
+    for key, value in (env or {}).items():
+        env_args += ['--env', f'{key}={value}']
+
+    cmd = [apptainer_command, 'run'] + bind_args + env_args + [str(resolved_sif)] + args
+    LOGGER.info('Running: %s', ' '.join(cmd))
+
+    if log_path:
+        resolved_log = Path(log_path)
+        resolved_log.parent.mkdir(parents=True, exist_ok=True)
+        with open(resolved_log, 'w') as log_file:
+            result = subprocess.run(cmd, stdout=log_file, stderr=subprocess.STDOUT, text=True)
+    else:
+        resolved_log = None
+        result = subprocess.run(cmd, text=True)
+
+    if result.returncode != 0:
+        detail = f' (see {resolved_log})' if resolved_log else ''
+        raise ApptainerRunError(
+            f'apptainer run failed for {resolved_sif.name} (exit {result.returncode}){detail}'
+        )

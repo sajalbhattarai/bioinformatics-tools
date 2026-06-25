@@ -23,6 +23,7 @@ dependencies = [
     "fastapi",
     "matplotlib",
     "numpy",
+    "openpyxl",
     "pandas",
     "paramiko",
     "pymongo",

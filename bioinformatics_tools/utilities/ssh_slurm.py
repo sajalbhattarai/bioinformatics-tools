@@ -8,6 +8,8 @@ All functions are API-layer only. Pass a per-user SSHConnection built
 with make_user_connection() for every call.
 '''
 import logging
+import re
+import shlex
 
 from bioinformatics_tools.utilities.ssh_connection import SSHConnection
 
@@ -201,6 +203,64 @@ def check_multiple_slurm_jobs(
 
     ssh.close()
     return results
+
+
+def get_job_genome(log_path: str, connection: SSHConnection) -> str:
+    """Read a SLURM job's own log file for its "wildcards: genome=<name>"
+    line. Fallback only: job_runner.run_ssh_task now reads this same line
+    directly from the live orchestrator stream (Snakemake's --verbose
+    output, see WILDCARDS_GENOME_RE), since this remote file gets cleaned
+    up shortly after the job finishes and isn't always still around by the
+    time _slurm_status_checker's polling loop gets to it. Returns "" if the
+    file doesn't exist (already cleaned up, or job hasn't started) or has
+    no genome wildcard (e.g. quast_batch/gtdbtk_batch, which process every
+    genome at once).
+    """
+    ssh = connection.connect()
+    stdin, stdout, stderr = ssh.exec_command(
+        f"grep -m1 'wildcards:' {shlex.quote(log_path)} 2>/dev/null"
+    )
+    line = stdout.read().decode().strip()
+    ssh.close()
+    match = re.search(r'\bgenome=([^\s,]+)', line)
+    return match.group(1) if match else ""
+
+
+def find_active_jobs_in_workdir(
+    work_dir: str,
+    username: str,
+    connection: SSHConnection,
+) -> list[dict]:
+    """List this user's SLURM jobs (RUNNING or PENDING) whose working
+    directory matches work_dir exactly (trailing-slash-normalized on both
+    sides).
+
+    Used to check whether a job that looks "running"/"pending" in
+    persisted history (because dane-api restarted and lost live track of
+    it) is actually still active on the cluster -- work_dir is set once
+    at job creation and never changes, and squeue's WorkDir column
+    reflects the directory a job's driver process was launched from.
+
+    Returns a list of {"job_id": ..., "state": ...} dicts -- usually 0 or
+    1 entries; empty means nothing currently active matches this work_dir.
+    """
+    ssh = connection.connect()
+    stdin, stdout, stderr = ssh.exec_command(
+        f'squeue -u {username} --format="%i|%T|%Z" --noheader'
+    )
+    output = stdout.read().decode().strip()
+    ssh.close()
+
+    target = work_dir.rstrip('/')
+    matches = []
+    for line in output.splitlines():
+        parts = line.split('|')
+        if len(parts) != 3:
+            continue
+        slurm_job_id, state, workdir = parts
+        if workdir.rstrip('/') == target:
+            matches.append({"job_id": slurm_job_id, "state": state})
+    return matches
 
 
 def cancel_slurm_jobs(

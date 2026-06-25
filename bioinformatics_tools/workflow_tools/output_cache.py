@@ -248,7 +248,8 @@ def restore_all(db_path: str, input_file: str,
         hit = restore(db_path, input_file, tool_name, output_paths)
         results[tool_name] = hit
         if hit:
-            LOGGER.info("Cache HIT for %s — skipping recomputation", tool_name)
+            LOGGER.info("Cache HIT for %s (genome=%s) — skipping recomputation",
+                        tool_name, Path(input_file).stem)
         else:
             LOGGER.info("Cache miss for %s — will compute", tool_name)
     return results

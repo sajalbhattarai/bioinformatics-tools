@@ -20,9 +20,45 @@ import csv
 import hashlib
 import sqlite3
 import sys
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+
+
+# Hardened connections, same as output_cache.py's _get_connection/
+# _retry_operation: bare sqlite3.connect() doesn't retry on lock contention,
+# and InterPro's 18-way concurrent load burst needs it.
+
+def _get_connection(db_path: str, timeout: float = 30.0) -> sqlite3.Connection:
+    conn = sqlite3.connect(db_path, timeout=timeout)
+    conn.execute(f"PRAGMA busy_timeout={int(timeout * 1000)}")
+    return conn
+
+
+def _retry_operation(func, max_retries: int = 5, initial_delay: float = 0.5):
+    """Retry func() on transient lock/IO errors with exponential backoff.
+
+    func is expected to open its own connection and close it on every call
+    (including retries) rather than reuse one across attempts, since a
+    connection that errored mid-transaction shouldn't be trusted afterward."""
+    delay = initial_delay
+    last_error: sqlite3.OperationalError | None = None
+    for attempt in range(max_retries):
+        try:
+            return func()
+        except sqlite3.OperationalError as e:
+            last_error = e
+            error_str = str(e).lower()
+            if any(err in error_str for err in ("disk i/o error", "database is locked", "unable to open")):
+                if attempt < max_retries - 1:
+                    print(f"[load_to_db] database busy (attempt {attempt + 1}/{max_retries}): {e}. "
+                          f"Retrying in {delay:.1f}s...", file=sys.stderr)
+                    time.sleep(delay)
+                    delay *= 2
+            else:
+                raise
+    raise last_error
 
 
 # ─────────────────────────── Provenance ─────────────────────────── #
@@ -56,16 +92,20 @@ def _already_loaded(db_path: str, input_hash: str, tool: str) -> bool:
     """Check if a file with this hash was already loaded for this tool."""
     if not Path(db_path).exists():
         return False
-    conn = sqlite3.connect(db_path)
-    try:
-        conn.execute(CREATE_RUN_LOG_SQL)
-        row = conn.execute(
-            "SELECT id FROM run_log WHERE input_hash = ? AND tool = ?",
-            (input_hash, tool),
-        ).fetchone()
-        return row is not None
-    finally:
-        conn.close()
+
+    def _check() -> bool:
+        conn = _get_connection(db_path)
+        try:
+            conn.execute(CREATE_RUN_LOG_SQL)
+            row = conn.execute(
+                "SELECT id FROM run_log WHERE input_hash = ? AND tool = ?",
+                (input_hash, tool),
+            ).fetchone()
+            return row is not None
+        finally:
+            conn.close()
+
+    return _retry_operation(_check)
 
 
 def _record_load(db_path: str, input_hash: str, tool: str,
@@ -76,19 +116,22 @@ def _record_load(db_path: str, input_hash: str, tool: str,
     workflow runs (output_cache.py). row_count holds the number of annotation
     rows inserted by this loader.
     """
-    conn = sqlite3.connect(db_path)
-    try:
-        conn.execute(CREATE_RUN_LOG_SQL)
-        conn.execute(
-            "INSERT OR IGNORE INTO run_log "
-            "(run_id, input_hash, tool, input_path, row_count, rules_completed, status, loaded_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (str(uuid.uuid4()), input_hash, tool, input_path, row_count, 0, 'success',
-             datetime.now(timezone.utc).isoformat()),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    def _insert() -> None:
+        conn = _get_connection(db_path)
+        try:
+            conn.execute(CREATE_RUN_LOG_SQL)
+            conn.execute(
+                "INSERT OR IGNORE INTO run_log "
+                "(run_id, input_hash, tool, input_path, row_count, rules_completed, status, loaded_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), input_hash, tool, input_path, row_count, 0, 'success',
+                 datetime.now(timezone.utc).isoformat()),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    _retry_operation(_insert)
 
 
 # ──────────────────────────── GFF loader ──────────────────────────── #
@@ -174,14 +217,16 @@ def load_gff_to_db(gff_path: str, db_path: str, source_tool: str) -> int:
                 safe_float(attrs.get("conf")),
             ))
 
-    conn = sqlite3.connect(db_path)
-    try:
-        conn.execute(CREATE_GFF_TABLE_SQL)
-        conn.executemany(INSERT_GFF_SQL, rows)
-        conn.commit()
-    finally:
-        conn.close()
+    def _insert() -> None:
+        conn = _get_connection(db_path)
+        try:
+            conn.execute(CREATE_GFF_TABLE_SQL)
+            conn.executemany(INSERT_GFF_SQL, rows)
+            conn.commit()
+        finally:
+            conn.close()
 
+    _retry_operation(_insert)
     return len(rows)
 
 
@@ -268,7 +313,9 @@ def load_csv_to_db(csv_path: str, db_path: str, table_name: str,
     placeholders = ", ".join("?" for _ in headers)
     insert_sql = f"INSERT INTO {table_name} ({', '.join(quoted_headers)}) VALUES ({placeholders});"
 
-    # Cast values to match inferred types
+    # Cast values to match inferred types. Falls back to a looser type (or
+    # the raw string) if a later row doesn't fit the sampled type -- e.g.
+    # quast's report.tsv mixes integer and float metric rows.
     def cast_row(row):
         result = []
         for val, typ in zip(row, col_types):
@@ -276,23 +323,34 @@ def load_csv_to_db(csv_path: str, db_path: str, table_name: str,
             if not val:
                 result.append(None)
             elif typ == "INTEGER":
-                result.append(int(val))
+                try:
+                    result.append(int(val))
+                except ValueError:
+                    try:
+                        result.append(float(val))
+                    except ValueError:
+                        result.append(val)
             elif typ == "REAL":
-                result.append(float(val))
+                try:
+                    result.append(float(val))
+                except ValueError:
+                    result.append(val)
             else:
                 result.append(val)
         return tuple(result)
 
     rows = [cast_row(r) for r in data_rows]
 
-    conn = sqlite3.connect(db_path)
-    try:
-        conn.execute(create_sql)
-        conn.executemany(insert_sql, rows)
-        conn.commit()
-    finally:
-        conn.close()
+    def _insert() -> None:
+        conn = _get_connection(db_path)
+        try:
+            conn.execute(create_sql)
+            conn.executemany(insert_sql, rows)
+            conn.commit()
+        finally:
+            conn.close()
 
+    _retry_operation(_insert)
     return len(rows)
 
 

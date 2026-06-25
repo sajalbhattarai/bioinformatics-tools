@@ -184,16 +184,20 @@ class App:
         """
         LOGGER.debug('Cognizing %s', comargs)
 
-        matched: Dispatch | None = None
-        # for gravity, tokens, action in self.dispatches:
-        for dispatch in self.dispatches:
-            if comargs[:dispatch.gravity] == dispatch.tokens:
-                LOGGER.debug('Matched: %s', comargs[:dispatch.gravity])
-                matched = dispatch
-                confargs = comargs[dispatch.gravity:]
-                matched.barewords = self.conf.sed(confargs)
-                break
-        
+        # Prefer the MOST SPECIFIC match (highest gravity/token count), not
+        # just the first one found in iteration order. dir() returns do_*
+        # methods alphabetically, so a shorter dispatch that's a token-prefix
+        # of a longer one (e.g. do_margie's ['margie'] vs do_margie_sb's
+        # ['margie', 'sb']) would otherwise always win first-match-wins,
+        # making the longer command permanently unreachable.
+        candidates = [d for d in self.dispatches if comargs[:d.gravity] == d.tokens]
+        matched: Dispatch | None = max(candidates, key=lambda d: d.gravity) if candidates else None
+
+        if matched:
+            LOGGER.debug('Matched: %s', comargs[:matched.gravity])
+            confargs = comargs[matched.gravity:]
+            matched.barewords = self.conf.sed(confargs)
+
         if not matched:
             LOGGER.debug('No match found when cognizing')
         return matched

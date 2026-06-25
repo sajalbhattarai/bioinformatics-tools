@@ -1,5 +1,5 @@
 """
-All MARGIE rules. No games.
+Custom MARGIE snakemake workflow built by SB.
 """
 import os
 import sys
@@ -9,6 +9,14 @@ sys.path.insert(0, os.path.dirname(workflow.snakefile))
 from workflow_helpers import rc, fixed_path, build_filepath, db_token
 
 WORKFLOW_DIR = os.path.dirname(workflow.snakefile)
+_repo_root = os.path.dirname(os.path.dirname(WORKFLOW_DIR))
+_default_python = os.path.join(_repo_root, ".venv", "bin", "python")
+LOADER_PYTHON = os.environ.get("MARGIE_PYTHON", _default_python)
+if not os.path.exists(LOADER_PYTHON):
+    raise ValueError(
+        f"Required Python interpreter not found: {LOADER_PYTHON}. "
+        "Use the repo-local .venv (uv sync) or set MARGIE_PYTHON to a valid path."
+    )
 
 # ─────────────────────── Path Definitions ─────────────────────── #
 # Single source of truth for all file paths. Change paths here, not in rules.
@@ -86,7 +94,7 @@ rule load_prodigal_to_db:
         script=LOAD_SCRIPT
     shell:
         """
-        python {params.script} gff {input.gff} {params.db} prodigal --token {output.tkn}
+        {LOADER_PYTHON} {params.script} gff {input.gff} {params.db} prodigal --token {output.tkn}
         """
 
 
@@ -121,7 +129,7 @@ rule load_pfam_to_db:
         script=LOAD_SCRIPT
     shell:
         """
-        python {params.script} csv {input.csv} {params.db} pfam --token {output.tkn}
+        {LOADER_PYTHON} {params.script} csv {input.csv} {params.db} pfam --token {output.tkn}
         """
 
 
@@ -164,8 +172,8 @@ rule load_cog_to_db:
         script=LOAD_SCRIPT
     shell:
         """
-        python {params.script} tsv {input.classify} {params.db} cog_classify --token {output.tkn} \
-        && python {params.script} tsv {input.counts} {params.db} cog_count
+        {LOADER_PYTHON} {params.script} tsv {input.classify} {params.db} cog_classify --token {output.tkn} \
+        && {LOADER_PYTHON} {params.script} tsv {input.counts} {params.db} cog_count
         """
 
 
@@ -201,7 +209,7 @@ rule load_kofam_to_db:
         script=LOAD_SCRIPT
     shell:
         """
-        python {params.script} tsv {input.results} {params.db} kofam_scan --token {output.tkn}
+        {LOADER_PYTHON} {params.script} tsv {input.results} {params.db} kofam_scan --token {output.tkn}
         """
 
 
@@ -238,7 +246,7 @@ rule load_uniop_to_db:
         script=LOAD_SCRIPT
     shell:
         """
-        python {params.script} tsv {input.operons} {params.db} uniop --token {output.tkn}
+        {LOADER_PYTHON} {params.script} tsv {input.operons} {params.db} uniop --token {output.tkn}
         """
 
 
@@ -277,7 +285,7 @@ rule load_dbcan_to_db:
         script=LOAD_SCRIPT
     shell:
         """
-        python {params.script} tsv {input.overview} {params.db} dbcan --token {output.tkn}
+        {LOADER_PYTHON} {params.script} tsv {input.overview} {params.db} dbcan --token {output.tkn}
         """
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -333,7 +341,7 @@ rule load_dbcan_to_db:
 #         script=LOAD_SCRIPT
 #     shell:
 #         """
-#         python {params.script} tsv {input} {params.db} MYTOOL --token {output.tkn}
+#         {LOADER_PYTHON} {params.script} tsv {input} {params.db} MYTOOL --token {output.tkn}
 #         """
 #
 # ─────────────────────────────────────────────────────────────────────────────

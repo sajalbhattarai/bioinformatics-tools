@@ -6,6 +6,7 @@ Each workflow is registered as a WorkflowKey with metadata for execution,
 frontend display, and configuration.
 """
 from bioinformatics_tools.workflow_tools.models import WorkflowKey
+from bioinformatics_tools.workflow_tools.workflow_helpers import WORKFLOW_PATH_DEFAULTS
 
 
 # System-wide required parameters for cluster execution
@@ -45,11 +46,55 @@ REQUIRED_SYSTEM_PARAMS = [
 ]
 
 
+def workflow_path_params(wf_id: str, include_sif: bool = True, include_db_root: bool = True,
+                         supports_batch_input: bool = True) -> list[dict]:
+    """Per-workflow root-path settings: sif_path, db_root, input_path, output_path.
+    Namespaced under the workflow's own config key (e.g. 'margie_sb.sif_path'),
+    same dot-notation as per-tool overrides like 'margie_sb.cog.threads'.
+
+    input_path/output_path always apply. sif_path/db_root are conditional --
+    only meaningful if the workflow resolves containers locally
+    (WorkflowKey.local_sif_only) or its .smk actually falls back to a
+    db_root (WorkflowKey.supports_db_root); margie.smk hardcodes each tool's
+    db path directly and has no such fallback.
+    """
+    defaults = WORKFLOW_PATH_DEFAULTS.get(wf_id, {})
+    params = []
+    if include_sif:
+        params.append({
+            'param': f'{wf_id}.sif_path',
+            'default': defaults.get('sif_path', '~/.cache/bioinformatics-tools'),
+            'description': f'Root folder containing all Apptainer .sif container files for {wf_id} (flat, e.g. sif_path/cog.sif)',
+            'type': 'path'
+        })
+    if include_db_root:
+        params.append({
+            'param': f'{wf_id}.db_root',
+            'default': defaults.get('db_root', '/depot/lindems/data/Databases'),
+            'description': f'Root folder containing per-tool database subfolders for {wf_id} (e.g. db_root/cog/) — not every tool needs one',
+            'type': 'path'
+        })
+    input_desc = (f'Default genome file or folder of genomes for {wf_id}, used when a run does not specify one explicitly'
+                  if supports_batch_input else
+                  f'Default single genome file for {wf_id}, used when a run does not specify one explicitly')
+    params.append({
+        'param': f'{wf_id}.input_path',
+        'default': defaults.get('input_path', ''),
+        'description': input_desc,
+        'type': 'path'
+    })
+    params.append({
+        'param': f'{wf_id}.output_path',
+        'default': defaults.get('output_path', ''),
+        'description': f'Default output root for {wf_id}, used when a run does not specify one explicitly',
+        'type': 'path'
+    })
+    return params
+
+
 MARGIE_SB_PHASED_TOOLS = [
     {'key': 'quast', 'label': 'QUAST', 'phase': 1, 'sif': 'quast.sif', 'purpose': 'Assembly quality metrics'},
-    {'key': 'checkm', 'label': 'CheckM', 'phase': 1, 'sif': 'checkm.sif', 'purpose': 'Genome quality/completeness checks'},
     {'key': 'gtdbtk', 'label': 'GTDB-Tk', 'phase': 2, 'sif': 'gtdbtk.sif', 'purpose': 'Taxonomic assignment'},
-    {'key': 'classifier', 'label': 'Classifier', 'phase': 2, 'sif': 'classifier.sif', 'purpose': 'Bacteria/archaea classification'},
     {'key': 'rasttk', 'label': 'RASTtk', 'phase': 3, 'sif': 'rasttk.sif', 'purpose': 'Core annotation stage gate'},
     {'key': 'cog', 'label': 'COG', 'phase': 4, 'sif': 'cog.sif', 'purpose': 'Functional category annotation'},
     {'key': 'kegg', 'label': 'KEGG', 'phase': 4, 'sif': 'kegg.sif', 'purpose': 'Pathway annotation'},
@@ -63,25 +108,25 @@ MARGIE_SB_PHASED_TOOLS = [
     {'key': 'pgap', 'label': 'PGAP', 'phase': 4, 'sif': 'pgap.sif', 'purpose': 'Genome annotation support'},
     {'key': 'geneprop', 'label': 'GeneProp', 'phase': 4, 'sif': 'geneprop.sif', 'purpose': 'Gene property annotation (after TIGRFAM)'},
     {'key': 'interpro', 'label': 'InterPro', 'phase': 4, 'sif': 'interpro.sif', 'purpose': 'Domain/signature annotation'},
-    {'key': 'operon', 'label': 'Operon', 'phase': 4, 'sif': 'operon.sif', 'purpose': 'Operon prediction'},
-    {'key': 'tmbed', 'label': 'TMbed', 'phase': 4, 'sif': 'tmbed.sif', 'purpose': 'Membrane topology support'},
-    {'key': 'envelope', 'label': 'Envelope', 'phase': 5, 'sif': 'envelope.sif', 'purpose': 'Gram envelope type inference'},
-    {'key': 'tmhmm', 'label': 'TMHMM', 'phase': 6, 'sif': 'tmhmm.sif', 'purpose': 'Transmembrane helix prediction'},
-    {'key': 'tatfinder', 'label': 'TatFinder', 'phase': 6, 'sif': 'tatfinder.sif', 'purpose': 'Tat signal detection'},
+    {'key': 'operon', 'label': 'Operon', 'phase': 5, 'sif': 'operon.sif', 'purpose': 'Operon prediction'},
     {'key': 'phobius', 'label': 'Phobius', 'phase': 6, 'sif': 'phobius.sif', 'purpose': 'Signal peptide and topology prediction'},
-    {'key': 'psortb', 'label': 'PSORTb', 'phase': 6, 'sif': 'psortb.sif', 'purpose': 'Subcellular localization'},
-    {'key': 'deepsig', 'label': 'DeepSig', 'phase': 6, 'sif': 'deepsig.sif', 'purpose': 'Signal peptide prediction'},
-    {'key': 'signalp4', 'label': 'SignalP4', 'phase': 6, 'sif': 'signalP4.sif', 'purpose': 'Signal peptide prediction'},
-    {'key': 'consolidation', 'label': 'Consolidation', 'phase': 7, 'sif': 'consolidation.sif', 'purpose': 'Consolidate upstream outputs'},
-    {'key': 'labeling', 'label': 'Labeling', 'phase': 8, 'sif': 'labeling.sif', 'purpose': 'Label assignment'},
-    {'key': 'fingerprint', 'label': 'Fingerprint', 'phase': 9, 'sif': 'fingerprint.sif', 'purpose': 'Feature fingerprinting'},
-    {'key': 'scoring_heuristic', 'label': 'Scoring Heuristic', 'phase': 10, 'sif': 'scoring-heuristic.sif', 'purpose': 'Heuristic scoring'},
-    {'key': 'fingerprint_database', 'label': 'Fingerprint Database', 'phase': 11, 'sif': 'fingerprint-database.sif', 'purpose': 'Fingerprint DB stage'},
-    {'key': 'ani', 'label': 'ANI', 'phase': 12, 'sif': 'ani.sif', 'purpose': 'Average nucleotide identity'},
-    {'key': 'aai', 'label': 'AAI', 'phase': 12, 'sif': 'aai.sif', 'purpose': 'Average amino acid identity'},
-    {'key': 'closest', 'label': 'Closest', 'phase': 12, 'sif': 'closest.sif', 'purpose': 'Closest genome matching'},
-    {'key': 'synteny', 'label': 'Synteny', 'phase': 12, 'sif': 'synteny.sif', 'purpose': 'Synteny calculation'},
-    {'key': 'llm', 'label': 'LLM', 'phase': 13, 'sif': 'llm.sif', 'purpose': 'LLM-based analysis'},
+    {'key': 'tmbed', 'label': 'TMbed', 'phase': 6, 'sif': 'tmbed.sif', 'purpose': 'Transmembrane topology prediction'},
+    {'key': 'signalp6', 'label': 'SignalP6', 'phase': 6, 'sif': 'signalp6.sif', 'purpose': 'Signal peptide prediction (HPC module, no envelope dependency)'},
+    {'key': 'envelope', 'label': 'Envelope', 'phase': 7, 'sif': 'envelope.sif', 'purpose': 'Gram envelope type inference'},
+    {'key': 'psortb', 'label': 'PSORTb', 'phase': 8, 'sif': 'psortb.sif', 'purpose': 'Subcellular localization'},
+    {'key': 'deepsig', 'label': 'DeepSig', 'phase': 8, 'sif': 'deepsig.sif', 'purpose': 'Signal peptide prediction'},
+    {'key': 'signalp4', 'label': 'SignalP4', 'phase': 8, 'sif': 'signalP4.sif', 'purpose': 'Signal peptide prediction (HPC module; kept until SignalP6 is confirmed)'},
+    {'key': 'consolidation', 'label': 'Consolidation', 'phase': 9, 'sif': 'consolidation.sif', 'purpose': 'Consolidate upstream outputs', 'uses_container': False},
+    {'key': 'labeling', 'label': 'Labeling', 'phase': 10, 'sif': 'labeling.sif', 'purpose': 'Label assignment', 'uses_container': False},
+    {'key': 'fingerprint', 'label': 'Fingerprint', 'phase': 11, 'sif': 'fingerprint.sif', 'purpose': 'Feature fingerprinting'},
+    {'key': 'scoring_heuristic', 'label': 'Scoring Heuristic', 'phase': 12, 'sif': 'scoring-heuristic.sif', 'purpose': 'Heuristic scoring', 'uses_container': False},
+    {'key': 'fingerprint_database', 'label': 'Fingerprint Database', 'phase': 13, 'sif': 'fingerprint-database.sif', 'purpose': 'Fingerprint DB stage'},
+    {'key': 'ani', 'label': 'ANI', 'phase': 14, 'sif': 'ani.sif', 'purpose': 'Average nucleotide identity'},
+    {'key': 'aai', 'label': 'AAI', 'phase': 14, 'sif': 'aai.sif', 'purpose': 'Average amino acid identity'},
+    {'key': 'closest', 'label': 'Closest', 'phase': 14, 'sif': 'closest.sif', 'purpose': 'Closest genome matching'},
+    {'key': 'mauve', 'label': 'Mauve', 'phase': 14, 'sif': 'mauve.sif', 'purpose': 'Whole-genome synteny/collinear blocks vs. closest organisms'},
+    {'key': 'synteny', 'label': 'Synteny', 'phase': 14, 'sif': 'synteny.sif', 'purpose': 'Synteny calculation'},
+    {'key': 'llm', 'label': 'LLM', 'phase': 15, 'sif': 'llm.sif', 'purpose': 'LLM-based analysis'},
 ]
 
 
@@ -89,6 +134,20 @@ def _margie_sb_default_threads(tool_key: str) -> int:
     if tool_key in {'kegg', 'eggnog'}:
         return 16
     return 8
+
+
+def margie_sb_sif_files(selected_tool_keys: set[str] | None = None) -> list[tuple]:
+    """SIF entries to validate for a margie_sb run -- always excludes tools
+    with uses_container=False (consolidation/labeling/scoring_heuristic run
+    as plain Python scripts, never need a .sif at all). When
+    selected_tool_keys is given, further restricts to just that subset, so
+    a partial-phase run never gets blocked on a container it doesn't need.
+    """
+    return [
+        (tool['sif'], 'latest') for tool in MARGIE_SB_PHASED_TOOLS
+        if tool.get('uses_container', True)
+        and (selected_tool_keys is None or tool['key'] in selected_tool_keys)
+    ]
 
 
 def _margie_sb_tool_params() -> list[dict]:
@@ -329,12 +388,17 @@ WORKFLOWS: dict[str, WorkflowKey] = {
         cmd_identifier='margie_sb',
         snakemake_file='margie_sb.smk',
         other=[''],
-        sif_files=[(tool['sif'], 'latest') for tool in MARGIE_SB_PHASED_TOOLS],
+        sif_files=margie_sb_sif_files(),
+        local_sif_only=True,
+        supports_batch_input=True,
+        supports_db_root=True,
         label='MARGIE (SB)',
         description='Custom phased MARGIE workflow by sajalbhattarai',
         full_description='Phased MARGIE(SB) workflow wiring with full container inventory and per-tool resource/path configuration. Phase1 and phase2 can continue with warnings if a tool fails, phase3+ enforce strict dependency gates before downstream phases proceed.',
         tools=[
             {
+                'key': tool['key'],
+                'phase': tool['phase'],
                 'name': tool['label'],
                 'purpose': f"Phase {tool['phase']}: {tool['purpose']}",
                 'version': 'latest',
@@ -362,27 +426,15 @@ WORKFLOWS: dict[str, WorkflowKey] = {
                 'type': 'int'
             },
             {
-                'param': 'db_root',
-                'default': '/depot/lindems/data/Databases',
-                'description': 'Root directory for per-tool databases (all MARGIE(SB) stages)',
-                'type': 'path'
-            },
-            {
-                'param': 'sif_path',
-                'default': '~/.cache/bioinformatics-tools',
-                'description': 'Directory containing Apptainer SIF files for all MARGIE(SB) stages',
-                'type': 'path'
-            },
-            {
                 'param': 'margie_sb.phase4.max_parallel_tools',
                 'default': 4,
                 'description': 'Max parallel phase4 annotation tools per genome',
                 'type': 'int'
             },
             {
-                'param': 'margie_sb.phase6.max_parallel_tools',
+                'param': 'margie_sb.phase8.max_parallel_tools',
                 'default': 4,
-                'description': 'Max parallel phase6 localization tools per genome',
+                'description': 'Max parallel phase8 (envelope-dependent localization) tools per genome',
                 'type': 'int'
             },
             {
@@ -402,6 +454,12 @@ WORKFLOWS: dict[str, WorkflowKey] = {
                 'default': 'cpu',
                 'description': 'Default SLURM partition for phase3 tools',
                 'type': 'string'
+            },
+            {
+                'param': 'margie_sb.phase3.max_parallel_genomes',
+                'default': 1,
+                'description': 'Max parallel phase3 RASTtk genomes (default 1 to protect BV-BRC service)',
+                'type': 'int'
             },
             {
                 'param': 'margie_sb.phase4.partition',
@@ -461,6 +519,18 @@ WORKFLOWS: dict[str, WorkflowKey] = {
                 'param': 'margie_sb.phase13.partition',
                 'default': 'cpu',
                 'description': 'Default SLURM partition for phase13 tools',
+                'type': 'string'
+            },
+            {
+                'param': 'margie_sb.phase14.partition',
+                'default': 'cpu',
+                'description': 'Default SLURM partition for phase14 tools',
+                'type': 'string'
+            },
+            {
+                'param': 'margie_sb.phase15.partition',
+                'default': 'cpu',
+                'description': 'Default SLURM partition for phase15 tools',
                 'type': 'string'
             },
         ] + _margie_sb_tool_params(),

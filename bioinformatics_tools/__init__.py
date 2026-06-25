@@ -131,9 +131,6 @@ be used for comparison and the delimiter.'}
     'dnaDiffCrawler': (
         {'help': 'ADD TO THIS'}
     ),
-    'grabCheckMOut': (
-        {'help': 'ADD TO THIS'}
-    ),
     'KeggTranslator': (
         {'help': 'ADD TO THIS'}
     ),

@@ -147,6 +147,70 @@ class TestBuildExecutable:
         cmd = wf.build_executable(key, mode='dev')
         assert '--default-resources' not in cmd
 
+    def test_no_target_leaves_command_unchanged(self, wf):
+        """No target (the default) must not add --nolock or any target token --
+        every existing caller's command stays byte-for-byte the same."""
+        key = WORKFLOWS['selftest']
+        cmd = wf.build_executable(key, mode='dev')
+        assert '--nolock' not in cmd
+        assert 'rasttk_all' not in cmd
+        assert 'phase4_8_one_genome' not in cmd
+
+    def test_target_appears_before_config(self, wf):
+        """--config greedily consumes every following token as a key=value
+        pair (confirmed directly against a real snakemake invocation) --
+        the target must come before it or snakemake crashes on a bare
+        rule name."""
+        key = WORKFLOWS['selftest']
+        cmd = wf.build_executable(key, config_overrides={'foo': 'bar'}, mode='dev', target='rasttk_all')
+        assert 'rasttk_all' in cmd
+        assert cmd.index('rasttk_all') < cmd.index('--config')
+
+    def test_target_adds_nolock(self, wf):
+        key = WORKFLOWS['selftest']
+        cmd = wf.build_executable(key, mode='dev', target='phase4_8_one_genome')
+        assert '--nolock' in cmd
+        assert cmd.index('--nolock') < cmd.index('phase4_8_one_genome')
+
+
+# ---------------------------------------------------------------------------
+# _start_background_subprocess
+# ---------------------------------------------------------------------------
+
+class TestStartBackgroundSubprocess:
+
+    def test_returns_immediately_without_waiting(self, wf):
+        mock_proc = MagicMock()
+        mock_proc.stdout = iter([])
+        mock_proc.stderr = iter([])
+        mock_proc.poll.return_value = None  # still "running"
+
+        with patch('bioinformatics_tools.workflow_tools.workflow.subprocess.Popen', return_value=mock_proc):
+            handle = wf._start_background_subprocess(['snakemake', '-s', 'test.smk'])
+
+        assert handle is not None
+        assert handle.poll() is None
+        mock_proc.wait.assert_not_called()
+
+    def test_exposes_real_returncode_once_finished(self, wf):
+        mock_proc = MagicMock()
+        mock_proc.stdout = iter([])
+        mock_proc.stderr = iter([])
+        mock_proc.poll.return_value = 0
+        mock_proc.wait.return_value = 0
+
+        with patch('bioinformatics_tools.workflow_tools.workflow.subprocess.Popen', return_value=mock_proc):
+            handle = wf._start_background_subprocess(['snakemake', '-s', 'test.smk'])
+
+        assert handle.wait() == 0
+        assert handle.poll() == 0
+
+    def test_launch_failure_returns_none(self, wf):
+        with patch('bioinformatics_tools.workflow_tools.workflow.subprocess.Popen',
+                   side_effect=FileNotFoundError('snakemake not found')):
+            handle = wf._start_background_subprocess(['snakemake', '-s', 'test.smk'])
+        assert handle is None
+
 
 # ---------------------------------------------------------------------------
 # _run_pipeline
@@ -259,6 +323,247 @@ class TestRunPipeline:
         mock_restore.assert_called_once_with('/tmp/sample.db', '/tmp/sample-a.txt', cache_map)
         mock_log.assert_called_once()
         assert mock_log.call_args.kwargs['status'] == 'success'
+
+
+# ---------------------------------------------------------------------------
+# _run_pipeline_batch_sequential
+#
+# margie_sb's sequential per-organism orchestrator: Stage 1 (rasttk_all,
+# all genomes, backgrounded) + Stage 2 (phase4_8_one_genome, one genome at
+# a time, in the order each genome's RASTtk token actually appears).
+# Path and time.sleep are patched at module level (not real-filesystem /
+# real-wait) so these run instantly and deterministically; _run_subprocess
+# and _start_background_subprocess are the same seams TestRunSubprocess/
+# TestStartBackgroundSubprocess exercise directly, mocked here instead so
+# the orchestration loop itself is what's under test.
+# ---------------------------------------------------------------------------
+
+def _target_genome_of(cmd: list[str]) -> str | None:
+    """Pull target_genome=<x> out of a built snakemake command's --config
+    section, the same shape build_executable() produces."""
+    for tok in cmd:
+        if tok.startswith('target_genome='):
+            return tok.split('=', 1)[1]
+    return None
+
+
+class TestRunPipelineBatchSequential:
+
+    @staticmethod
+    def _success_proc():
+        return subprocess.CompletedProcess(args=['snakemake'], returncode=0, stdout='', stderr='')
+
+    @staticmethod
+    def _failure_proc():
+        return subprocess.CompletedProcess(
+            args=['snakemake'], returncode=1, stdout='', stderr='Error in rule run_pfam:\n')
+
+    @patch('bioinformatics_tools.workflow_tools.workflow.cache_sif_files')
+    @patch('bioinformatics_tools.workflow_tools.workflow.locate_local_sif_files')
+    @patch('bioinformatics_tools.workflow_tools.workflow.time.sleep')
+    def test_stage1_targets_rasttk_all_stage2_targets_phase4_8_one_genome(self, mock_sleep, mock_locate, mock_cache, wf):
+        """Smoke test for the actual rule names threaded through -- the
+        ordering/failure tests below mock these calls away entirely, so
+        this is the one place that checks Stage 1/Stage 2 ask for the
+        right margie_sb.smk targets."""
+        genome_files = {'genome1': '/g1.fa'}
+        smk_config = {'output_dir': '/tmp/seqtest', 'main_database': ''}
+
+        fake_background = MagicMock()
+        fake_background.poll.return_value = None
+        background_calls = []
+
+        def fake_start_background(cmd):
+            background_calls.append(cmd)
+            return fake_background
+
+        stage2_calls = []
+
+        def fake_run_subprocess(cmd):
+            stage2_calls.append(cmd)
+            return self._success_proc()
+
+        with patch('bioinformatics_tools.workflow_tools.workflow.Path') as mock_path_cls, \
+             patch.object(wf, '_start_background_subprocess', side_effect=fake_start_background), \
+             patch.object(wf, '_run_subprocess', side_effect=fake_run_subprocess):
+            mock_path_cls.return_value.exists.return_value = True
+            wf._run_pipeline_batch_sequential('margie_sb', smk_config, genome_files,
+                                              cache_map_fn=lambda s: {}, mode='dev')
+
+        assert len(background_calls) == 1
+        assert 'rasttk_all' in background_calls[0]
+        assert len(stage2_calls) == 1
+        assert 'phase4_8_one_genome' in stage2_calls[0]
+        assert _target_genome_of(stage2_calls[0]) == 'genome1'
+        assert wf.report.status.indicates_success
+
+    @patch('bioinformatics_tools.workflow_tools.workflow.cache_sif_files')
+    @patch('bioinformatics_tools.workflow_tools.workflow.locate_local_sif_files')
+    @patch('bioinformatics_tools.workflow_tools.workflow.time.sleep')
+    def test_genomes_processed_in_token_detection_order(self, mock_sleep, mock_locate, mock_cache, wf):
+        """Genomes must enter Stage 2 in the order their RASTtk token
+        actually appears -- not genome_files' dict order, not alphabetical.
+        genome2 is made "ready" immediately; genome1 and genome3 only
+        become ready on later poll rounds (simulated via time.sleep's
+        side_effect, since it's the only thing separating poll rounds)."""
+        genome_files = {'genome1': '/g1.fa', 'genome2': '/g2.fa', 'genome3': '/g3.fa'}
+        smk_config = {'output_dir': '/tmp/seqtest', 'main_database': ''}
+
+        ready = {'genome2'}
+
+        def fake_sleep(seconds):
+            if 'genome1' not in ready:
+                ready.add('genome1')
+            elif 'genome3' not in ready:
+                ready.add('genome3')
+        mock_sleep.side_effect = fake_sleep
+
+        def fake_path(path_str):
+            m = MagicMock()
+            m.exists.return_value = any(g in str(path_str) for g in ready)
+            return m
+
+        fake_background = MagicMock()
+        fake_background.poll.return_value = None
+
+        processed_order = []
+
+        def fake_run_subprocess(cmd):
+            processed_order.append(_target_genome_of(cmd))
+            return self._success_proc()
+
+        with patch('bioinformatics_tools.workflow_tools.workflow.Path', side_effect=fake_path), \
+             patch.object(wf, '_start_background_subprocess', return_value=fake_background), \
+             patch.object(wf, '_run_subprocess', side_effect=fake_run_subprocess):
+            wf._run_pipeline_batch_sequential('margie_sb', smk_config, genome_files,
+                                              cache_map_fn=lambda s: {}, mode='dev')
+
+        assert processed_order == ['genome2', 'genome1', 'genome3']
+        assert wf.report.status.indicates_success
+
+    @patch('bioinformatics_tools.workflow_tools.workflow.cache_sif_files')
+    @patch('bioinformatics_tools.workflow_tools.workflow.locate_local_sif_files')
+    @patch('bioinformatics_tools.workflow_tools.workflow.time.sleep')
+    def test_failure_halts_before_next_genome(self, mock_sleep, mock_locate, mock_cache, wf):
+        """A real Stage 2 failure must halt the queue -- later genomes,
+        even ones already RASTtk-ready, must never be attempted. All three
+        genomes are made "ready" immediately (set iteration order across
+        pending decides which two of the three get processed before the
+        failure on the 2nd call -- doesn't matter which two; what matters
+        is there's never a 3rd call)."""
+        genome_files = {'genome1': '/g1.fa', 'genome2': '/g2.fa', 'genome3': '/g3.fa'}
+        smk_config = {'output_dir': '/tmp/seqtest', 'main_database': ''}
+
+        fake_background = MagicMock()
+        fake_background.poll.return_value = None
+
+        call_count = {'n': 0}
+
+        def fake_run_subprocess(cmd):
+            call_count['n'] += 1
+            return self._failure_proc() if call_count['n'] == 2 else self._success_proc()
+
+        with patch('bioinformatics_tools.workflow_tools.workflow.Path') as mock_path_cls, \
+             patch.object(wf, '_start_background_subprocess', return_value=fake_background), \
+             patch.object(wf, '_run_subprocess', side_effect=fake_run_subprocess):
+            mock_path_cls.return_value.exists.return_value = True
+            ret = wf._run_pipeline_batch_sequential('margie_sb', smk_config, genome_files,
+                                                     cache_map_fn=lambda s: {}, mode='dev')
+
+        assert call_count['n'] == 2
+        assert ret == 1
+        assert wf.report.status.indicates_failure
+
+    @patch('bioinformatics_tools.workflow_tools.workflow.cache_sif_files')
+    @patch('bioinformatics_tools.workflow_tools.workflow.locate_local_sif_files')
+    @patch('bioinformatics_tools.workflow_tools.workflow.time.sleep')
+    def test_genome_that_never_becomes_ready_is_skipped_not_blocking(self, mock_sleep, mock_locate, mock_cache, wf):
+        """If Stage 1 exits without ever producing genome1's RASTtk token
+        (a real phase1-3 failure for that genome specifically -- --keep-going
+        already let Stage 1 continue past it), genome1 must be skipped, not
+        block genome2 from being processed, and not fail the whole run."""
+        genome_files = {'genome1': '/g1.fa', 'genome2': '/g2.fa'}
+        smk_config = {'output_dir': '/tmp/seqtest', 'main_database': ''}
+
+        poll_calls = {'n': 0}
+
+        def fake_poll():
+            poll_calls['n'] += 1
+            return None if poll_calls['n'] == 1 else 0  # still running once, then exited
+
+        fake_background = MagicMock()
+        fake_background.poll.side_effect = fake_poll
+        fake_background.wait.return_value = 0
+
+        def fake_path(path_str):
+            m = MagicMock()
+            m.exists.return_value = 'genome2' in str(path_str)  # genome1 never becomes ready
+            return m
+
+        processed = []
+
+        def fake_run_subprocess(cmd):
+            processed.append(_target_genome_of(cmd))
+            return self._success_proc()
+
+        with patch('bioinformatics_tools.workflow_tools.workflow.Path', side_effect=fake_path), \
+             patch.object(wf, '_start_background_subprocess', return_value=fake_background), \
+             patch.object(wf, '_run_subprocess', side_effect=fake_run_subprocess):
+            wf._run_pipeline_batch_sequential('margie_sb', smk_config, genome_files,
+                                              cache_map_fn=lambda s: {}, mode='dev')
+
+        assert processed == ['genome2']
+        assert wf.report.status.indicates_success
+
+
+# ---------------------------------------------------------------------------
+# do_margie_sb
+# ---------------------------------------------------------------------------
+
+class TestDoMargieSb:
+
+    def test_genome_cache_map_covers_every_phase4_8_tool(self, wf):
+        """do_margie_sb should build a real per-tool cache map (not the old
+        2-file whole-genome marker) and pass it through as cache_map_fn --
+        every phase4-8 tool present, with the known multi-file tools
+        (tigrfam, phobius, envelope, interpro) carrying their full file set."""
+        wf.conf.get = MagicMock(side_effect=lambda key, default=None: {
+            'input': '/genomes/genome1.fa',
+            'main_database': '/tmp/test-margie.db',
+        }.get(key, default))
+
+        captured = {}
+
+        def fake_run_pipeline_batch_sequential(key_name, smk_config, genome_files, **kwargs):
+            captured['cache_map_fn'] = kwargs['cache_map_fn']
+
+        with patch('bioinformatics_tools.workflow_tools.workflow.discover_genomes',
+                   return_value={'genome1': '/genomes/genome1.fa'}), \
+             patch.object(wf, '_run_pipeline_batch_sequential', side_effect=fake_run_pipeline_batch_sequential):
+            wf.do_margie_sb(mode='dev')
+
+        cache_map = captured['cache_map_fn']('genome1')
+
+        expected_tools = {
+            'cog', 'pfam', 'merops', 'tcdb', 'uniprot', 'kegg', 'eggnog', 'dbcan',
+            'pgap', 'geneprop', 'operon', 'tmbed', 'signalp6', 'deepsig', 'psortb',
+            'signalp4', 'tigrfam', 'phobius', 'envelope', 'interpro',
+        }
+        assert set(cache_map.keys()) == expected_tools
+        # quast/gtdbtk/rasttk deliberately excluded -- see _genome_cache_map's docstring.
+        assert 'quast' not in cache_map
+        assert 'gtdbtk' not in cache_map
+        assert 'rasttk' not in cache_map
+
+        assert len(cache_map['cog']) == 2  # results.tsv + token
+        assert len(cache_map['tigrfam']) == 3  # results.tsv + domtbl.out + token
+        assert len(cache_map['phobius']) == 3  # results.tsv + top1.tsv + token
+        assert len(cache_map['envelope']) == 3  # results.tsv + summary.tsv + token
+        assert len(cache_map['interpro']) == 38  # (results.tsv + token) + 18 dbs * 2 files each
+
+        for paths in cache_map.values():
+            for path in paths:
+                assert path.endswith(('.tsv', '.tkn', '.out'))
 
 
 # ---------------------------------------------------------------------------

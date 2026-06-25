@@ -27,10 +27,43 @@ LOGGER = logging.getLogger(__name__)
 executor = ThreadPoolExecutor(max_workers=4)
 
 # Regex patterns for parsing Snakemake/SLURM log output
-SLURM_SUBMIT_RE = re.compile(r'SLURM jobid (\d+) \(log:.*?/slurm_logs/(?:rule_|group_[^_]+_)(\w+)/')
+#
+# For an ungrouped rule (e.g. "rule_run_quast_batch/"), the rule name is the
+# whole "run_quast_batch". For a grouped rule (e.g.
+# "group_rasttk_load_rasttk_to_db_run_rasttk/" -- run_<tool> and
+# load_<tool>_to_db share one SLURM submission per genome, see margie_sb.smk's
+# group: directives), only the group's own short name ("rasttk") is captured
+# -- the rest of that path segment is the snakemake-generated concatenation
+# of every rule in the group, which read as a confusing "rule name" on its
+# own (e.g. showing "load_rasttk_to_db_run_rasttk" made it look like only the
+# load step ran, when the run step's actual annotation work happens in the
+# very same job).
+SLURM_SUBMIT_RE = re.compile(r'SLURM jobid (\d+) \(log: (.*?)\)\.?$')
+RULE_NAME_FROM_LOG_PATH_RE = re.compile(r'/slurm_logs/(?:rule_(\w+)|group_([^_]+)_\w+)/')
 SLURM_SUBMIT_FALLBACK_RE = re.compile(r'SLURM jobid (\d+)')
 STEPS_PROGRESS_RE = re.compile(r'(\d+) of (\d+) steps \((\d+)%\) done')
-CACHE_HIT_RE = re.compile(r'Cache HIT for (\w+)')
+CACHE_HIT_RE = re.compile(r'Cache HIT for (\w+) \(genome=([^)]+)\)')
+# Genome attribution: build_executable() now passes --verbose, so Snakemake
+# prints each job's "wildcards: genome=..." line to its own live log right
+# before submitting it -- read here into last_genome and attached directly
+# at add_slurm_job() time below. Previously genome could only come from
+# lazily re-reading each SLURM job's own remote per-job log file (still done
+# in _slurm_status_checker as a fallback), which raced against that file
+# being cleaned up once the job finished -- intermittently losing genome
+# attribution for fast-finishing rules. Safe to track as a single var (not
+# per-rule) because margie_sb's sequential per-organism orchestrator (see
+# SEQUENTIAL_GENOME_RE below) only ever has one genome in flight at a time,
+# even when several rules for that genome are dispatched in the same batch.
+WILDCARDS_GENOME_RE = re.compile(r'wildcards:.*\bgenome=([^\s,]+)')
+# margie_sb's sequential per-organism orchestrator (workflow.py's
+# _run_pipeline_batch_sequential) runs many short-lived Snakemake
+# invocations in sequence, one per genome -- each one's own "X of Y steps"
+# (STEPS_PROGRESS_RE above) resets relative to just that genome's small
+# DAG, which alone would make the frontend's progress bar look like it
+# keeps resetting. This is purely additive: genome_index/genome_total are
+# new job_store fields, untouched by and not touching steps_done/
+# steps_total/progress at all.
+SEQUENTIAL_GENOME_RE = re.compile(r'SEQUENTIAL: genome (\d+)/(\d+)')
 
 
 def _slurm_status_checker(job_id: str, connection: SSHConnection):
@@ -47,6 +80,20 @@ def _slurm_status_checker(job_id: str, connection: SSHConnection):
                         sj["time"] = statuses[sj["job_id"]]["time"]
             except Exception as e:
                 LOGGER.warning("SLURM status check failed: %s", e)
+
+        # Fallback genome backfill, for any job whose live --verbose
+        # "wildcards:" line was missed (see WILDCARDS_GENOME_RE in
+        # job_runner.py, the primary source now). Retried every cycle
+        # (cheap, one grep each) until it succeeds; permanently empty for
+        # batch rules with no genome wildcard.
+        for sj in slurm_jobs:
+            if not sj.get("genome") and sj.get("log_path"):
+                try:
+                    genome = ssh_slurm.get_job_genome(sj["log_path"], connection=connection)
+                    if genome:
+                        sj["genome"] = genome
+                except Exception as e:
+                    LOGGER.warning("Genome backfill failed for job %s: %s", sj["job_id"], e)
         # Wait 15 seconds between checks
         for _ in range(15):
             if job_store.get_status(job_id) != "running":
@@ -67,6 +114,7 @@ def run_ssh_task(job_id: str, command: str, connection: SSHConnection):
     checker.start()
 
     exit_code = 0  # Track command exit code
+    last_genome = ""  # Most recently seen "wildcards: genome=..." value
 
     try:
         for line in ssh_slurm.submit_ssh_job(cmd=command, connection=connection):
@@ -105,25 +153,37 @@ def run_ssh_task(job_id: str, command: str, connection: SSHConnection):
 
             job_store.append_log(job_id, line)
 
-            # Parse cache-restored rules (from output_cache.py "Cache HIT for <tool>")
+            # Parse cache-restored rules (from output_cache.py "Cache HIT for <tool> (genome=...)")
             cache_match = CACHE_HIT_RE.search(line)
             if cache_match:
-                rule_name = cache_match.group(1)
-                job_store.add_slurm_job(job_id, "—", rule_name)
+                rule_name, cache_genome = cache_match.groups()
+                job_store.add_slurm_job(job_id, "—", rule_name, genome=cache_genome, source="from cache")
                 # Immediately mark as CACHED so the checker skips it
                 for sj in job_store.get_slurm_jobs(job_id):
                     if sj["rule"] == rule_name and sj["job_id"] == "—":
                         sj["status"] = "CACHED"
 
-            # Parse SLURM job IDs as they appear in the log stream
+            # Snakemake's own --verbose "wildcards: genome=..." line, printed
+            # right before it submits that same job -- see last_genome's
+            # declaration above for why a single var is safe here.
+            wildcards_match = WILDCARDS_GENOME_RE.search(line)
+            if wildcards_match:
+                last_genome = wildcards_match.group(1)
+
+            # Parse SLURM job IDs as they appear in the log stream. log_path
+            # is still captured for _slurm_status_checker's fallback backfill
+            # (batch rules like quast_batch/gtdbtk_batch have no genome
+            # wildcard, so last_genome is correctly empty for those).
             match = SLURM_SUBMIT_RE.search(line)
             if match:
-                slurm_id, rule_name = match.groups()
-                job_store.add_slurm_job(job_id, slurm_id, rule_name)
+                slurm_id, log_path = match.groups()
+                rule_match = RULE_NAME_FROM_LOG_PATH_RE.search(log_path)
+                ungrouped_rule_name, group_name = rule_match.groups() if rule_match else (None, None)
+                job_store.add_slurm_job(job_id, slurm_id, ungrouped_rule_name or group_name or "unknown", genome=last_genome, log_path=log_path)
             elif SLURM_SUBMIT_FALLBACK_RE.search(line):
                 fallback = SLURM_SUBMIT_FALLBACK_RE.search(line)
                 slurm_id = fallback.group(1)
-                job_store.add_slurm_job(job_id, slurm_id, "unknown")
+                job_store.add_slurm_job(job_id, slurm_id, "unknown", genome=last_genome)
 
             # Parse Snakemake step progress (e.g. "2 of 4 steps (50%) done")
             progress_match = STEPS_PROGRESS_RE.search(line)
@@ -131,20 +191,26 @@ def run_ssh_task(job_id: str, command: str, connection: SSHConnection):
                 done, total, pct = progress_match.groups()
                 job_store.update(job_id, steps_done=int(done), steps_total=int(total), progress=int(pct))
 
+            # Parse the sequential orchestrator's own genome-transition marker
+            genome_match = SEQUENTIAL_GENOME_RE.search(line)
+            if genome_match:
+                genome_index, genome_total = genome_match.groups()
+                job_store.update(job_id, genome_index=int(genome_index), genome_total=int(genome_total))
+
             # Update phase based on output
             if "snakemake" in line.lower():
                 job_store.update(job_id, phase="Running Snakemake")
 
         # Check exit code and mark as failed if non-zero
         if exit_code != 0:
-            job_store.update(job_id, status="failed", phase="Failed")
             job_store.append_log(job_id, f"\n\n=== Command exited with code {exit_code} ===")
+            job_store.finalize(job_id, status="failed", phase="Failed")
             LOGGER.error("Job %s failed with exit code %d", job_id, exit_code)
         else:
-            job_store.update(job_id, status="completed", phase="Done")
+            job_store.finalize(job_id, status="completed", phase="Done")
     except Exception as e:
-        job_store.update(job_id, status="failed", phase="Error")
         job_store.append_log(job_id, f"\nError: {str(e)}")
+        job_store.finalize(job_id, status="failed", phase="Error")
 
 
 def submit_job(job_id: str, command: str, connection: SSHConnection):

@@ -25,4 +25,4 @@ jobs:
         run: pip install -e ".[test]"
 
       - name: Run tests
-        run: pytest tests/test_api.py tests/test_workflow.py -v
+        run: pytest tests/test_api.py tests/test_workflow.py tests/test_job_history.py tests/test_job_runner.py tests/test_ssh_sftp.py tests/test_ssh_slurm.py -v

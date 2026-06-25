@@ -81,10 +81,50 @@ async def health():
     return {"status": "success", "message": "API is healthy"}
 
 
+def _ensure_remote_deployment_symlink() -> None:
+    """The /v1/ssh/run_workflow endpoint SSHes into the user's own cluster
+    account and runs `uvx --from ~/bioinformatics-tools/ dane_wf ...` -- a
+    deliberately separate code path from whatever process dane-api itself
+    is running from, since the API and the SSH target may be different
+    machines in a multi-user deployment. When they happen to be the same
+    machine (a single-developer setup, or local testing), ~/bioinformatics-
+    tools needs to actually point at this checkout, or the SSH-invoked
+    workflow silently runs against a stale, disconnected copy instead of
+    whatever's actually being worked on.
+
+    Self-heals the common, safe case (missing, or a symlink pointing
+    somewhere else) by linking it to this same checkout, every time the API
+    starts. Never touches an existing REAL directory there -- only logs a
+    warning, so a deliberate, separate deployment is never silently
+    destroyed.
+    """
+    target = Path.home() / "bioinformatics-tools"
+    try:
+        if target.is_symlink():
+            if target.resolve() == _PROJECT_ROOT.resolve():
+                return
+            LOGGER.info("Relinking stale %s -> %s (was -> %s)", target, _PROJECT_ROOT, target.resolve())
+            target.unlink()
+            target.symlink_to(_PROJECT_ROOT)
+        elif target.exists():
+            LOGGER.warning(
+                "%s exists as a real directory, not a symlink to %s -- leaving it alone. "
+                "If it should track this checkout automatically instead, replace it with: "
+                "rm -rf %s && ln -s %s %s",
+                target, _PROJECT_ROOT, target, _PROJECT_ROOT, target,
+            )
+        else:
+            LOGGER.info("Creating %s -> %s", target, _PROJECT_ROOT)
+            target.symlink_to(_PROJECT_ROOT)
+    except OSError as exc:
+        LOGGER.warning("Could not verify/create %s -> %s: %s", target, _PROJECT_ROOT, exc)
+
+
 def serve(host: str = "0.0.0.0", port: int = 8000, reload: bool = False):
     """
     Entry point for running the API server
     """
+    _ensure_remote_deployment_symlink()
     LOGGER.info(f"Starting Bioinformatics Tools API server on {host}:{port}")
     uvicorn.run(
         "bioinformatics_tools.api.main:app",

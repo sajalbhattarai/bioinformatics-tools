@@ -24,9 +24,10 @@ class SlurmSend(BaseModel):
 
 
 class GenomeSend(BaseModel):
-    genome_path: str
-    output_dir: str | None = None  # base path; timestamp appended server-side
-    workflow: str = 'margie'
+    genome_path: str | None = None  # file or folder; falls back to the user's input_path config if omitted
+    output_dir: str | None = None  # base path; timestamp appended server-side; falls back to output_path config
+    workflow: str = 'margie_sb'
+    selected_tools: list[str] | None = None  # tool keys to run (see MARGIE_SB_PHASED_TOOLS); omit/None runs everything
 
 
 # --- Auth models -------------------------------------------------------------
