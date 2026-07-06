@@ -219,7 +219,9 @@ def _row_tint(row: pd.Series) -> tuple[str, str]:
         return _ROW_NOEC_BG, "000000"
     tier = str(_series_get(row, "confidence_tier", "CONFIDENCE_TIER")).strip().lower()
     bright = _TIER_BRIGHT.get(tier, _TIER_BRIGHT["medium"])
-    return _tint_hex(bright, 0.86), "000000"
+    # deeper tint (matches make-final-excel.py) so the whole tier row reads as one
+    # colour band for easy row tracking, accents still pop
+    return _tint_hex(bright, 0.72), "000000"
 
 
 def _apply_review_flag_colors(ws, df: pd.DataFrame) -> None:
