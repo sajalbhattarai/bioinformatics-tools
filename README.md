@@ -1,49 +1,67 @@
-<h1 align="center">🧬 MARGIE</h1>
+<h1 align="center">MARGIE</h1>
 
 <p align="center">
   <b>M</b>ostly <b>A</b>utomated <b>R</b>apid <b>G</b>enome <b>I</b>nference <b>E</b>nvironment
 </p>
 
 <p align="center">
-  <i>A phased prokaryotic pipeline that annotates genomes, calls operons, and scores every gene's annotation confidence.</i>
+  <i>A phased prokaryotic pipeline that annotates genomes, calls operons,<br>
+  and scores every gene's annotation confidence.</i>
+</p>
+
+<p align="center">
+  <a href="#what-margie-does">What it does</a> &nbsp;·&nbsp;
+  <a href="#how-to-run">Quickstart</a> &nbsp;·&nbsp;
+  <a href="#2-configure-once">Configure</a> &nbsp;·&nbsp;
+  <a href="#databases--use-the-labs-or-bring-your-own">Databases</a> &nbsp;·&nbsp;
+  <a href="#running-unattended-recommended-for-real-runs">Unattended</a> &nbsp;·&nbsp;
+  <a href="README-detailed.md">Full toolkit</a>
+</p>
+
+<p align="center">
+  <img src="docs/img/ecoli-s10-ribosomal-operon.png" width="900" alt="E. coli S10 ribosomal-protein operon with per-gene confidence">
+</p>
+<p align="center">
+  <sub><i>Sample output — the</i> E.&nbsp;coli <i>S10 ribosomal-protein operon (11 genes, all at final confidence&nbsp;1.00), with the per-gene C1–C4 breakdown MARGIE renders beneath every operon.</i></sub>
 </p>
 
 ---
 
 ## What MARGIE does
 
-A phased Snakemake workflow that:
+A phased [Snakemake](https://snakemake.github.io/) workflow, four stages:
 
-1. **Annotates** genomes
-2. **Calls** operons
-3. **Scores** each gene's annotation confidence (C1–C4)
-4. **Renders** the operon-diagram figures
+<p align="center">
+  <b>1. Annotate</b> &nbsp;→&nbsp; <b>2. Call operons</b> &nbsp;→&nbsp; <b>3. Score confidence (C1–C4)</b> &nbsp;→&nbsp; <b>4. Render operon figures</b>
+</p>
 
-> **Note:** steps 1–2 use already-available tools — MARGIE introduces no new
+> **Note** — stages 1–2 use already-available tools; MARGIE introduces no new
 > algorithm for annotation or operon calling. It integrates those tools and
 > processes their output downstream to derive confidence.
 
-<p align="center">
-  <img src="docs/img/ecoli-s10-ribosomal-operon.png" width="920" alt="E. coli S10 ribosomal-protein operon with per-gene confidence">
-</p>
-<p align="center">
-  <sub><i>Sample output — the <i>E. coli</i> S10 ribosomal-protein operon (11 genes, all at final confidence 1.00), with the per-gene C1–C4 breakdown MARGIE renders beneath every operon.</i></sub>
-</p>
-
-## The name
+### The name
 
 |  |  |
 |---|---|
-| **Mostly Automated** | Users decide what the results mean — MARGIE does not make the decisions. |
-| **Rapid** | Built for large-scale prokaryotic annotation; it parallelizes across genomes, so it is best fed many genomes at once (single-genome runs work too). |
+| **Mostly Automated** | You decide what the results mean — MARGIE does not make the decisions. |
+| **Rapid** | Built for large-scale prokaryotic annotation; it parallelizes across genomes, so it is best fed many at once (single-genome runs work too). |
 | **Inference Environment** | MARGIE helps you *draw* inference — it does not provide decisions (yet). |
 
 ---
 
 ## How to run
 
-> Minimal **how-to-run** guide. For the broader toolkit (CLI file tools, API
-> server, frontend), see [README-detailed.md](README-detailed.md).
+> A minimal quickstart. For the broader toolkit (CLI file tools, API server,
+> frontend), see **[README-detailed.md](README-detailed.md)**.
+
+**At a glance**
+
+```text
+1. uv sync                          # build the environment
+2. run dane_wf once                 # seeds ~/.config/bioinformatics-tools/config.yaml
+3. edit that config                 # results DB, paths, cluster settings
+4. dane_wf margie sb input: … output_dir: … run_full_operon_map: true
+```
 
 ### 1. Set up the environment (once)
 
