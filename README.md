@@ -91,10 +91,13 @@ paths, and any per-tool overrides. Edit it after that first run. At minimum,
 set your results database and (if not using the defaults) your compute settings:
 
 ```yaml
-main_database: <path-to-your-results-db>.sqlite
+main_database: <path-to-where-you-want-to-keep-the-db>.db
 # db_root  defaults to /depot/lindems/data/margie/db  if not set
 # sif_path defaults to /depot/lindems/data/margie/sif if not set
 ```
+###### This ".db" database is important because it is where the results are cached.
+###### When you rerun the pipeline on same organisms (exact same fasta file), the results get
+###### restored back--saves time!
 
 #### Databases — use the lab's, or bring your own
 
