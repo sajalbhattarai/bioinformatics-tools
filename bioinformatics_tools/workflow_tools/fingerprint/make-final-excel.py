@@ -180,7 +180,9 @@ def _row_tint(row: dict) -> tuple[str, str]:
         return _ROW_NOEC_BG, "000000"
     tier = str(_row_get(row, "confidence_tier", "CONFIDENCE_TIER")).strip().lower()
     bright = _TIER_BRIGHT.get(tier, _TIER_BRIGHT["medium"])
-    return _tint_hex(bright, 0.86), "000000"
+    # deeper tint (was 0.86 -> near-white) so the WHOLE confidence-tier row reads as
+    # one colour band for easy row tracking, while the bright accent cells still pop
+    return _tint_hex(bright, 0.72), "000000"
 
 
 def main() -> None:
