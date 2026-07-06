@@ -3,7 +3,7 @@
 tier.
 
 Reads labeled-genes.tsv (assign-canonical-label.py's output, READ-ONLY)
-and maps each gene's label_source to a trust TIER -- the same grouping
+and maps each gene's product_descriptor_source to a trust TIER -- the same grouping
 already implicit in assign-canonical-label.py's _EVALUATORS priority
 order, made explicit and numeric here so it can be combined with other
 confidence signals later (EC agreement, etc.) without re-deriving it each
@@ -18,31 +18,18 @@ WHICH tool's text wins; scoring assesses how much to trust a decision
 already made, a different job that will keep growing as more signals
 (EC agreement, eventually others) get folded in.
 
-TIER RATIONALE (mirrors assign-canonical-label.py's own hierarchy
-reasoning, just grouped into 5 buckets instead of 12 individual ranks):
-  Tier 4 -- PGAP, TIGRFAM, HAMAP, NCBIFAM
-            Prokaryote-built-from-day-one, equivalog/family-rule-level
-            curation, --cut_tc/--cut_ga trusted cutoffs (or InterProScan's
-            own internal cutoff) already enforced upstream.
-  Tier 3 -- PIRSF, UNIPROT
-            PIRSF: whole-protein (not domain-only) HMM classification.
-            UniProt: Swiss-Prot's curation is gold-standard, but reached
-            via a single best BLAST/DIAMOND alignment, gated at >=40%
-            identity -- one step below a curated family HMM.
-  Tier 2 -- PFAM, CDD
-            Domain-level curation spanning all of life, not
-            prokaryote-specific.
-  Tier 1 -- KEGG, EGGNOG, COG
-            Orthology/ortholog-group *inference*, broader/coarser calls
-            than a direct family-membership HMM hit.
-  Tier 0 -- RAST
-            Always-available fallback; curation consistency varies a lot
-            across RAST/SEED's subsystems.
-  (no winner) -- label_source == "NONE": lower than every real tier --
+TIER RATIONALE (mirrors assign-canonical-label.py's explicit ranking):
+  Tier 1 -- PGAP, NCBIFAM, TIGRFAM
+  Tier 2 -- HAMAP, PIRSF, UNIPROT
+  Tier 3 -- KEGG
+  Tier 4 -- EGGNOG
+  Tier 5 -- RAST
+  Tier 6 -- PFAM
+  Tier 7 -- CDD
+  Tier 8 -- COG
+  (no winner) -- product_descriptor_source == "NONE": lower than every real tier --
             no qualifying evidence existed at all.
 """
-from __future__ import annotations
-
 import argparse
 import csv
 import sys
@@ -52,27 +39,33 @@ csv.field_size_limit(10_000_000)
 
 # tool_name -> (tier_score, tier_name). Same grouping logic as
 # assign-canonical-label.py's _EVALUATORS order, just bucketed.
-HIERARCHY_TIER: dict[str, tuple[int, str]] = {
-    "PGAP": (4, "tier4_curated_prokaryote_family"),
-    "TIGRFAM": (4, "tier4_curated_prokaryote_family"),
-    "HAMAP": (4, "tier4_curated_prokaryote_family"),
-    "NCBIFAM": (4, "tier4_curated_prokaryote_family"),
-    "PIRSF": (3, "tier3_whole_protein_or_curated_best_hit"),
-    "UNIPROT": (3, "tier3_whole_protein_or_curated_best_hit"),
-    "PFAM": (2, "tier2_general_domain_curation"),
-    "CDD": (2, "tier2_general_domain_curation"),
-    "KEGG": (1, "tier1_orthology_inference"),
-    "EGGNOG": (1, "tier1_orthology_inference"),
-    "COG": (1, "tier1_orthology_inference"),
-    "RAST": (0, "tier0_fallback"),
+HIERARCHY_TIER = {
+    "PGAP": (4, "tier1_curated_prokaryote_family"),
+    "NCBIFAM": (4, "tier1_curated_prokaryote_family"),
+    "TIGRFAM": (4, "tier1_curated_prokaryote_family"),
+    "HAMAP": (3, "tier2_curated_protein_assignment"),
+    "PIRSF": (3, "tier2_curated_protein_assignment"),
+    "UNIPROT": (3, "tier2_curated_protein_assignment"),
+    "KEGG": (2, "tier3_pathway_assignment"),
+    "EGGNOG": (2, "tier4_orthology_assignment"),
+    "RAST": (1, "tier5_fallback"),
+    "PFAM": (0, "tier6_domain_assignment"),
+    "CDD": (0, "tier7_domain_assignment"),
+    "COG": (0, "tier8_orthology_assignment"),
 }
 _NO_WINNER_SCORE, _NO_WINNER_NAME = -1, "no_qualifying_winner"
 
-_IDENTITY_COLUMNS = ["feature_id", "organism_name", "canonical_label", "label_source", "label_source_id"]
+_IDENTITY_COLUMNS = [
+    "feature_id",
+    "organism_name",
+    "best_consensus_product_descriptor",
+    "product_descriptor_source",
+    "product_descriptor_source_id",
+]
 
 
-def score_hierarchy_tier(label_source: str) -> tuple[int, str]:
-    return HIERARCHY_TIER.get(label_source, (_NO_WINNER_SCORE, _NO_WINNER_NAME))
+def score_hierarchy_tier(product_descriptor_source):
+    return HIERARCHY_TIER.get(product_descriptor_source, (_NO_WINNER_SCORE, _NO_WINNER_NAME))
 
 
 def main() -> None:
@@ -93,15 +86,16 @@ def main() -> None:
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    tier_counts: dict[str, int] = {}
+    tier_counts = {}
     n = 0
     with open(labeled_path, newline="") as fh, open(output_path, "w", newline="") as out_fh:
         reader = csv.DictReader(fh, delimiter="\t")
         writer = csv.DictWriter(out_fh, fieldnames=out_columns, delimiter="\t", extrasaction="ignore")
         writer.writeheader()
         for row in reader:
-            score, name = score_hierarchy_tier(row.get("label_source", ""))
+            source = row.get("product_descriptor_source", "")
             out_row = {col: row.get(col, "") for col in _IDENTITY_COLUMNS}
+            score, name = score_hierarchy_tier(source)
             out_row["hierarchy_tier_score"] = str(score)
             out_row["hierarchy_tier_name"] = name
             writer.writerow(out_row)

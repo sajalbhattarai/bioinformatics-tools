@@ -48,8 +48,6 @@ full independent agreement to active conflict. This script turns that
 split into an actionable per-gene flag instead of treating every winner
 from one tool as equally reliable.
 """
-from __future__ import annotations
-
 import argparse
 import csv
 import sys
@@ -57,7 +55,7 @@ from pathlib import Path
 
 csv.field_size_limit(10_000_000)
 
-EC_AGREEMENT_SCORE: dict[str, int] = {
+EC_AGREEMENT_SCORE = {
     "full_consensus": 2,
     "majority_consensus": 1,
     "single_source": 0,
@@ -68,10 +66,16 @@ EC_AGREEMENT_SCORE: dict[str, int] = {
 _HIGH_THRESHOLD = 5
 _MODERATE_THRESHOLD = 2
 
-_IDENTITY_COLUMNS = ["feature_id", "organism_name", "canonical_label", "label_source", "label_source_id"]
+_IDENTITY_COLUMNS = [
+    "feature_id",
+    "organism_name",
+    "best_consensus_product_descriptor",
+    "product_descriptor_source",
+    "product_descriptor_source_id",
+]
 
 
-def score_confidence_tier(hierarchy_tier_score: int, ec_agreement_status: str) -> tuple[int, str]:
+def score_confidence_tier(hierarchy_tier_score, ec_agreement_status):
     """Returns (combined_score, confidence_tier)."""
     ec_score = EC_AGREEMENT_SCORE.get(ec_agreement_status, 0)
     combined_score = hierarchy_tier_score + ec_score
@@ -106,7 +110,7 @@ def main() -> None:
         print(f"[score-confidence-tier] ERROR: input not found: {ec_path}", file=sys.stderr)
         raise SystemExit(1)
 
-    ec_status_by_gene: dict[str, str] = {}
+    ec_status_by_gene = {}
     with open(ec_path, newline="") as fh:
         reader = csv.DictReader(fh, delimiter="\t")
         for row in reader:
@@ -123,7 +127,7 @@ def main() -> None:
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    tier_counts: dict[str, int] = {}
+    tier_counts = {}
     n = 0
     with open(hierarchy_path, newline="") as fh, open(output_path, "w", newline="") as out_fh:
         reader = csv.DictReader(fh, delimiter="\t")
