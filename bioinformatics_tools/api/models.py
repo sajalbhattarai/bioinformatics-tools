@@ -28,6 +28,7 @@ class GenomeSend(BaseModel):
     output_dir: str | None = None  # base path; timestamp appended server-side; falls back to output_path config
     workflow: str = 'margie_sb'
     selected_tools: list[str] | None = None  # tool keys to run (see MARGIE_SB_PHASED_TOOLS); omit/None runs everything
+    run_full_operon_map: bool = False  # opt-in: full per-genome operon atlas (heavy), downstream of the report figures
 
 
 # --- Auth models -------------------------------------------------------------

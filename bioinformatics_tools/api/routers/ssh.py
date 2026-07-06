@@ -16,7 +16,8 @@ from datetime import datetime
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from openpyxl.styles import Font, PatternFill
+from fastapi.responses import Response, StreamingResponse
 
 from dataclasses import asdict
 
@@ -60,7 +61,7 @@ def _validate_relative_path(path: str, *, label: str = "file") -> None:
 
 
 def _resolve_job_work_dir(job_id: str, current_user: dict, conn) -> str:
-    """Resolve a job's work_dir, falling back to persistent history if the
+    """Resolves a job's work_dir, falling back to persistent history if the
     job isn't in the in-memory job_store (e.g. after a dane-api restart) --
     the same fallback get_job_status already uses, applied here so file
     browsing/download/view work for resumed/historical jobs too, not just
@@ -89,6 +90,223 @@ def _resolve_job_work_dir(job_id: str, current_user: dict, conn) -> str:
     if not work_dir:
         raise HTTPException(status_code=400, detail="No working directory available for this job")
     return work_dir
+
+
+_SCORE_TIER_COLORS: dict[str, str] = {
+    "highest":          "1a9641",
+    "high":             "a6d96a",
+    "moderate":         "ffffbf",
+    "fair":             "fdae61",
+    "low":              "d7191c",
+}
+
+_CONFIDENCE_TIER_COLORS: dict[str, str] = {
+    "high":             "1a9641",
+    "moderate":         "ffffbf",
+    "low":              "d7191c",
+    "flagged_for_review": "9e1985",
+}
+
+# ACS tier: yellow (low) → dark blue (highest), matching make-final-excel.py
+_ACS_TIER_ROW_COLORS: dict[str, str] = {
+    "low":      "FFFDE7",
+    "fair":     "FFF3E0",
+    "moderate": "E8F4FC",
+    "high":     "D6E8F7",
+    "highest":  "C5DDEF",
+    "NOT_APPLICABLE_NON_CODING": "F5F5F5",
+}
+
+# White text on dark backgrounds, black text on light ones.
+_TIER_FONT_COLORS: dict[str, str] = {
+    "1a9641": "FFFFFF",
+    "a6d96a": "000000",
+    "ffffbf": "000000",
+    "fdae61": "000000",
+    "d7191c": "FFFFFF",
+    "9e1985": "FFFFFF",
+    "FFFDE7": "000000",
+    "FFF3E0": "000000",
+    "E8F4FC": "000000",
+    "D6E8F7": "000000",
+    "C5DDEF": "000000",
+    "F5F5F5": "888888",
+}
+
+
+# ── FINAL publication file coloring — MATCHES the operon-diagram FIGURES
+#    (reportfig_lib.CONF_TIER_COLOR). Each row gets a LIGHT tint of its
+#    confidence-tier colour so the sheet is scannable; the key "answer" cells
+#    (tier, adjusted-confidence, needs-review, operon-context direction) get the
+#    BRIGHT figure colour with auto-contrast text. Kept in sync with
+#    workflow_tools/fingerprint/make-final-excel.py. ───────────────────────────
+_TIER_BRIGHT = {
+    "highest": "1F77FF",   # blue
+    "high":    "00B84D",   # green
+    "medium":  "FFCC00",   # yellow
+    "fair":    "FF8C00",   # orange
+    "low":     "EE2233",   # red
+}
+_CTX_RAISED = "6B8E23"      # operon context increases confidence (olive)
+_CTX_LOWERED = "8B0000"     # operon context decreases confidence (dark red)
+_REVIEW_YES = "EE2233"      # needs review (bright red)
+_REVIEW_NO = "1E9E57"       # ok (green)
+_ROW_NONCODING_TINT = "F2F2F2"
+_ROW_NONCODING_FG = "8A8A8A"
+_ROW_NONCDS_BG = "FFF2A8"    # light yellow: non-CDS features (rna / prophage)
+_ROW_NOEC_BG = "F1A9A0"      # light red: CDS genes with NO EC evidence
+
+
+def _hex_lum(h: str) -> float:
+    h = h.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
+
+
+def _contrast_fg(h: str) -> str:
+    return "000000" if _hex_lum(h) > 0.55 else "FFFFFF"
+
+
+def _tint_hex(h: str, toward_white: float = 0.86) -> str:
+    h = h.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    r = round(r + (255 - r) * toward_white)
+    g = round(g + (255 - g) * toward_white)
+    b = round(b + (255 - b) * toward_white)
+    return f"{r:02X}{g:02X}{b:02X}"
+
+
+def _norm_col(name: str) -> str:
+    # FINAL_ANNOTATION_WITH_CONFIDENCE supports prefixed headers like:
+    #   "[AN]-NEEDS_REVIEW?"  (legacy)
+    #   "Column-AN: NEEDS_REVIEW?"  (current)
+    return re.sub(r"^(?:\[[A-Z]+\]-|Column-[A-Z]+:\s*)", "", str(name or "").strip(), flags=re.IGNORECASE).strip().lower()
+
+
+def _series_get(row: pd.Series, *candidate_names: str) -> str:
+    targets = {_norm_col(n) for n in candidate_names}
+    for key in row.index:
+        if _norm_col(key) in targets:
+            return row.get(key, "")
+    return ""
+
+
+def _has_any_column(df: pd.DataFrame, *candidate_names: str) -> bool:
+    targets = {_norm_col(n) for n in candidate_names}
+    for col in df.columns:
+        if _norm_col(col) in targets:
+            return True
+    return False
+
+
+def _row_tint(row: pd.Series) -> tuple[str, str]:
+    """(bg, fg) whole-row highlight, priority: non-CDS (light yellow) > CDS with no
+    EC evidence (light red) > confidence-tier tint. Bright accents added on top."""
+    ftype = str(_series_get(row, "FEATURE_TYPE", "feature_type")).strip().lower()
+    if ftype and ftype != "cds":                         # rna, prophage, ...
+        return _ROW_NONCDS_BG, "000000"
+    final_raw = str(_series_get(
+        row,
+        "final_confidence_operon_context",
+        "ADJUSTED_CONFIDENCE_WITH_OPERON_CONTEXT",
+    )).strip()
+    try:
+        float(final_raw)
+    except (TypeError, ValueError):
+        return _ROW_NONCODING_TINT, _ROW_NONCODING_FG
+    ec_status = str(_series_get(row, "EC_EVIDENCE_STATUS", "c4_ec_agreement_status")).strip().lower()
+    if ec_status == "no_evidence":
+        return _ROW_NOEC_BG, "000000"
+    tier = str(_series_get(row, "confidence_tier", "CONFIDENCE_TIER")).strip().lower()
+    bright = _TIER_BRIGHT.get(tier, _TIER_BRIGHT["medium"])
+    return _tint_hex(bright, 0.86), "000000"
+
+
+def _apply_review_flag_colors(ws, df: pd.DataFrame) -> None:
+    """FINAL-file coloring that MATCHES the figures: light tier-tinted rows plus
+    bright accent cells (tier / adjusted-confidence / needs-review / context
+    direction), each with auto-contrast text. Both adjacency and hybrid tiers."""
+    colidx: dict[str, int] = {}
+    for i, c in enumerate(df.columns, 1):
+        colidx.setdefault(_norm_col(c), i)
+
+    def cidx(*names: str) -> int | None:
+        for nm in names:
+            j = colidx.get(_norm_col(nm))
+            if j:
+                return j
+        return None
+
+    tier_i = cidx("confidence_tier", "CONFIDENCE_TIER")
+    tierh_i = cidx("confidence_tier_hybrid", "CONFIDENCE_TIER_hybrid")
+    adj_i = cidx("final_confidence_operon_context", "ADJUSTED_CONFIDENCE_WITH_OPERON_CONTEXT")
+    adjh_i = cidx("ADJUSTED_CONFIDENCE_WITH_OPERON_CONTEXT_hybrid")
+    rev_i = cidx("needs_review?", "NEEDS_REVIEW?", "needs_review")
+    ctx_i = cidx("does_operon_context_improve_confidence?", "DOES_OPERON_CONTEXT_IMPROVE_CONFIDENCE?")
+    n_cols = len(df.columns)
+
+    def accent(r: int, col_i: int | None, bg: str | None, bold: bool = True) -> None:
+        if not col_i or not bg:
+            return
+        cell = ws.cell(row=r, column=col_i)
+        cell.fill = PatternFill(fill_type="solid", fgColor=bg)
+        cell.font = Font(color=_contrast_fg(bg), bold=bold)
+
+    for offset, (_, row) in enumerate(df.iterrows()):
+        r = offset + 2  # row 1 is the header
+        bg, fg = _row_tint(row)
+        fill = PatternFill(fill_type="solid", fgColor=bg)
+        font = Font(color=fg)
+        for col in range(1, n_cols + 1):
+            cell = ws.cell(row=r, column=col)
+            cell.fill = fill
+            cell.font = font
+        tier_adj = str(_series_get(row, "confidence_tier", "CONFIDENCE_TIER")).strip().lower()
+        tier_hyb = str(_series_get(row, "confidence_tier_hybrid", "CONFIDENCE_TIER_hybrid")).strip().lower()
+        accent(r, tier_i, _TIER_BRIGHT.get(tier_adj))
+        accent(r, adj_i, _TIER_BRIGHT.get(tier_adj))
+        accent(r, tierh_i, _TIER_BRIGHT.get(tier_hyb))
+        accent(r, adjh_i, _TIER_BRIGHT.get(tier_hyb))
+        rev = str(_series_get(row, "needs_review?", "NEEDS_REVIEW?", "needs_review")).strip().lower()
+        if rev == "yes":
+            accent(r, rev_i, _REVIEW_YES)
+        elif rev == "no":
+            accent(r, rev_i, _REVIEW_NO)
+        ctx = str(_series_get(row, "does_operon_context_improve_confidence?",
+                              "DOES_OPERON_CONTEXT_IMPROVE_CONFIDENCE?")).strip().lower()
+        if "increase" in ctx:
+            accent(r, ctx_i, _CTX_RAISED, bold=False)
+        elif "decrease" in ctx:
+            accent(r, ctx_i, _CTX_LOWERED, bold=False)
+
+
+def _apply_tier_row_colors(ws, df: pd.DataFrame) -> None:
+    """Color each data row. For the FINAL publication file (which carries the
+    two-stage confidence columns) use review-flag coloring; otherwise fall
+    back to per-tier row coloring when a tier column exists."""
+    if _has_any_column(df, "final_confidence_operon_context", "ADJUSTED_CONFIDENCE_WITH_OPERON_CONTEXT"):
+        _apply_review_flag_colors(ws, df)
+        return
+    if "ACS_tier" in df.columns:
+        tier_col, color_map = "ACS_tier", _ACS_TIER_ROW_COLORS
+    elif "confidence_score_tier" in df.columns:
+        tier_col, color_map = "confidence_score_tier", _SCORE_TIER_COLORS
+    elif "confidence_tier" in df.columns:
+        tier_col, color_map = "confidence_tier", _CONFIDENCE_TIER_COLORS
+    else:
+        return
+    n_cols = len(df.columns)
+    for row_idx, tier_val in enumerate(df[tier_col], start=2):  # row 1 is the header
+        hex_color = color_map.get(str(tier_val).strip())
+        if hex_color is None:
+            continue
+        fill = PatternFill(fill_type="solid", fgColor=hex_color)
+        font_color = _TIER_FONT_COLORS.get(hex_color, "000000")
+        font = Font(color=font_color)
+        for col in range(1, n_cols + 1):
+            cell = ws.cell(row=row_idx, column=col)
+            cell.fill = fill
+            cell.font = font
 
 
 def _detect_delimiter(path: str, header: str) -> str:
@@ -125,7 +343,7 @@ def _get_available_workflows() -> list[dict]:
         wf_dict['id'] = wf_key.cmd_identifier
         wf_dict['containers'] = [{'name': sif[0], 'version': sif[1]} for sif in wf_key.sif_files]
 
-        # Merge system-wide required params, this workflow's own root-path settings,
+        # Merges system-wide required params, this workflow's own root-path settings,
         # and the workflow's other params. System params come first since they're
         # infra-level. input_path/output_path apply to every workflow; sif_path and
         # db_root are only included when this workflow actually has a local-folder
@@ -141,7 +359,7 @@ def _get_available_workflows() -> list[dict]:
 
         workflows.append(wf_dict)
 
-    # Add stub workflows (not yet implemented but visible)
+    # Adds stub workflows (not yet implemented but visible)
     # Even stub workflows get system params since they'll need them when implemented
     workflows.append({
         'id': 'custom_microbiome',
@@ -383,6 +601,7 @@ def _launch_job(
     selected_tools: list[str] | None, current_user: dict, conn, main_db: str | None,
     relaunched_from: str | None = None,
     copy_from_work_dir: str | None = None,
+    run_full_operon_map: bool = False,
 ) -> dict:
     """Shared job-launch sequence: generate job_id/timestamp/output_dir,
     optionally copy a previous run's output_dir into the new one first
@@ -398,6 +617,9 @@ def _launch_job(
     """
     selected_tools_csv = ",".join(selected_tools) if selected_tools is not None else None
     selected_tools_arg = f" {workflow}.selected_tools: {selected_tools_csv}" if selected_tools_csv else ""
+    # Opt-in full-genome operon atlas: top-level flag the smk gate reads
+    # (rc_bool('run_full_operon_map', False)). Runs downstream of the report figures.
+    full_operon_map_arg = " run_full_operon_map: true" if run_full_operon_map else ""
 
     job_id = str(uuid.uuid4())
     timestamp = datetime.now().strftime('%Y-%m-%d-%H%M')
@@ -428,7 +650,7 @@ def _launch_job(
     # underscore-joined, matching the registry's cmd_identifier.
     dispatch_tokens = workflow.replace('_', ' ')
     resume_arg = f" {workflow}.resume: true" if copy_from_work_dir else ""
-    # Invoke dane_wf directly from ~/bioinformatics-tools/.venv (an editable
+    # Invokes dane_wf directly from ~/bioinformatics-tools/.venv (an editable
     # install -- code changes there are picked up instantly, no reinstall
     # needed) rather than through `uvx --from`. uvx re-resolves/caches the
     # local package on its own schedule, independent of whether
@@ -438,7 +660,7 @@ def _launch_job(
     # The venv binary has neither problem: ~0.4s overhead, always current.
     command = (
         f"~/bioinformatics-tools/.venv/bin/dane_wf {dispatch_tokens}"
-        f" input: {genome_path} output_dir: {output_dir}{selected_tools_arg}{resume_arg}"
+        f" input: {genome_path} output_dir: {output_dir}{selected_tools_arg}{full_operon_map_arg}{resume_arg}"
     )
     job_runner.submit_job(job_id, command, connection=conn)
 
@@ -448,6 +670,16 @@ def _launch_job(
 @router.post("/run_workflow")
 def run_workflow(genome_data: GenomeSend, current_user: dict = Depends(get_current_user)):
     """Submit a genome analysis workflow by name."""
+    # License gate (server-side enforcement — the analyze page also gates in the
+    # UI, but a run must never proceed without a recorded acceptance of the
+    # current licensing terms).
+    from bioinformatics_tools.api import licensing
+    if not licensing.has_accepted_current_terms(current_user["username"]):
+        raise HTTPException(
+            status_code=403,
+            detail="You must accept the current MARGIE licensing terms before running an analysis.",
+        )
+
     available_workflows = _get_available_workflows()
     allowed_ids = {wf["id"] for wf in available_workflows}
 
@@ -489,7 +721,7 @@ def run_workflow(genome_data: GenomeSend, current_user: dict = Depends(get_curre
                    "Please configure these in your Profile settings before running workflows."
         )
 
-    # Resolve genome path / output dir, falling back to the user's global config
+    # Resolves genome path / output dir, falling back to the user's global config
     # defaults (input_path / output_path) when the request didn't specify one.
     genome_path = genome_data.genome_path or user_config.get(genome_data.workflow, {}).get('input_path')
     if not genome_path or str(genome_path).strip() == '':
@@ -501,7 +733,7 @@ def run_workflow(genome_data: GenomeSend, current_user: dict = Depends(get_curre
 
     _check_genome_path_exists(genome_path, genome_data.workflow, conn)
 
-    # Validate phase/tool selection, if given -- catch typos here rather than
+    # Validates phase/tool selection, if given -- catch typos here rather than
     # have them silently no-op as an unrecognized run_<tool> config key.
     # `is not None` (not a truthiness check) matters here: an explicit empty
     # list means "run nothing", which must NOT be treated the same as
@@ -524,10 +756,19 @@ def run_workflow(genome_data: GenomeSend, current_user: dict = Depends(get_curre
 
     base_dir = (genome_data.output_dir or user_config.get(genome_data.workflow, {}).get('output_path') or current_user['home_dir']).rstrip('/')
 
+    # run_full_operon_map: enable if EITHER the request asks for it OR it is
+    # persisted in the user's per-workflow config (Profile settings). The saved
+    # config is the reliable channel -- it reaches the backend server-side and
+    # does not depend on the analysis-page checkbox making it into the payload.
+    saved_full_operon_map = bool(
+        user_config.get(genome_data.workflow, {}).get('run_full_operon_map', False))
+    effective_full_operon_map = bool(genome_data.run_full_operon_map) or saved_full_operon_map
+
     return _launch_job(
         genome_path=genome_path, workflow=genome_data.workflow,
         base_output_dir=base_dir, selected_tools=genome_data.selected_tools,
         current_user=current_user, conn=conn, main_db=main_db,
+        run_full_operon_map=effective_full_operon_map,
     )
 
 
@@ -638,18 +879,38 @@ def get_job_status(job_id: str, current_user: dict = Depends(get_current_user)):
         except Exception as exc:
             LOGGER.warning("SLURM reconciliation check failed for job %s: %s", job_id, exc)
             matches = []
-        still_active = any(m["state"] in ("RUNNING", "PENDING") for m in matches)
+        active_matches = [m for m in matches if m["state"] in ("RUNNING", "PENDING")]
+        still_active = bool(active_matches)
         result["still_active"] = still_active
         if still_active:
-            m = matches[0]
             result["status_note"] = (
-                f"Still {m['state']} on the cluster (SLURM job {m['job_id']}) -- "
-                "history shows a stale status from before a server restart."
+                "The API was restarted while this job was running. "
+                "Phase shown below is from before the restart — live updates will resume shortly."
             )
-        else:
-            result["status_note"] = (
-                f"No longer active on the cluster -- last recorded phase: {row.get('phase') or 'unknown'}."
-            )
+            if not result.get("slurm_jobs"):
+                try:
+                    enriched = ssh_slurm.enrich_slurm_jobs_from_logs(
+                        row["work_dir"], active_matches, conn,
+                    )
+                except Exception:
+                    enriched = active_matches
+                result["slurm_jobs"] = [
+                    {
+                        "job_id": m["job_id"],
+                        "rule": m.get("rule"),
+                        "status": m["state"],
+                        "time": m.get("time", ""),
+                        "genome": m.get("genome"),
+                        "source": None,
+                    }
+                    for m in enriched
+                ]
+
+    if not result.get("logs") and row.get("work_dir"):
+        try:
+            result["logs"] = ssh_slurm.read_latest_snakemake_log(row["work_dir"], conn)
+        except Exception:
+            pass
 
     return result
 
@@ -677,8 +938,9 @@ def list_jobs(
         return empty_response
 
     offset = (page - 1) * page_size
-    rows = job_history_client.list_jobs(conn, main_db, workflow=workflow, limit=page_size, offset=offset)
-    total_jobs = job_history_client.count_jobs(conn, main_db, workflow=workflow)
+    rows, total_jobs = job_history_client.list_jobs_and_count(
+        conn, main_db, workflow=workflow, limit=page_size, offset=offset,
+    )
     total_pages = max((total_jobs + page_size - 1) // page_size, 1)
 
     return {
@@ -913,6 +1175,24 @@ def download_file(
     filename = path.split("/")[-1]
 
     if format == "excel":
+        xlsx_filename = re.sub(r"\.(tsv|csv)$", "", filename, flags=re.IGNORECASE) + ".xlsx"
+
+        # Serve pre-generated .xlsx (from make-final-excel.py) when available.
+        # Read eagerly so FileNotFoundError is caught here, not inside StreamingResponse.
+        if re.search(r"\.(tsv|csv)$", path, re.IGNORECASE):
+            xlsx_remote_path = re.sub(r"\.(tsv|csv)$", ".xlsx", remote_path, flags=re.IGNORECASE)
+            try:
+                xlsx_bytes = b"".join(ssh_sftp.stream_remote_file(xlsx_remote_path, connection=conn))
+                return Response(
+                    content=xlsx_bytes,
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{xlsx_filename}"'},
+                )
+            except (FileNotFoundError, IOError):
+                pass  # no pre-generated file — fall through to on-the-fly conversion
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Failed to read Excel file: {str(e)}")
+
         try:
             content = b"".join(ssh_sftp.stream_remote_file(remote_path, connection=conn))
         except FileNotFoundError:
@@ -928,10 +1208,11 @@ def download_file(
             raise HTTPException(status_code=400, detail=f"Could not parse file as a table: {str(e)}")
 
         buffer = io.BytesIO()
-        df.to_excel(buffer, index=False, engine="openpyxl")
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="Sheet1")
+            _apply_tier_row_colors(writer.sheets["Sheet1"], df)
         buffer.seek(0)
 
-        xlsx_filename = re.sub(r"\.(tsv|csv)$", "", filename, flags=re.IGNORECASE) + ".xlsx"
         return StreamingResponse(
             buffer,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1040,3 +1321,138 @@ def all_genomes(path: str, current_user: dict = Depends(get_current_user)):
     conn = _build_connection(current_user)
     genomes = ssh_slurm.get_genomes(path, connection=conn)
     return {"success": True, "Genomes": genomes}
+
+
+def _resolve_browse_path(path: str, current_user: dict) -> str:
+    """Expand a leading ~ to the user's home and normalize the path.
+
+    Shared by /browse and /browse_view. There is deliberately no allowlist
+    or traversal jail here: both endpoints act over the user's OWN SSH
+    credentials, so the cluster's filesystem permissions are the access
+    boundary -- a user who isn't in a depot's Unix group simply gets a
+    permission error from the cluster (surfaced as 403 below), exactly as
+    they would from a shell on the login node.
+    """
+    import posixpath
+
+    if path.startswith("~"):
+        path = path.replace("~", current_user["home_dir"], 1)
+    return posixpath.normpath(path) if path else "/"
+
+
+def _permission_status(exc: Exception) -> int:
+    """Map a cluster filesystem error to 403 when it's a permission denial
+    (paramiko surfaces these as OSError/IOError with errno EACCES, not
+    always the PermissionError subclass), else 500."""
+    import errno as _errno
+    if isinstance(exc, PermissionError):
+        return 403
+    if isinstance(exc, OSError) and exc.errno == _errno.EACCES:
+        return 403
+    if "permission denied" in str(exc).lower():
+        return 403
+    return 500
+
+
+@router.get("/browse")
+def browse(path: str, current_user: dict = Depends(get_current_user)):
+    """List a remote directory on the user's cluster for file-explorer
+    navigation. Returns typed entries (directories first, then files, each
+    alphabetical) plus the parent path so the front-end can render
+    breadcrumbs and an "up" control.
+
+    Listing runs over the user's own SSH credentials, so visibility is
+    exactly what their cluster account can already see -- no extra
+    traversal guard is needed here (unlike the job-relative endpoints,
+    which restrict to a single job's work_dir).
+    """
+    import posixpath
+
+    conn = _build_connection(current_user)
+    path = _resolve_browse_path(path, current_user)
+
+    try:
+        kind = ssh_sftp.check_remote_path_kind(path, conn)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Path not found on cluster: '{path}'")
+    except Exception as exc:
+        raise HTTPException(status_code=_permission_status(exc),
+                            detail=f"Could not access path: {exc}")
+
+    if kind != "directory":
+        raise HTTPException(status_code=400, detail=f"Not a directory: '{path}'")
+
+    try:
+        entries = ssh_sftp.list_remote_dir(path, connection=conn)
+    except Exception as exc:
+        status = _permission_status(exc)
+        detail = f"Permission denied: '{path}'" if status == 403 else f"Failed to list directory: {exc}"
+        raise HTTPException(status_code=status, detail=detail)
+
+    entries.sort(key=lambda e: (e["type"] != "directory", e["name"].lower()))
+    parent = posixpath.dirname(path.rstrip("/")) or "/"
+
+    return {
+        "success": True,
+        "path": path,
+        "parent": parent,
+        "entries": entries,
+    }
+
+
+# Cap for the in-browser file viewer: read at most this many bytes so a huge
+# output file can't blow up memory or the response. The UI flags truncation.
+_VIEW_MAX_BYTES = 1_000_000
+
+
+@router.get("/browse_view")
+def browse_view(path: str, current_user: dict = Depends(get_current_user)):
+    """Return the head of an arbitrary text file from the user's cluster for
+    the file explorer's in-browser View button. Reads at most
+    _VIEW_MAX_BYTES; binary files (detected via a NUL byte) are refused
+    rather than dumped as mojibake. Same credential/permission model as
+    /browse.
+    """
+    conn = _build_connection(current_user)
+    path = _resolve_browse_path(path, current_user)
+
+    try:
+        kind = ssh_sftp.check_remote_path_kind(path, conn)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"File not found on cluster: '{path}'")
+    except Exception as exc:
+        raise HTTPException(status_code=_permission_status(exc),
+                            detail=f"Could not access path: {exc}")
+
+    if kind == "directory":
+        raise HTTPException(status_code=400, detail=f"Path is a directory, not a file: '{path}'")
+
+    try:
+        chunks, total = [], 0
+        for chunk in ssh_sftp.stream_remote_file(path, connection=conn):
+            chunks.append(chunk)
+            total += len(chunk)
+            if total >= _VIEW_MAX_BYTES:
+                break
+        raw = b"".join(chunks)[:_VIEW_MAX_BYTES]
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="File not found on remote")
+    except Exception as exc:
+        status = _permission_status(exc)
+        detail = f"Permission denied: '{path}'" if status == 403 else f"Failed to read file: {exc}"
+        raise HTTPException(status_code=status, detail=detail)
+
+    if b"\x00" in raw:
+        return {
+            "path": path,
+            "binary": True,
+            "truncated": False,
+            "content": "",
+        }
+
+    return {
+        "path": path,
+        "binary": False,
+        "truncated": total >= _VIEW_MAX_BYTES,
+        "content": raw.decode("utf-8", errors="replace"),
+    }

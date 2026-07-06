@@ -1,0 +1,870 @@
+{
+  "catalog_version": "2026-07-01",
+  "source": "build-here/build-containers/*/LICENSE.md",
+  "note": "Source of truth for the analyze-page license gate. 'tier' drives gating: blocked/commercial_restricted tools require the user to have obtained their own license/permission; verify/attribution/permissive do not gate but carry citation or compliance obligations.",
+  "tier_definitions": {
+    "blocked": "Academic-only, redistribution FORBIDDEN. The user MUST obtain their own copy/license directly from the provider. Gated.",
+    "commercial_restricted": "Free for academic / non-profit use. Commercial use is prohibited or requires separate permission. Gated for commercial users.",
+    "verify": "Terms are unclear or vary by sub-component; must be verified with upstream before public redistribution. Surfaced as a caution.",
+    "attribution": "Redistribution and commercial use allowed under the license (GPL/AGPL/CC-BY/CC-BY-SA), but citation/attribution and license-chain obligations apply. Not gated.",
+    "permissive": "Permissive or public-domain (BSD/MIT/Apache/CC0/US-Gov). No user action. Not gated."
+  },
+  "tools": [
+    {
+      "id": "phobius",
+      "name": "Phobius 1.01",
+      "phase": 7,
+      "category": "localization/topology",
+      "license": "Academic use only (no redistribution)",
+      "redistribution": "forbidden",
+      "commercial_use": "requires commercial license",
+      "user_action": "Register and download Phobius yourself from the provider; obtain a commercial license for any commercial use.",
+      "tier": "blocked",
+      "obtain_url": "https://phobius.sbc.su.se/",
+      "allowed": [
+        "Academic / non-profit research use of a copy you obtained yourself"
+      ],
+      "not_allowed": [
+        "Redistribution or re-hosting",
+        "Bundling into a public container image",
+        "Commercial use without a separate license"
+      ],
+      "citation": "Käll L, Krogh A, Sonnhammer ELL (2004), J Mol Biol 338(5):1027-1036.",
+      "provenance": {
+        "version": "1.01",
+        "downloaded_from": [
+          "http://phobius.sbc.su.se/ (register; tarball phobius101_linux.tgz)"
+        ],
+        "build_recipe": [
+          "build-here/build-containers/phase7-localization-and-topology/phobius/"
+        ],
+        "base_image": "ubuntu:22.04",
+        "notes": "Academic tarball is NOT redistributable — user supplies it; container build recipe present but image must not be pushed to a public registry."
+      }
+    },
+    {
+      "id": "signalp4",
+      "name": "SignalP 4.0 / 4.1",
+      "phase": 7,
+      "category": "localization/topology",
+      "license": "Academic use only (no redistribution)",
+      "redistribution": "forbidden",
+      "commercial_use": "requires commercial license",
+      "user_action": "Register and download SignalP yourself from DTU Health Tech; obtain a commercial license for any commercial use.",
+      "tier": "blocked",
+      "obtain_url": "https://services.healthtech.dtu.dk/services/SignalP-4.1/",
+      "allowed": [
+        "Academic / non-profit research use of a copy you obtained yourself"
+      ],
+      "not_allowed": [
+        "Redistribution or re-hosting",
+        "Bundling into a public container image",
+        "Commercial use without a separate license"
+      ],
+      "citation": "Petersen TN, Brunak S, von Heijne G, Nielsen H (2011), Nat Methods 8:785-786.",
+      "provenance": {
+        "version": "4.1",
+        "downloaded_from": [
+          "https://services.healthtech.dtu.dk/services/SignalP-4.1/ (register)"
+        ],
+        "build_recipe": [
+          "build-here/build-containers/phase7-localization-and-topology/signalp4/"
+        ],
+        "notes": "Container recipe is currently a STUB (not yet buildable); user supplies the binary."
+      }
+    },
+    {
+      "id": "signalp6",
+      "name": "SignalP 6.0",
+      "phase": 7,
+      "category": "localization/topology",
+      "license": "DTU Health Tech academic license (non-commercial, no redistribution)",
+      "redistribution": "forbidden",
+      "commercial_use": "requires commercial license",
+      "user_action": "Register and download SignalP 6.0 yourself from DTU Health Tech; obtain a commercial license for any commercial use.",
+      "tier": "blocked",
+      "obtain_url": "https://services.healthtech.dtu.dk/services/SignalP-6.0/",
+      "allowed": [
+        "Academic / non-profit research use of a copy you obtained yourself"
+      ],
+      "not_allowed": [
+        "Redistribution or re-hosting",
+        "Bundling into a public container image",
+        "Commercial use without a separate license"
+      ],
+      "citation": "Teufel F, et al. (2022), Nat Biotechnol 40:1023-1025.",
+      "doc_gap": "No LICENSE.md exists yet under build-containers/phase7-localization-and-topology/signalp6/ — should be added to mirror signalp4.",
+      "provenance": {
+        "version": "6.0",
+        "downloaded_from": [
+          "https://services.healthtech.dtu.dk/services/SignalP-6.0/ (register)"
+        ],
+        "build_recipe": [
+          "build-here/build-containers/phase7-localization-and-topology/signalp6/"
+        ],
+        "notes": "No VERSIONS/LICENSE.md build recipe yet — user supplies the binary; doc gap to close."
+      }
+    },
+    {
+      "id": "merops",
+      "name": "MEROPS (pepunit database)",
+      "phase": 4,
+      "category": "functional annotation",
+      "license": "Academic use only (no redistribution)",
+      "redistribution": "forbidden",
+      "commercial_use": "requires commercial license",
+      "user_action": "Register at EBI and download the MEROPS pepunit database yourself; obtain a commercial license for any commercial use.",
+      "tier": "blocked",
+      "obtain_url": "https://www.ebi.ac.uk/merops/",
+      "allowed": [
+        "Academic / non-profit research use of a copy you obtained yourself"
+      ],
+      "not_allowed": [
+        "Redistribution of the MEROPS database",
+        "Commercial use without a separate license"
+      ],
+      "citation": "Rawlings ND, et al. (2018), Nucleic Acids Res 46:D624-D632.",
+      "provenance": {
+        "version": "MEROPS 12.5 / current_release",
+        "downloaded_from": [
+          "https://ftp.ebi.ac.uk/pub/databases/merops/current_release/pepunit.lib",
+          "https://ftp.ebi.ac.uk/pub/databases/merops/current_release/merops_scan.lib",
+          "register: https://www.ebi.ac.uk/merops/download_list.shtml"
+        ],
+        "build_recipe": [
+          "build-here/build-containers/phase4-functional-annotation/merops/",
+          "build-here/build-databases/merops/"
+        ],
+        "notes": "Build system gates this DB behind MEROPS_ACCEPT_LICENCE=1; DB not redistributable. Aligner: DIAMOND 2.1.9."
+      }
+    },
+    {
+      "id": "tmbed",
+      "name": "TMbed / ProtT5-XL-U50 weights",
+      "phase": 7,
+      "category": "localization/topology",
+      "license": "TMbed code Apache-2.0; ProtT5-XL-U50 model weights CC-BY-NC-SA 4.0 (NonCommercial)",
+      "redistribution": "allowed with NonCommercial + ShareAlike + attribution",
+      "commercial_use": "prohibited (weights are NonCommercial)",
+      "user_action": "None for academic/non-commercial use. Commercial use of the ProtT5 weights is prohibited — contact Rostlab for commercial terms.",
+      "tier": "commercial_restricted",
+      "obtain_url": "https://github.com/agemagician/ProtTrans",
+      "allowed": [
+        "Academic / non-commercial use",
+        "Redistribution of weights with NC + ShareAlike + attribution"
+      ],
+      "not_allowed": [
+        "Any commercial use of the ProtT5 model weights"
+      ],
+      "citation": "Bernhofer M, Rost B (2022) TMbed, BMC Bioinformatics; Elnaggar A, et al. (2021) ProtTrans, IEEE TPAMI.",
+      "provenance": {
+        "version": "TMbed v1.0.0; ProtT5 = Rostlab/prot_t5_xl_half_uniref50-enc",
+        "downloaded_from": [
+          "https://github.com/BernhoferM/TMbed/releases/tag/v1.0.0",
+          "https://huggingface.co/Rostlab/prot_t5_xl_half_uniref50-enc (model weights)"
+        ],
+        "build_recipe": [
+          "build-here/build-containers/phase7-localization-and-topology/tmbed/",
+          "build-here/build-databases/tmbed/"
+        ],
+        "base_image": "python:3.11-slim",
+        "notes": "torch 2.2.2 (cpu), transformers 4.36.2. Weights gated behind TMBED_ACCEPT_LICENCE (CC-BY-NC-SA-4.0)."
+      }
+    },
+    {
+      "id": "tcdb",
+      "name": "TCDB (Transporter Classification Database)",
+      "phase": 4,
+      "category": "functional annotation",
+      "license": "Free for academic / non-profit; commercial use requires permission",
+      "redistribution": "citation permitted; commercial redistribution restricted",
+      "commercial_use": "requires permission",
+      "user_action": "None for academic/non-profit. For commercial use, obtain permission per the TCDB acceptable-use policy.",
+      "tier": "commercial_restricted",
+      "obtain_url": "https://www.tcdb.org/",
+      "allowed": [
+        "Academic / non-profit use with citation"
+      ],
+      "not_allowed": [
+        "Commercial use or commercial redistribution without permission"
+      ],
+      "citation": "Saier MH, et al. (2021), Nucleic Acids Res 49:D461-D467.",
+      "provenance": {
+        "version": "TCDB 2024 / current",
+        "downloaded_from": [
+          "https://www.tcdb.org/download.php",
+          "https://www.tcdb.org/public/tcdb (FASTA)"
+        ],
+        "build_recipe": [
+          "build-here/build-containers/phase4-functional-annotation/tcdb/",
+          "build-here/build-databases/tcdb/"
+        ],
+        "notes": "Build system gates this DB behind TCDB_ACCEPT_LICENCE=1. Aligner: DIAMOND 2.1.9."
+      }
+    },
+    {
+      "id": "kegg",
+      "name": "KEGG / KofamScan (KOfam subset)",
+      "phase": 4,
+      "category": "functional annotation",
+      "license": "KofamScan MIT; KOfam profiles public/free; full KEGG database commercial use requires a license",
+      "redistribution": "KOfam public subset allowed",
+      "commercial_use": "public KOfam subset free; full KEGG commercial requires license",
+      "user_action": "None when using the public KOfam subset (the pipeline default). If you use non-KOfam KEGG data commercially, obtain a KEGG license.",
+      "tier": "commercial_restricted",
+      "obtain_url": "https://www.kegg.jp/kegg/legal.html",
+      "allowed": [
+        "Academic and commercial use of the public KOfam subset"
+      ],
+      "not_allowed": [
+        "Commercial use of the full KEGG database without a license"
+      ],
+      "citation": "Aramaki T, et al. (2020) KofamKOALA, Bioinformatics 36:2251-2252.",
+      "provenance": {
+        "version": "KofamScan 1.3.0; KOfam (current)",
+        "downloaded_from": [
+          "https://www.genome.jp/ftp/tools/kofam_scan/kofam_scan-1.3.0.tar.gz",
+          "https://www.genome.jp/ftp/db/kofam/profiles.tar.gz",
+          "https://www.genome.jp/ftp/db/kofam/ko_list.gz"
+        ],
+        "build_recipe": [
+          "build-here/build-containers/phase4-functional-annotation/kegg/",
+          "build-here/build-databases/kegg/"
+        ],
+        "base_image": "debian:12-slim",
+        "notes": "HMMER 3.4. Uses the public KOfam subset only."
+      }
+    },
+    {
+      "id": "geneprop",
+      "name": "Genome Properties (GenProp)",
+      "phase": 4,
+      "category": "functional annotation",
+      "license": "Tooling: verify with upstream (likely permissive); flatfiles: free for academic and commercial use",
+      "redistribution": "verify tooling with upstream",
+      "commercial_use": "verify tooling with upstream",
+      "user_action": "Confirm the GenProp tooling license with upstream before public redistribution.",
+      "tier": "verify",
+      "obtain_url": "https://github.com/ebi-pf-team/genome-properties",
+      "allowed": [
+        "Use of GenProp flatfiles (academic and commercial)"
+      ],
+      "not_allowed": [
+        "Public redistribution of the tooling before confirming its license"
+      ],
+      "citation": "Richardson LJ, et al. (2019), Nucleic Acids Res 47:D564-D572.",
+      "provenance": {
+        "version": "Genome Properties (git HEAD)",
+        "downloaded_from": [
+          "https://github.com/ebi-pf-team/genome-properties.git (shallow clone)"
+        ],
+        "build_recipe": [
+          "build-here/build-containers/phase4-functional-annotation/geneprop/",
+          "build-here/build-databases/geneprop/"
+        ],
+        "base_image": "ubuntu:24.04",
+        "notes": "Flatfiles CC0/public (EBI); confirm tooling license before public redistribution."
+      }
+    },
+    {
+      "id": "interpro",
+      "name": "InterProScan (member databases)",
+      "phase": 4,
+      "category": "functional annotation",
+      "license": "InterProScan core Apache-2.0; member databases mixed (per-member terms)",
+      "redistribution": "varies per member database",
+      "commercial_use": "varies per member database",
+      "user_action": "Check each InterPro member database's terms before commercial use or redistribution.",
+      "tier": "verify",
+      "obtain_url": "https://interproscan-docs.readthedocs.io/",
+      "allowed": [
+        "Use of the Apache-2.0 InterProScan core"
+      ],
+      "not_allowed": [
+        "Assuming uniform terms across member databases — verify each",
+        "ProSite/SMART member DBs are academic-use-only (commercial requires a separate license)"
+      ],
+      "citation": "Jones P, et al. (2014) InterProScan 5, Bioinformatics 30:1236-1240.",
+      "provenance": {
+        "version": "InterProScan 5.77-108.0",
+        "downloaded_from": [
+          "https://ftp.ebi.ac.uk/pub/software/unix/iprscan/5/5.77-108.0/interproscan-5.77-108.0-64-bit.tar.gz",
+          "https://github.com/ebi-pf-team/interproscan"
+        ],
+        "build_recipe": [
+          "build-here/build-containers/phase4-functional-annotation/interpro/",
+          "build-here/build-databases/interpro/"
+        ],
+        "base_image": "eclipse-temurin:11-jre-jammy",
+        "notes": "Build system gates behind INTERPRO_ACCEPT_LICENCE=1. Member DBs ProSite + SMART are academic-use-only (commercial requires a separate licence); AMD64 only."
+      }
+    },
+    {
+      "id": "llm",
+      "name": "LLM analysis (base model)",
+      "phase": 14,
+      "category": "LLM analysis",
+      "license": "Depends on the bundled base model — verify the model's license (some restrict commercial use / redistribution)",
+      "redistribution": "verify model license",
+      "commercial_use": "verify model license",
+      "user_action": "Confirm the LLM base-model license (db/llm/base/LICENSE) before commercial use or redistribution.",
+      "tier": "verify",
+      "obtain_url": "",
+      "allowed": [
+        "Use per the base model's own license"
+      ],
+      "not_allowed": [
+        "Assuming unrestricted use — verify the model license"
+      ],
+      "citation": "Cite the base model per its model card.",
+      "provenance": {
+        "version": "placeholder (stub)",
+        "downloaded_from": [
+          "db/llm/base/ (see LICENSE)"
+        ],
+        "build_recipe": [
+          "build-here/build-containers/phase14-llm-analysis/llm/",
+          "build-here/build-databases/llm/"
+        ],
+        "notes": "Container is a STUB (not yet buildable). Verify the base-model license before use."
+      }
+    },
+    {
+      "id": "eggnog",
+      "name": "eggNOG-mapper + eggNOG DB",
+      "phase": 4,
+      "category": "functional annotation",
+      "license": "eggNOG-mapper AGPL-3.0; eggNOG 5.0 database CC-BY 4.0",
+      "redistribution": "allowed under AGPL / CC-BY",
+      "commercial_use": "allowed",
+      "user_action": "None for the user. OPERATOR obligation: because MARGIE is offered as a network service, AGPL-3.0 requires offering the eggNOG-mapper source to users.",
+      "tier": "attribution",
+      "obtain_url": "https://github.com/eggnogdb/eggnog-mapper",
+      "allowed": [
+        "Academic and commercial use",
+        "Redistribution under AGPL/CC-BY"
+      ],
+      "not_allowed": [
+        "Operating it as a network service without offering source (AGPL)",
+        "Using the eggNOG DB without attribution"
+      ],
+      "citation": "Cantalapiedra CP, et al. (2021) eggNOG-mapper v2, Mol Biol Evol 38:5825-5829.",
+      "provenance": {
+        "version": "eggNOG-mapper 2.1.12; eggNOG DB 5.0.2",
+        "downloaded_from": [
+          "https://pypi.org/project/eggnog-mapper/2.1.12/",
+          "https://github.com/eggnogdb/eggnog-mapper (source)",
+          "http://eggnog5.embl.de/download/emapperdb-5.0.2/ (eggnog.db.gz, eggnog.taxa.tar.gz, eggnog_proteins.dmnd.gz)"
+        ],
+        "build_recipe": [
+          "build-here/build-containers/phase4-functional-annotation/eggnog/",
+          "build-here/build-databases/eggnog/"
+        ],
+        "base_image": "python:3.11-slim",
+        "notes": "HMMER 3.4, DIAMOND 2.1.9. AGPL-3.0 corresponding source = the build recipe dirs above + the upstream GitHub repo; the operator must offer these to users."
+      }
+    },
+    {
+      "id": "dbcan",
+      "name": "dbCAN + HMM database",
+      "phase": 4,
+      "category": "functional annotation",
+      "license": "run_dbcan GPL-3.0; dbCAN HMM database CC-BY-SA 4.0",
+      "redistribution": "allowed (GPL / CC-BY-SA)",
+      "commercial_use": "allowed",
+      "user_action": "None. Keep the GPL chain and attribute the CC-BY-SA database.",
+      "tier": "attribution",
+      "obtain_url": "https://bcb.unl.edu/dbCAN2/",
+      "allowed": [
+        "Academic and commercial use",
+        "Redistribution under GPL / CC-BY-SA with attribution"
+      ],
+      "not_allowed": [
+        "Dropping the GPL license chain or CC-BY-SA attribution"
+      ],
+      "citation": "Zheng J, et al. (2023) dbCAN3, Nucleic Acids Res.",
+      "provenance": {
+        "version": "dbCAN 5.1.2; DB v13",
+        "downloaded_from": [
+          "https://pypi.org/project/dbcan/5.1.2/",
+          "https://bcb.unl.edu/dbCAN2/download/Databases/"
+        ],
+        "build_recipe": [
+          "build-here/build-containers/phase4-functional-annotation/dbcan/",
+          "build-here/build-databases/dbcan/"
+        ],
+        "base_image": "python:3.11-slim",
+        "notes": "HMMER 3.4, DIAMOND 2.1.9, pyrodigal 3.6.3."
+      }
+    },
+    {
+      "id": "tigrfam",
+      "name": "TIGRFAMs",
+      "phase": 4,
+      "category": "functional annotation",
+      "license": "HMMER BSD-3-Clause; TIGRFAMs 15.0 CC-BY-SA 4.0",
+      "redistribution": "allowed with attribution + ShareAlike",
+      "commercial_use": "allowed",
+      "user_action": "None. Attribute if you republish.",
+      "tier": "attribution",
+      "obtain_url": "https://www.ncbi.nlm.nih.gov/genome/annotation_prok/",
+      "allowed": [
+        "Academic and commercial use",
+        "Redistribution with attribution + ShareAlike"
+      ],
+      "not_allowed": [
+        "Republishing without attribution"
+      ],
+      "citation": "Haft DH, et al. (2013) TIGRFAMs and Genome Properties, Nucleic Acids Res 41:D387-D395.",
+      "provenance": {
+        "version": "TIGRFAMs 15.0",
+        "downloaded_from": [
+          "https://ftp.ncbi.nlm.nih.gov/hmm/TIGRFAMs/release_15.0/TIGRFAMs_15.0_HMM.LIB.gz"
+        ],
+        "build_recipe": [
+          "build-here/build-containers/phase4-functional-annotation/tigrfam/",
+          "build-here/build-databases/tigrfam/"
+        ],
+        "base_image": "debian:12-slim",
+        "notes": "HMMER 3.4."
+      }
+    },
+    {
+      "id": "uniprot",
+      "name": "UniProt Swiss-Prot + DIAMOND",
+      "phase": 4,
+      "category": "functional annotation",
+      "license": "DIAMOND GPL-3.0; UniProt Swiss-Prot CC-BY 4.0",
+      "redistribution": "allowed (GPL / CC-BY)",
+      "commercial_use": "allowed",
+      "user_action": "None. Attribute UniProt; keep the GPL chain for DIAMOND.",
+      "tier": "attribution",
+      "obtain_url": "https://www.uniprot.org/help/license",
+      "allowed": [
+        "Academic and commercial use",
+        "Redistribution with attribution"
+      ],
+      "not_allowed": [
+        "Using Swiss-Prot without attribution"
+      ],
+      "citation": "The UniProt Consortium (2023), Nucleic Acids Res 51:D523-D531.",
+      "provenance": {
+        "version": "Swiss-Prot 2025_05",
+        "downloaded_from": [
+          "https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.fasta.gz"
+        ],
+        "build_recipe": [
+          "build-here/build-containers/phase4-functional-annotation/uniprot/",
+          "build-here/build-databases/uniprot/"
+        ],
+        "base_image": "debian:12-slim",
+        "notes": "DIAMOND 2.1.9 (diamond makedb)."
+      }
+    },
+    {
+      "id": "gtdbtk",
+      "name": "GTDB-Tk",
+      "phase": 2,
+      "category": "taxonomy",
+      "license": "GPL-3.0-or-later",
+      "redistribution": "allowed (GPL)",
+      "commercial_use": "allowed",
+      "user_action": "None. Keep GPL chain; cite.",
+      "tier": "attribution",
+      "obtain_url": "https://github.com/Ecogenomics/GTDBTk",
+      "allowed": [
+        "Academic and commercial use under GPL"
+      ],
+      "not_allowed": [
+        "Dropping the GPL license chain"
+      ],
+      "citation": "Chaumeil PA, et al. (2022), Bioinformatics 38:5315-5316.",
+      "provenance": {
+        "version": "GTDB-Tk 2.7.0; GTDB r232",
+        "downloaded_from": [
+          "Bioconda gtdbtk=2.7.0",
+          "https://data.ace.uq.edu.au/public/gtdb/data/releases/latest/auxillary_files/gtdbtk_package/full_package/gtdbtk_data.tar.gz"
+        ],
+        "build_recipe": [
+          "build-here/build-containers/phase2-taxonomy-classification/gtdbtk/",
+          "build-here/build-databases/gtdbtk/"
+        ],
+        "base_image": "mambaorg/micromamba:1.5.8"
+      }
+    },
+    {
+      "id": "deepsig",
+      "name": "DeepSig",
+      "phase": 7,
+      "category": "localization/topology",
+      "license": "GPL-3.0-or-later",
+      "redistribution": "allowed (GPL)",
+      "commercial_use": "allowed",
+      "user_action": "None. Keep GPL chain; cite.",
+      "tier": "attribution",
+      "obtain_url": "https://github.com/BolognaBiocomp/deepsig",
+      "allowed": [
+        "Academic and commercial use under GPL"
+      ],
+      "not_allowed": [
+        "Dropping the GPL license chain"
+      ],
+      "citation": "Savojardo C, et al. (2018) DeepSig, Bioinformatics 34:1690-1696.",
+      "provenance": {
+        "version": "DeepSig (bolognabiocomp pinned digest)",
+        "downloaded_from": [
+          "https://github.com/BolognaBiocomp/deepsig",
+          "docker: bolognabiocomp/deepsig (pinned sha256)"
+        ],
+        "build_recipe": [
+          "build-here/build-containers/phase7-localization-and-topology/deepsig/"
+        ],
+        "notes": "Base image pinned by digest (resolved 2026-05-30)."
+      }
+    },
+    {
+      "id": "psortb",
+      "name": "PSORTb",
+      "phase": 7,
+      "category": "localization/topology",
+      "license": "GPL-2.0-or-later",
+      "redistribution": "allowed (GPL)",
+      "commercial_use": "allowed",
+      "user_action": "None. Keep GPL chain; cite.",
+      "tier": "attribution",
+      "obtain_url": "https://www.psort.org/psortb/",
+      "allowed": [
+        "Academic and commercial use under GPL"
+      ],
+      "not_allowed": [
+        "Dropping the GPL license chain"
+      ],
+      "citation": "Yu NY, et al. (2010) PSORTb 3.0, Bioinformatics 26:1608-1615.",
+      "provenance": {
+        "version": "PSORTb 3.0 (base 1.0.2)",
+        "downloaded_from": [
+          "https://github.com/brinkmanlab/psortb_commandline_docker",
+          "docker: brinkmanlab/psortb_commandline:1.0.2"
+        ],
+        "build_recipe": [
+          "build-here/build-containers/phase7-localization-and-topology/psortb/"
+        ],
+        "notes": "First-party patches under ./patches/."
+      }
+    },
+    {
+      "id": "rasttk",
+      "name": "RASTtk / SEED",
+      "phase": 3,
+      "category": "structural annotation",
+      "license": "BSD-3-Clause-style; SEED subsystems free for academic and commercial use",
+      "redistribution": "allowed (with attribution for SEED data)",
+      "commercial_use": "allowed",
+      "user_action": "None.",
+      "tier": "permissive",
+      "obtain_url": "https://github.com/TheSEED/RASTtk-Distribution",
+      "allowed": [
+        "Academic and commercial use"
+      ],
+      "not_allowed": [],
+      "citation": "Brettin T, et al. (2015) RASTtk, Sci Rep 5:8365.",
+      "provenance": {
+        "version": "BV-BRC CLI 1.040; SEED (margie-annotation latest)",
+        "downloaded_from": [
+          "https://github.com/BV-BRC/BV-BRC-CLI/releases/tag/1.040 (bvbrc-cli-1.040.deb)",
+          "https://github.com/bhsajal/margie-annotation/releases/download/latest/seed_database.json",
+          "https://github.com/bhsajal/margie-annotation/releases/download/latest/seed_database_long.tsv"
+        ],
+        "build_recipe": [
+          "build-here/build-containers/phase3-structural-annotation/rasttk/",
+          "build-here/build-databases/rasttk/"
+        ],
+        "base_image": "ubuntu:22.04"
+      }
+    },
+    {
+      "id": "pfam",
+      "name": "Pfam + HMMER",
+      "phase": 4,
+      "category": "functional annotation",
+      "license": "HMMER BSD-3-Clause; Pfam-A CC0 1.0 (public domain)",
+      "redistribution": "allowed",
+      "commercial_use": "allowed",
+      "user_action": "None.",
+      "tier": "permissive",
+      "obtain_url": "https://www.ebi.ac.uk/interpro/",
+      "allowed": [
+        "Academic and commercial use"
+      ],
+      "not_allowed": [],
+      "citation": "Mistry J, et al. (2021) Pfam, Nucleic Acids Res 49:D412-D419.",
+      "provenance": {
+        "version": "HMMER 3.4; Pfam-A 37.0",
+        "downloaded_from": [
+          "http://eddylab.org/software/hmmer/hmmer-3.4.tar.gz",
+          "https://ftp.ebi.ac.uk/pub/databases/Pfam/releases/Pfam37.0/Pfam-A.hmm.gz"
+        ],
+        "build_recipe": [
+          "build-here/build-containers/phase4-functional-annotation/pfam/",
+          "build-here/build-databases/pfam/"
+        ],
+        "base_image": "debian:12-slim"
+      }
+    },
+    {
+      "id": "cog",
+      "name": "COG (NCBI CDD)",
+      "phase": 4,
+      "category": "functional annotation",
+      "license": "U.S. Government Work (public domain); cogclassifier MIT",
+      "redistribution": "allowed",
+      "commercial_use": "allowed",
+      "user_action": "None.",
+      "tier": "permissive",
+      "obtain_url": "https://www.ncbi.nlm.nih.gov/research/cog",
+      "allowed": [
+        "Academic and commercial use"
+      ],
+      "not_allowed": [],
+      "citation": "Galperin MY, et al. (2021) COG, Nucleic Acids Res 49:D274-D281.",
+      "provenance": {
+        "version": "BLAST+ 2.16.0; cogclassifier 2.0.0; COG 2024",
+        "downloaded_from": [
+          "https://ftp.ncbi.nlm.nih.gov/blast/executables/blast+/2.16.0/ncbi-blast-2.16.0+-x64-linux.tar.gz",
+          "https://pypi.org/project/cogclassifier/2.0.0/",
+          "https://ftp.ncbi.nlm.nih.gov/pub/COG/COG2024/data/",
+          "https://ftp.ncbi.nlm.nih.gov/pub/mmdb/cdd/little_endian/Cog_LE.tar.gz"
+        ],
+        "build_recipe": [
+          "build-here/build-containers/phase4-functional-annotation/cog/",
+          "build-here/build-databases/cog/"
+        ],
+        "base_image": "python:3.11-slim"
+      }
+    },
+    {
+      "id": "pgap",
+      "name": "NCBI PGAP HMM library",
+      "phase": 4,
+      "category": "functional annotation",
+      "license": "U.S. Government Work (public domain); HMMER BSD-3-Clause",
+      "redistribution": "allowed",
+      "commercial_use": "allowed",
+      "user_action": "None.",
+      "tier": "permissive",
+      "obtain_url": "https://www.ncbi.nlm.nih.gov/genome/annotation_prok/",
+      "allowed": [
+        "Academic and commercial use"
+      ],
+      "not_allowed": [],
+      "citation": "Tatusova T, et al. (2016) PGAP, Nucleic Acids Res 44:6614-6624.",
+      "provenance": {
+        "version": "HMMER 3.4; hmm_PGAP 15.0",
+        "downloaded_from": [
+          "http://eddylab.org/software/hmmer/hmmer-3.4.tar.gz",
+          "https://ftp.ncbi.nlm.nih.gov/hmm/current/hmm_PGAP.LIB"
+        ],
+        "build_recipe": [
+          "build-here/build-containers/phase4-functional-annotation/pgap/",
+          "build-here/build-databases/pgap/"
+        ],
+        "base_image": "debian:12-slim"
+      }
+    },
+    {
+      "id": "operon",
+      "name": "Operon layer (UniOP)",
+      "phase": 5,
+      "category": "operon prediction",
+      "license": "UniOP MIT; Prodigal GPL-3.0; numpy/pandas/scipy BSD",
+      "redistribution": "allowed",
+      "commercial_use": "allowed",
+      "user_action": "None.",
+      "tier": "permissive",
+      "obtain_url": "",
+      "allowed": [
+        "Academic and commercial use"
+      ],
+      "not_allowed": [],
+      "citation": "Cite Prodigal (Hyatt D, et al. 2010, BMC Bioinformatics 11:119).",
+      "provenance": {
+        "version": "UniOP (commit 68c55d2, 2025-05-30); Prodigal 2.6.3",
+        "downloaded_from": [
+          "https://github.com/hongsua/UniOP (commit 68c55d2f8b890bd645f1fb0768137f6c09ba00e5)",
+          "Debian 12 apt: prodigal 2.6.3"
+        ],
+        "build_recipe": [
+          "build-here/build-containers/phase5-operon-layer/operon/"
+        ],
+        "notes": "UniOP vendored verbatim; numpy 1.26.4 / pandas 2.2.2 / scikit-learn 1.4.2 / scipy 1.13.1 / joblib 1.4.2."
+      }
+    },
+    {
+      "id": "quast",
+      "name": "QUAST",
+      "phase": 1,
+      "category": "genome QC",
+      "license": "GPL-2.0 (comply with upstream)",
+      "redistribution": "allowed (GPL)",
+      "commercial_use": "allowed",
+      "user_action": "None.",
+      "tier": "permissive",
+      "obtain_url": "https://github.com/ablab/quast",
+      "allowed": [
+        "Academic and commercial use under GPL"
+      ],
+      "not_allowed": [],
+      "citation": "Gurevich A, et al. (2013) QUAST, Bioinformatics 29:1072-1075.",
+      "provenance": {
+        "version": "QUAST 5.3.0",
+        "downloaded_from": [
+          "https://github.com/ablab/quast"
+        ],
+        "build_recipe": [
+          "build-here/build-containers/phase1-genome-quality-checker/quast/"
+        ],
+        "base_image": "debian:12-slim"
+      }
+    },
+    {
+      "id": "ani",
+      "name": "ANI (skani)",
+      "phase": 13,
+      "category": "synteny/similarity",
+      "license": "MIT",
+      "redistribution": "allowed",
+      "commercial_use": "allowed",
+      "user_action": "None.",
+      "tier": "permissive",
+      "obtain_url": "https://github.com/bluenote-1577/skani",
+      "allowed": [
+        "Academic and commercial use"
+      ],
+      "not_allowed": [],
+      "citation": "Shaw J, Yu YW (2023) skani, Nat Methods.",
+      "provenance": {
+        "version": "skani 0.2.1",
+        "downloaded_from": [
+          "https://crates.io/crates/skani",
+          "https://github.com/bluenote-1577/skani/releases/tag/v0.2.1"
+        ],
+        "build_recipe": [
+          "build-here/build-containers/phase13-synteny-collinearity/ani/"
+        ],
+        "base_image": "python:3.11-slim"
+      }
+    },
+    {
+      "id": "aai",
+      "name": "AAI (EzAAI + DIAMOND)",
+      "phase": 13,
+      "category": "synteny/similarity",
+      "license": "EzAAI MIT; DIAMOND GPL-3.0",
+      "redistribution": "allowed",
+      "commercial_use": "allowed",
+      "user_action": "None.",
+      "tier": "permissive",
+      "obtain_url": "https://github.com/endixk/ezaai",
+      "allowed": [
+        "Academic and commercial use"
+      ],
+      "not_allowed": [],
+      "citation": "Kim D, et al. (2021) EzAAI, J Microbiol 59:476-480.",
+      "provenance": {
+        "version": "DIAMOND 2.1.9 (+ CompareM 0.1.2 per VERSIONS / EzAAI 1.2.2 per LICENSE.md)",
+        "downloaded_from": [
+          "https://github.com/bbuchfink/diamond/releases/download/v2.1.9/diamond-linux64.tar.gz",
+          "https://pypi.org/project/comparem/",
+          "https://github.com/endixk/ezaai"
+        ],
+        "build_recipe": [
+          "build-here/build-containers/phase13-synteny-collinearity/aai/"
+        ],
+        "notes": "VERSIONS lists CompareM 0.1.2 while LICENSE.md lists EzAAI 1.2.2 — reconcile which AAI tool the image actually ships."
+      }
+    },
+    {
+      "id": "synteny",
+      "name": "Synteny (Liftoff + minimap2)",
+      "phase": 13,
+      "category": "synteny/similarity",
+      "license": "Liftoff GPL-3.0; minimap2 MIT",
+      "redistribution": "allowed",
+      "commercial_use": "allowed",
+      "user_action": "None.",
+      "tier": "permissive",
+      "obtain_url": "https://github.com/agshumate/Liftoff",
+      "allowed": [
+        "Academic and commercial use"
+      ],
+      "not_allowed": [],
+      "citation": "Shumate A, Salzberg SL (2021) Liftoff, Bioinformatics 37:1639-1643.",
+      "provenance": {
+        "version": "Liftoff 1.6.3.2; minimap2 2.28",
+        "downloaded_from": [
+          "https://pypi.org/project/liftoff/1.6.3.2/",
+          "https://github.com/lh3/minimap2/archive/refs/tags/v2.28.tar.gz"
+        ],
+        "build_recipe": [
+          "build-here/build-containers/phase13-synteny-collinearity/synteny/"
+        ],
+        "base_image": "python:3.11-slim"
+      }
+    },
+    {
+      "id": "closest-organisms",
+      "name": "Closest organisms",
+      "phase": 13,
+      "category": "synteny/similarity",
+      "license": "First-party MIT; pandas BSD",
+      "redistribution": "allowed",
+      "commercial_use": "allowed",
+      "user_action": "None.",
+      "tier": "permissive",
+      "obtain_url": "",
+      "allowed": [
+        "Academic and commercial use"
+      ],
+      "not_allowed": [],
+      "citation": "",
+      "provenance": {
+        "version": "rank_closest 1.0.0 (first-party)",
+        "downloaded_from": [
+          "first-party (margie-annotation pipeline)"
+        ],
+        "build_recipe": [
+          "build-here/build-containers/phase13-synteny-collinearity/closest-organisms/"
+        ],
+        "base_image": "python:3.11-slim"
+      }
+    },
+    {
+      "id": "envelope",
+      "name": "Envelope inference",
+      "phase": 6,
+      "category": "envelope inference",
+      "license": "First-party BSD-3-Clause",
+      "redistribution": "allowed",
+      "commercial_use": "allowed",
+      "user_action": "None.",
+      "tier": "permissive",
+      "obtain_url": "",
+      "allowed": [
+        "Academic and commercial use"
+      ],
+      "not_allowed": [],
+      "citation": "",
+      "provenance": {
+        "version": "envelope 0.1.0 (first-party)",
+        "downloaded_from": [
+          "first-party (margie-annotation pipeline)"
+        ],
+        "build_recipe": [
+          "build-here/build-containers/phase6-envelope-inference/envelope/"
+        ],
+        "base_image": "python:3.11"
+      }
+    }
+  ],
+  "provenance_note": "Each tool's 'provenance' block records the exact upstream source(s) it was downloaded/built from, its version, and the in-repo build recipe under build-here/. This is the traceable origin for every component."
+}

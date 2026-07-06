@@ -206,7 +206,7 @@ def check_multiple_slurm_jobs(
 
 
 def get_job_genome(log_path: str, connection: SSHConnection) -> str:
-    """Read a SLURM job's own log file for its "wildcards: genome=<name>"
+    """Reads a SLURM job's own log file for its "wildcards: genome=<name>"
     line. Fallback only: job_runner.run_ssh_task now reads this same line
     directly from the live orchestrator stream (Snakemake's --verbose
     output, see WILDCARDS_GENOME_RE), since this remote file gets cleaned
@@ -231,7 +231,7 @@ def find_active_jobs_in_workdir(
     username: str,
     connection: SSHConnection,
 ) -> list[dict]:
-    """List this user's SLURM jobs (RUNNING or PENDING) whose working
+    """Lists this user's SLURM jobs (RUNNING or PENDING) whose working
     directory matches work_dir exactly (trailing-slash-normalized on both
     sides).
 
@@ -241,12 +241,13 @@ def find_active_jobs_in_workdir(
     at job creation and never changes, and squeue's WorkDir column
     reflects the directory a job's driver process was launched from.
 
-    Returns a list of {"job_id": ..., "state": ...} dicts -- usually 0 or
-    1 entries; empty means nothing currently active matches this work_dir.
+    Returns a list of {"job_id": ..., "state": ..., "time": ...} dicts --
+    usually 0 or 1 entries; empty means nothing currently active matches
+    this work_dir.
     """
     ssh = connection.connect()
     stdin, stdout, stderr = ssh.exec_command(
-        f'squeue -u {username} --format="%i|%T|%Z" --noheader'
+        f'squeue -u {username} --format="%i|%T|%Z|%M" --noheader'
     )
     output = stdout.read().decode().strip()
     ssh.close()
@@ -255,12 +256,88 @@ def find_active_jobs_in_workdir(
     matches = []
     for line in output.splitlines():
         parts = line.split('|')
-        if len(parts) != 3:
+        if len(parts) != 4:
             continue
-        slurm_job_id, state, workdir = parts
+        slurm_job_id, state, workdir, elapsed = parts
         if workdir.rstrip('/') == target:
-            matches.append({"job_id": slurm_job_id, "state": state})
+            matches.append({"job_id": slurm_job_id, "state": state, "time": elapsed})
     return matches
+
+
+_RULE_FROM_LOG_RE = re.compile(r'/slurm_logs/(?:rule_(\w+)|group_([^_]+)_)')
+
+
+def enrich_slurm_jobs_from_logs(
+    work_dir: str,
+    matches: list[dict],
+    connection: SSHConnection,
+) -> list[dict]:
+    """Adds 'rule' and 'genome' to each match dict from find_active_jobs_in_workdir
+    by scanning snakemake's slurm_logs directory. Single SSH call regardless of
+    how many jobs. No-op if matches is empty."""
+    if not matches:
+        return matches
+
+    logs_dir = shlex.quote(f"{work_dir}/.snakemake/slurm_logs")
+    cmd = (
+        f"find {logs_dir} -name '*.log' 2>/dev/null | "
+        "while read f; do "
+        "  id=$(basename \"$f\" .log); "
+        "  genome=$(grep -m1 'wildcards: genome=' \"$f\" 2>/dev/null "
+        "           | sed 's/.*genome=//;s/[[:space:]].*//'); "
+        "  echo \"$id|$f|$genome\"; "
+        "done"
+    )
+    ssh = connection.connect()
+    try:
+        _, stdout, _ = ssh.exec_command(cmd)
+        output = stdout.read().decode().strip()
+    finally:
+        ssh.close()
+
+    log_info: dict[str, tuple[str, str]] = {}
+    for line in output.splitlines():
+        parts = line.split("|", 2)
+        if len(parts) == 3:
+            jid, path, genome = parts
+            log_info[jid] = (path, genome.strip())
+
+    enriched = []
+    for m in matches:
+        m = dict(m)
+        jid = m["job_id"]
+        if jid in log_info:
+            path, genome = log_info[jid]
+            rule_match = _RULE_FROM_LOG_RE.search(path)
+            if rule_match:
+                m["rule"] = rule_match.group(1) or rule_match.group(2) or None
+            if genome:
+                m["genome"] = genome
+        enriched.append(m)
+    return enriched
+
+
+def read_latest_snakemake_log(
+    work_dir: str,
+    connection: SSHConnection,
+    tail_lines: int = 300,
+) -> str:
+    """Returns the tail of the most recent Snakemake master log from
+    {work_dir}/.snakemake/log/. Used as a fallback when the API restarted
+    and the in-memory log buffer was lost. Returns "" if no log is found."""
+    log_glob = shlex.quote(f"{work_dir}/.snakemake/log")
+    cmd = (
+        f"latest=$(ls -t {log_glob}/*.log 2>/dev/null | head -1); "
+        f"[ -n \"$latest\" ] && tail -{tail_lines} \"$latest\" 2>/dev/null || true"
+    )
+    ssh = connection.connect()
+    try:
+        _, stdout, _ = ssh.exec_command(cmd)
+        return stdout.read().decode()
+    except Exception:
+        return ""
+    finally:
+        ssh.close()
 
 
 def cancel_slurm_jobs(

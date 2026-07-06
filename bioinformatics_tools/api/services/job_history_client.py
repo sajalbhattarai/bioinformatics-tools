@@ -1,17 +1,10 @@
 """
 API-side client for job_history.py.
-
-job_history.py's CRUD functions must run on the user's own cluster
-account (that's where main_database actually lives), not inside dane-api's
-own process -- so this module invokes them over SSH instead of importing
-them directly. The JSON payload goes over stdin and the JSON result (if
-any) comes back on stdout, which avoids any shell-quoting concerns around
-paths/job_ids.
-
-Every call here is best-effort: history is a convenience (resume after
-restart, browse past jobs), not the live source of truth for a running
-job, so a transient SSH hiccup while persisting must never take down the
-job it's trying to record.
+Saves and retrieves job history by SSHing into the cluster and running
+job_history.py there. The job history database lives on the cluster, so
+the API server cannot open it directly.
+Errors here are ignored — if saving history fails, the job itself keeps
+running.
 """
 import json
 import logging
@@ -70,6 +63,17 @@ def list_jobs(connection: SSHConnection, db_path: str, workflow: str | None = No
         "db_path": db_path, "workflow": workflow, "limit": limit, "offset": offset,
     })
     return result if result is not None else []
+
+
+def list_jobs_and_count(connection: SSHConnection, db_path: str, workflow: str | None = None,
+                        limit: int = 100, offset: int = 0) -> tuple[list[dict], int]:
+    """Single SSH call returning (jobs, total) — avoids the separate count round-trip."""
+    result = _run(connection, "list_and_count", {
+        "db_path": db_path, "workflow": workflow, "limit": limit, "offset": offset,
+    })
+    if result is None:
+        return [], 0
+    return result.get("jobs", []), result.get("total", 0)
 
 
 def count_jobs(connection: SSHConnection, db_path: str, workflow: str | None = None) -> int:

@@ -50,6 +50,23 @@ def init_db() -> None:
                 created_at             TEXT    NOT NULL
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS license_acceptances (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                username            TEXT    NOT NULL,
+                terms_version       TEXT    NOT NULL,
+                terms_sha256        TEXT    NOT NULL,
+                accepted_items      TEXT    NOT NULL,
+                ip_address          TEXT,
+                user_agent          TEXT,
+                accepted_at         TEXT    NOT NULL,
+                depot_record_path   TEXT
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_license_user_version
+            ON license_acceptances (username, terms_version)
+        """)
         conn.commit()
         LOGGER.info('BSP database ready')
     finally:

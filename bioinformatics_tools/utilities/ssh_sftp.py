@@ -48,20 +48,31 @@ def stream_remote_file(
     remote_path: str,
     connection: SSHConnection,
 ):
-    """Generator that streams a remote file in chunks via SFTP.
+    """Open a remote file eagerly and return a generator that streams it in 8KB chunks.
 
-    Yields bytes chunks (8KB each).
+    The SFTP open happens at call time (not during iteration), so callers can
+    catch FileNotFoundError / IOError before wrapping the result in
+    StreamingResponse.  Without this, all SFTP errors happen inside the
+    StreamingResponse generator after headers are sent, which drops the
+    connection and causes "fetch failed" in the browser.
     """
     ssh = connection.connect()
     sftp = ssh.open_sftp()
-    with sftp.open(remote_path, 'rb') as f:
-        while True:
-            chunk = f.read(8192)
-            if not chunk:
-                break
-            yield chunk
-    sftp.close()
-    ssh.close()
+    f = sftp.open(remote_path, 'rb')   # raises FileNotFoundError/IOError here if absent
+
+    def _chunks():
+        try:
+            while True:
+                chunk = f.read(8192)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            f.close()
+            sftp.close()
+            ssh.close()
+
+    return _chunks()
 
 
 def read_remote_yaml(
@@ -217,7 +228,7 @@ def copy_remote_directory(
 
 
 def _build_path_rewrite_script(directory: str, old_path: str, new_path: str) -> str:
-    """Build the embedded Python source run remotely by
+    """Buildsd the embedded Python source run remotely by
     rewrite_path_references(). Separated out so tests can run this exact
     script locally against a real temp directory, proving the
     find-and-replace logic itself works, not just that some command got
@@ -304,7 +315,7 @@ def read_remote_file_page(
     connection: SSHConnection,
     known_total_lines: int | None = None,
 ) -> dict:
-    """Read a 1-indexed inclusive line range [start_row, end_row] from a
+    """Reads a 1-indexed inclusive line range [start_row, end_row] from a
     remote text file, plus its header line (line 1) and total line count,
     in a single SSH exec_command.
 

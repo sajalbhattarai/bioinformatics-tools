@@ -218,6 +218,16 @@ def list_jobs(db_path: str, workflow: str | None = None, limit: int = 100, offse
         return []
 
 
+def list_jobs_and_count(db_path: str, workflow: str | None = None,
+                        limit: int = 100, offset: int = 0) -> dict:
+    """list_jobs + count_jobs in a single DB open — avoids two SSH round-trips
+    when the caller needs both (e.g. the paginated /jobs endpoint)."""
+    return {
+        "jobs": list_jobs(db_path, workflow=workflow, limit=limit, offset=offset),
+        "total": count_jobs(db_path, workflow=workflow),
+    }
+
+
 def count_jobs(db_path: str, workflow: str | None = None) -> int:
     """Total number of history rows matching workflow (or all rows if
     None) -- used alongside list_jobs's limit/offset to compute total
@@ -270,6 +280,11 @@ def _main() -> int:
         print(json.dumps(result))
     elif action == "list":
         result = list_jobs(
+            db_path, payload.get("workflow"), payload.get("limit", 100), payload.get("offset", 0),
+        )
+        print(json.dumps(result))
+    elif action == "list_and_count":
+        result = list_jobs_and_count(
             db_path, payload.get("workflow"), payload.get("limit", 100), payload.get("offset", 0),
         )
         print(json.dumps(result))
