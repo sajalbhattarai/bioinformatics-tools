@@ -6,22 +6,27 @@ Import into Snakemake files to access config and generate output paths.
 """
 from pathlib import Path
 
+# Repo root (the bioinformatics-tools checkout), used to derive machine-agnostic
+# fallback paths.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
 # Per-workflow fallback defaults for the root-path settings (sif_path, db_root,
-# input_path, output_path). Single source of truth — consulted by
-# workflow_registry.workflow_path_params() (what the Profile UI shows/saves)
-# and by sif_dir()/db_path()/do_margie_sb()'s own fallback chain, so a
-# workflow's defaults only need to be written in one place.
+# input_path, output_path). Users normally set these in their config; the
+# repo-relative values here are only the fallback. Single source of truth —
+# consulted by workflow_registry.workflow_path_params() (what the Profile UI
+# shows/saves) and by sif_dir()/db_path()/do_margie_sb()'s own fallback chain,
+# so a workflow's defaults only need to be written in one place.
 WORKFLOW_PATH_DEFAULTS: dict[str, dict[str, str]] = {
     'margie_sb': {
-        'sif_path': '/scratch/negishi/bhattar3/margie/sif',
-        'db_root': '/scratch/negishi/bhattar3/margie/db',
-        'input_path': '/scratch/negishi/bhattar3/margie/user-input',
-        'output_path': '/scratch/negishi/bhattar3/margie/output',
+        'sif_path': str(_REPO_ROOT / 'sif'),
+        'db_root': str(_REPO_ROOT / 'db'),
+        'input_path': str(_REPO_ROOT / 'user-input'),
+        'output_path': str(_REPO_ROOT / 'output'),
     },
     'margie': {
         # No input_path default: margie takes one specific genome file, not
         # a folder, so there's no generally-correct file to default to.
-        'output_path': '/scratch/negishi/bhattar3/margie/output',
+        'output_path': str(_REPO_ROOT / 'output'),
     },
 }
 

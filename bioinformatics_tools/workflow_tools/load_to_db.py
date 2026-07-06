@@ -15,6 +15,14 @@ Subcommands:
 
 All subcommands write to the same .db file so all results live together.
 """
+
+# ─────────────────────────── Pipeline version ────────────────────────── #
+# Bump this string whenever any scoring/labeling/consolidation script
+# changes its output in a way that makes existing DB rows stale.
+# Existing rows with a different version are deleted and reloaded.
+# is_already_processed() in workflow.py uses this to skip Stage 2
+# entirely for organisms that are already complete at the current version.
+PIPELINE_VERSION = "1.7.2027"
 import argparse
 import csv
 import hashlib
@@ -25,18 +33,24 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+# consolidated-merged-all-columns.tsv carries columns like na_seq/aa_seq and
+# concatenated multi-tool command_used strings well past Python's csv
+# module's 131072-byte default field limit -- without raising it, loading
+# that table raises _csv.Error: field larger than field limit.
+csv.field_size_limit(10_000_000)
+
 
 # Hardened connections, same as output_cache.py's _get_connection/
 # _retry_operation: bare sqlite3.connect() doesn't retry on lock contention,
 # and InterPro's 18-way concurrent load burst needs it.
 
-def _get_connection(db_path: str, timeout: float = 30.0) -> sqlite3.Connection:
+def _get_connection(db_path: str, timeout: float = 120.0) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path, timeout=timeout)
     conn.execute(f"PRAGMA busy_timeout={int(timeout * 1000)}")
     return conn
 
 
-def _retry_operation(func, max_retries: int = 5, initial_delay: float = 0.5):
+def _retry_operation(func, max_retries: int = 12, initial_delay: float = 2.0):
     """Retry func() on transient lock/IO errors with exponential backoff.
 
     func is expected to open its own connection and close it on every call
@@ -74,13 +88,17 @@ CREATE TABLE IF NOT EXISTS run_log (
     rules_completed INTEGER,
     status TEXT NOT NULL,
     loaded_at TEXT NOT NULL,
+    fasta_hash TEXT,
+    pipeline_version TEXT,
     UNIQUE(input_hash, tool)
 );
 """
 
+_RUN_LOG_NEW_COLS = [("fasta_hash", "TEXT"), ("pipeline_version", "TEXT")]
+
 
 def _compute_file_hash(file_path: str) -> str:
-    """Compute SHA-256 hash of a file's contents."""
+    """Compute full SHA-256 hash of a file's contents."""
     sha256 = hashlib.sha256()
     with open(file_path, "rb") as f:
         for chunk in iter(lambda: f.read(8192), b""):
@@ -88,18 +106,74 @@ def _compute_file_hash(file_path: str) -> str:
     return sha256.hexdigest()
 
 
-def _already_loaded(db_path: str, input_hash: str, tool: str) -> bool:
-    """Check if a file with this hash was already loaded for this tool."""
+# Public alias used by workflow.py to compute the genome FASTA hash that
+# keys is_already_processed().  Returns the full 64-char SHA-256 — distinct
+# from output_cache.compute_file_hash which truncates to 16 chars for
+# the tool output cache.
+compute_fasta_hash = _compute_file_hash
+
+
+def _ensure_run_log(conn: sqlite3.Connection) -> None:
+    """Create run_log if absent; add new columns if the table predates them."""
+    conn.execute(CREATE_RUN_LOG_SQL)
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(run_log)")}
+    for col, col_type in _RUN_LOG_NEW_COLS:
+        if col not in existing:
+            conn.execute(f"ALTER TABLE run_log ADD COLUMN {col} {col_type}")
+
+
+def _already_loaded(db_path: str, input_hash: str, tool: str,
+                    fasta_hash: str | None = None) -> bool:
+    """Return True if this tool's data is already current in the DB.
+
+    When fasta_hash is provided, the check is (fasta_hash, PIPELINE_VERSION,
+    tool) — version-aware.  Without it, falls back to (input_hash, tool)
+    for backward-compat with non-genome tables (e.g. prodigal GFF).
+    """
     if not Path(db_path).exists():
         return False
 
     def _check() -> bool:
         conn = _get_connection(db_path)
         try:
-            conn.execute(CREATE_RUN_LOG_SQL)
+            _ensure_run_log(conn)
+            if fasta_hash:
+                row = conn.execute(
+                    "SELECT id FROM run_log "
+                    "WHERE fasta_hash = ? AND pipeline_version = ? AND tool = ? AND status = 'success'",
+                    (fasta_hash, PIPELINE_VERSION, tool),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT id FROM run_log WHERE input_hash = ? AND tool = ?",
+                    (input_hash, tool),
+                ).fetchone()
+            return row is not None
+        finally:
+            conn.close()
+
+    return _retry_operation(_check)
+
+
+def is_already_processed(db_path: str, fasta_hash: str,
+                         pipeline_version: str = PIPELINE_VERSION,
+                         tool: str = "scoring_confidence_final") -> bool:
+    """Return True when this genome FASTA was fully processed at pipeline_version.
+
+    workflow.py calls this before launching Stage 2 so it can skip the
+    entire Snakemake run for organisms already at the current version.
+    """
+    if not Path(db_path).exists():
+        return False
+
+    def _check() -> bool:
+        conn = _get_connection(db_path)
+        try:
+            _ensure_run_log(conn)
             row = conn.execute(
-                "SELECT id FROM run_log WHERE input_hash = ? AND tool = ?",
-                (input_hash, tool),
+                "SELECT id FROM run_log "
+                "WHERE fasta_hash = ? AND pipeline_version = ? AND tool = ? AND status = 'success'",
+                (fasta_hash, pipeline_version, tool),
             ).fetchone()
             return row is not None
         finally:
@@ -108,24 +182,54 @@ def _already_loaded(db_path: str, input_hash: str, tool: str) -> bool:
     return _retry_operation(_check)
 
 
-def _record_load(db_path: str, input_hash: str, tool: str,
-                 input_path: str, row_count: int) -> None:
-    """Record a successful annotation load in the run_log table.
+def _delete_stale_organism_rows(db_path: str, table_name: str,
+                                organism_name: str) -> int:
+    """Delete all existing rows for organism_name from table_name before reloading.
 
-    rules_completed is always 0 here — it is only meaningful for snakemake
-    workflow runs (output_cache.py). row_count holds the number of annotation
-    rows inserted by this loader.
+    Called only when _already_loaded() returned False, so this is always safe:
+    either the organism is new (0 rows deleted) or it exists at a stale/unversioned
+    version (old rows cleared before fresh insert).  Handles pre-versioning data
+    in margie.db that has no fasta_hash in run_log.
     """
+    def _do_delete() -> int:
+        conn = _get_connection(db_path)
+        try:
+            exists = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                (table_name,),
+            ).fetchone()
+            if not exists:
+                return 0
+            cursor = conn.execute(
+                f'DELETE FROM "{table_name}" WHERE organism_name = ?',
+                (organism_name,),
+            )
+            deleted = cursor.rowcount
+            if deleted:
+                conn.commit()
+            return deleted
+        finally:
+            conn.close()
+
+    return _retry_operation(_do_delete)
+
+
+def _record_load(db_path: str, input_hash: str, tool: str,
+                 input_path: str, row_count: int,
+                 fasta_hash: str | None = None) -> None:
+    """Record a successful annotation load in the run_log table."""
     def _insert() -> None:
         conn = _get_connection(db_path)
         try:
-            conn.execute(CREATE_RUN_LOG_SQL)
+            _ensure_run_log(conn)
             conn.execute(
                 "INSERT OR IGNORE INTO run_log "
-                "(run_id, input_hash, tool, input_path, row_count, rules_completed, status, loaded_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "(run_id, input_hash, tool, input_path, row_count, rules_completed, "
+                " status, loaded_at, fasta_hash, pipeline_version) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (str(uuid.uuid4()), input_hash, tool, input_path, row_count, 0, 'success',
-                 datetime.now(timezone.utc).isoformat()),
+                 datetime.now(timezone.utc).isoformat(),
+                 fasta_hash, PIPELINE_VERSION if fasta_hash else None),
             )
             conn.commit()
         finally:
@@ -345,6 +449,12 @@ def load_csv_to_db(csv_path: str, db_path: str, table_name: str,
         conn = _get_connection(db_path)
         try:
             conn.execute(create_sql)
+            # Add any columns that are in the TSV but missing from the table
+            # (handles schema evolution when new columns are added to output files)
+            existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table_name})")}
+            for h, t in zip(headers, col_types):
+                if h not in existing:
+                    conn.execute(f'ALTER TABLE {table_name} ADD COLUMN "{h}" {t}')
             conn.executemany(insert_sql, rows)
             conn.commit()
         finally:
@@ -356,30 +466,42 @@ def load_csv_to_db(csv_path: str, db_path: str, table_name: str,
 
 # ──────────────────────────── CLI ──────────────────────────── #
 
+def _add_common_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--token", help="Write a token file on success")
+    p.add_argument("--fasta", metavar="PATH",
+                   help="Genome FASTA path used to key the pipeline result cache")
+    p.add_argument("--delete-organism", metavar="NAME",
+                   help="Delete existing rows for this organism before loading "
+                        "(used when pipeline_version changed)")
+    p.add_argument("--force", action="store_true",
+                   help="Reload even if this input was already loaded at the "
+                        "current pipeline version (bypasses the version-aware "
+                        "skip). Used for scoring, which must overwrite the DB on "
+                        "every run because its OCC operon reference is a moving "
+                        "target -- see rule load_scoring_to_db in margie_sb.smk.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Load annotation output into SQLite")
     sub = parser.add_subparsers(dest="format", required=True)
 
-    # gff subcommand
     gff_p = sub.add_parser("gff", help="Load GFF3 file into the annotations table")
     gff_p.add_argument("input_file", help="Path to GFF3 file")
     gff_p.add_argument("db_path", help="Path to SQLite database")
     gff_p.add_argument("source_tool", help="Tool name (e.g. prodigal)")
-    gff_p.add_argument("--token", help="Write a token file on success")
+    _add_common_args(gff_p)
 
-    # csv subcommand
     csv_p = sub.add_parser("csv", help="Load CSV file into a named table")
     csv_p.add_argument("input_file", help="Path to CSV file with headers")
     csv_p.add_argument("db_path", help="Path to SQLite database")
     csv_p.add_argument("table_name", help="Table name (e.g. pfam)")
-    csv_p.add_argument("--token", help="Write a token file on success")
+    _add_common_args(csv_p)
 
-    # tsv subcommand
     tsv_p = sub.add_parser("tsv", help="Load TSV file into a named table")
     tsv_p.add_argument("input_file", help="Path to TSV file with headers")
     tsv_p.add_argument("db_path", help="Path to SQLite database")
     tsv_p.add_argument("table_name", help="Table name (e.g. cog)")
-    tsv_p.add_argument("--token", help="Write a token file on success")
+    _add_common_args(tsv_p)
 
     args = parser.parse_args()
 
@@ -387,19 +509,29 @@ def main():
         print(f"ERROR: Input file not found: {args.input_file}", file=sys.stderr)
         sys.exit(1)
 
-    if args.format == "gff":
-        label = args.source_tool
-    else:
-        label = args.table_name
+    label = args.source_tool if args.format == "gff" else args.table_name
+    fasta_hash = _compute_file_hash(args.fasta) if getattr(args, "fasta", None) else None
+    organism_name = getattr(args, "delete_organism", None)
 
-    # Check provenance: skip if this exact input was already loaded
+    # Version-aware skip: if this FASTA was already loaded at PIPELINE_VERSION, skip.
+    # --force bypasses this so scoring reloads (overwrites) on every run -- its OCC
+    # operon reference grows over time, so the same genome must be re-scored and the
+    # DB refreshed each run (see rule load_scoring_to_db in margie_sb.smk).
     input_hash = _compute_file_hash(args.input_file)
-    if _already_loaded(args.db_path, input_hash, label):
-        print(f"Skipped {label}: input already loaded (hash {input_hash[:12]}...)")
+    if not getattr(args, "force", False) and _already_loaded(args.db_path, input_hash, label, fasta_hash=fasta_hash):
+        print(f"Skipped {label}: already at pipeline version {PIPELINE_VERSION}")
         if args.token:
             Path(args.token).parent.mkdir(parents=True, exist_ok=True)
-            Path(args.token).write_text(f"0 rows loaded from {label} (already in db)\n")
+            Path(args.token).write_text(f"0 rows loaded from {label} (already current)\n")
         return
+
+    # Pre-delete any existing rows for this organism before loading fresh data.
+    # Safe because _already_loaded() above would have returned True and exited
+    # if current-version rows were already present.
+    if organism_name:
+        deleted = _delete_stale_organism_rows(args.db_path, label, organism_name)
+        if deleted:
+            print(f"Deleted {deleted} stale rows from {label} (pre-delete before reload)")
 
     if args.format == "gff":
         n = load_gff_to_db(args.input_file, args.db_path, args.source_tool)
@@ -409,7 +541,8 @@ def main():
     else:
         n = load_csv_to_db(args.input_file, args.db_path, args.table_name)
 
-    _record_load(args.db_path, input_hash, label, args.input_file, n)
+    _record_load(args.db_path, input_hash, label, args.input_file, n,
+                 fasta_hash=fasta_hash)
     print(f"Loaded {n} rows from {label} into {args.db_path}")
 
     if args.token:

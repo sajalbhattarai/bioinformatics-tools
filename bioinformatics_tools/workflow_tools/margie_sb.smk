@@ -1,16 +1,11 @@
-"""
-All MARGIE(SB) rules. Same framework as margie.smk: container: + shell:,
-one rule per tool. Containers themselves are pipeline
-agnostic (each one's /usr/local/bin/run entrypoint is fully runnable on its
-own, outside any pipeline) -- the only thing this file adds is the exact
-shell invocation + Snakemake-native container wiring, mirroring margie.smk.
-"""
+
 import os
 import sys
 
 # Add current directory to path to import workflow_helpers
 sys.path.insert(0, os.path.dirname(workflow.snakefile))
 from workflow_helpers import rc, rc_bool, fixed_path, sif_path, db_path, db_token, discover_genomes, get_workflow_prefix_for, get_container_outputs_prefix_for
+from load_to_db import PIPELINE_VERSION
 
 WORKFLOW_DIR = os.path.dirname(workflow.snakefile)
 LOAD_SCRIPT = os.path.join(WORKFLOW_DIR, "load_to_db.py")
@@ -53,6 +48,11 @@ GENOME_PREFIX = get_workflow_prefix_for('{genome}', config=config)
 CONTAINER_OUTPUTS_PREFIX = get_container_outputs_prefix_for('{genome}', config=config)
 
 _OUTPUT_ROOT = rc('output_dir', '', config=config).rstrip('/')
+
+# Run-wide (not per-genome) mutex directory serializing run_rasttk's actual
+# BV-BRC submissions -- see run_rasttk's own comment for why this exists
+# instead of the margie_sb_phase3_slot Snakemake resource it replaced.
+RASTTK_BVBRC_LOCK = f"{_OUTPUT_ROOT}/.rasttk_bvbrc.lock" if _OUTPUT_ROOT else ".rasttk_bvbrc.lock"
 
 # Quast outputs
 QUAST_RESULTS = f"{GENOME_PREFIX}quast/quast.tsv"
@@ -115,8 +115,8 @@ RASTTK_GFF = f"{GENOME_PREFIX}rasttk/rast.gff"
 # margie_sb.phase4.max_parallel_tools (default 4) and passes it through as
 # --resources margie_sb_phase4_slot=<value>.
 PHASE4_TOOLS = [
-    "cog", "pfam", "tigrfam", "merops", "tcdb", "uniprot",
-    "kegg", "eggnog", "dbcan", "pgap", "interpro", "geneprop",
+    "pgap", "tigrfam", "uniprot", "pfam", "kegg", "eggnog", "cog",
+    "merops", "tcdb", "dbcan", "geneprop", "interpro",
 ]
 PHASE4_RESULTS = {t: f"{GENOME_PREFIX}{t}/{t}_results.tsv" for t in PHASE4_TOOLS}
 PHASE4_TOKENS = {t: f"{GENOME_PREFIX}{t}/{t}_db.tkn" for t in PHASE4_TOOLS}
@@ -212,16 +212,15 @@ TMBED_TOKEN = f"{GENOME_PREFIX}tmbed/tmbed_db.tkn"
 
 # SignalP 6.0: also phase6 (registry: "HPC module, no envelope dependency"),
 # but no build-here container exists -- it's an HPC environment module
-# (biocontainers/default + signalp6/6.0-fast) wrapping RCAC's own pre-built
-# Apptainer image, hence envmodules: instead of container: in run_signalp6
-# below. --format none is required: --format txt (the default) crashes with
-# "OSError: File name too long" writing a per-protein plot file named after
-# the entire FASTA header. Processing script lives at
-# build-here/.../signalp6/scripts/, invoked directly by filesystem path,
-# same as load_to_db.py/enrich_with_envelope.py.
+# (biocontainers/default + signalp6/6.0-fast) wrapping the cluster's own
+# pre-built Apptainer image, hence envmodules: instead of container: in
+# run_signalp6 below. --format none is required: --format txt (the default)
+# crashes with "OSError: File name too long" writing a per-protein plot file
+# named after the entire FASTA header. The output-processing script is a
+# user-supplied filesystem path (config: signalp6.process_script).
 SIGNALP6_RESULTS = f"{GENOME_PREFIX}signalp6/signalp6_results.tsv"
 SIGNALP6_TOKEN = f"{GENOME_PREFIX}signalp6/signalp6_db.tkn"
-SIGNALP6_PROCESS_SCRIPT = "/scratch/negishi/bhattar3/margie/build-here/build-containers/phase7-localization-and-topology/signalp6/scripts/process_signalp6_raw_results.py"
+SIGNALP6_PROCESS_SCRIPT = rc('signalp6.process_script', '', config=config)
 
 # Phase7: envelope type inference (monoderm vs diderm). Different shape:
 # -i takes a whole directory and its entrypoint recursively searches it for
@@ -264,11 +263,11 @@ PSORTB_TOKEN = f"{GENOME_PREFIX}psortb/psortb_db.tkn"
 # supports euk/gram+/gram- -- no archaea option at all -- so archaea
 # genomes get mapped to gram- in run_signalp4 below (the same conservative
 # default used elsewhere when there's no real answer, not a biological
-# claim). No processing script existed anywhere; wrote one at
-# build-here/.../signalp4/scripts/, same non-baked-in reasoning as signalp6.
+# claim). The output-processing script is a user-supplied filesystem path
+# (config: signalp4.process_script), same as signalp6.
 SIGNALP4_RESULTS = f"{GENOME_PREFIX}signalp4/signalp4_results.tsv"
 SIGNALP4_TOKEN = f"{GENOME_PREFIX}signalp4/signalp4_db.tkn"
-SIGNALP4_PROCESS_SCRIPT = "/scratch/negishi/bhattar3/margie/build-here/build-containers/phase7-localization-and-topology/signalp4/scripts/process_signalp4_raw_results.py"
+SIGNALP4_PROCESS_SCRIPT = rc('signalp4.process_script', '', config=config)
 
 # Phase9 (consolidation): modular pipeline of scripts under
 # workflow_tools/consolidation/ (detect-columns.py, merge-all-columns.py,
@@ -279,28 +278,304 @@ CONSOLIDATION_DETECTED_COLUMNS = f"{GENOME_PREFIX}consolidation/detected-columns
 CONSOLIDATION_MERGED = f"{GENOME_PREFIX}consolidation/consolidated-merged-all-columns.tsv"
 CONSOLIDATION_MANIFEST = f"{GENOME_PREFIX}consolidation/manifest.tsv"
 CONSOLIDATION_NO_STAT = f"{GENOME_PREFIX}consolidation/consolidated-no-stat.tsv"
+# COMPUTE_TOKEN marks "files on disk", same role as PHASE4_RESULTS for a
+# phase4 tool -- run_labeling's own input: depends on this, not on the DB
+# load finishing, since it only ever reads the merged TSV off disk. TOKEN
+# (below, produced by load_consolidation_to_db) marks "computed AND loaded
+# into main_database", the same two-stage shape as PHASE4_RESULTS/
+# PHASE4_TOKENS -- that's what _phase9_12_targets_for_genome/rule all
+# actually request.
+CONSOLIDATION_COMPUTE_TOKEN = f"{GENOME_PREFIX}consolidation/consolidation_compute.tkn"
 CONSOLIDATION_TOKEN = f"{GENOME_PREFIX}consolidation/consolidation_db.tkn"
 
 # Phase10 (labeling): workflow_tools/labeling/ (assign-canonical-label.py,
-# add-ec-consensus.py, add-operon-info.py). assign-canonical-label.py needs
-# CONSOLIDATION_MERGED specifically, not the filtered view -- its own
-# docstring is explicit about needing InterPro sub-database columns and
-# score/threshold columns the filtered view strips out. The other two each
-# need both the labeled output AND the merged table (independent derived
-# views over the same two upstream files, not chained through each other).
+# add-ec-consensus.py, add-operon-info.py, add-cluster-agreement.py).
+# assign-canonical-label.py needs CONSOLIDATION_MERGED specifically, not the
+# filtered view -- its own docstring is explicit about needing InterPro
+# sub-database columns and score/threshold columns the filtered view strips
+# out. The other three each need both the labeled output AND the merged
+# table (independent derived views over the same two upstream files, not
+# chained through each other).
 LABELING_SCRIPTS_DIR = os.path.join(WORKFLOW_DIR, "labeling")
 LABELING_LABELED = f"{GENOME_PREFIX}labeling/labeled-genes.tsv"
 LABELING_EC_CONSENSUS = f"{GENOME_PREFIX}labeling/labeled-genes-ec-consensus.tsv"
 LABELING_OPERON_INFO = f"{GENOME_PREFIX}labeling/labeled-genes-operon-info.tsv"
+# Collapses the TIGRFAM/PGAP/NCBIfam shared-HMM-library cluster into one
+# slot for C1, plus COG/KEGG crossref corroboration signals -- see
+# add-cluster-agreement.py's own docstring for why this exists.
+LABELING_CLUSTER_AGREEMENT = f"{GENOME_PREFIX}labeling/labeled-genes-cluster-agreement.tsv"
+# Same two-stage COMPUTE_TOKEN/TOKEN split as consolidation above.
+LABELING_COMPUTE_TOKEN = f"{GENOME_PREFIX}labeling/labeling_compute.tkn"
 LABELING_TOKEN = f"{GENOME_PREFIX}labeling/labeling_db.tkn"
 
+# Phase11 (scoring): workflow_tools/scoring/ -- hierarchy tier, confidence
+# tier, the four C1-C4 confidence-score components, and the final blended
+# confidence_score/confidence_score_tier. score-hierarchy-tier.py and
+# score-c2-operon-probability.py each need only one phase10 input;
+# score-confidence-tier.py and score-c4-ec-agreement.py chain off
+# score-hierarchy-tier.py's own output; score-c1/c3 need phase9's merged
+# table plus phase10's cluster-agreement/operon-info views;
+# score-confidence-final.py blends all four C1-C4 outputs. All host-side
+# scripts, no container, same LOADER_PYTHON as consolidation/labeling.
+SCORING_SCRIPTS_DIR = os.path.join(WORKFLOW_DIR, "scoring")
+# Persistent cross-run OCC reference (operon database) lives on depot, not in repo.
+C3_REFERENCE_PKL = rc('operon_database.occ_reference_pkl',
+                      '/depot/lindems/data/margie/operon-database/occ_reference.pkl',
+                      config=config)
+SCORING_HIERARCHY_TIER = f"{GENOME_PREFIX}scoring/scored-labeled-genes-annotation-tool-tier.tsv"
+SCORING_CONFIDENCE_TIER = f"{GENOME_PREFIX}scoring/scored-labeled-genes-annotation-ec-tier.tsv"
+SCORING_C1 = f"{GENOME_PREFIX}scoring/scored-labeled-genes-c1-tool-coverage.tsv"
+SCORING_C2 = f"{GENOME_PREFIX}scoring/scored-labeled-genes-c2-operon-probability.tsv"
+SCORING_C3 = f"{GENOME_PREFIX}scoring/scored-labeled-genes-c3-operonic-context-confidence.tsv"
+SCORING_C4 = f"{GENOME_PREFIX}scoring/scored-labeled-genes-c4-ec-agreement.tsv"
+SCORING_CONFIDENCE_FINAL = f"{GENOME_PREFIX}scoring/scored-labeled-genes-confidence-final.tsv"
+SCORING_FINAL_ANNOTATION_WITH_CONFIDENCE = f"{GENOME_PREFIX}scoring/FINAL_ANNOTATION_WITH_CONFIDENCE.tsv"
+SCORING_OCC_REFERENCE_TOKEN = f"{GENOME_PREFIX}scoring/occ_reference_updated.tkn"
+# Same two-stage COMPUTE_TOKEN/TOKEN split as consolidation/labeling above.
+SCORING_COMPUTE_TOKEN = f"{GENOME_PREFIX}scoring/scoring_compute.tkn"
+SCORING_TOKEN = f"{GENOME_PREFIX}scoring/scoring_db.tkn"
+
+# Depot archive of every run's FINAL scoring table. Scoring is a moving target:
+# its C3 Operon Context Confidence factor is scored against a cross-organism OCC
+# operon reference that GROWS as organisms are added, so the same genome can
+# score differently over time. Rather than trust one "correct" score forever, the
+# DB always holds only the LATEST scores (load_scoring_to_db --force) while every
+# run snapshots each genome's final confidence table into a timestamped, immutable
+# depot folder for history. Same depot-resident, cross-run shape as
+# FINGERPRINT_DATABASE_PATH below.
+SCORING_HISTORICAL_PATH = rc('scoring_results_historical.path',
+                             '/depot/lindems/data/margie/scoring-results-historical',
+                             config=config)
+# One folder per pipeline run, named by the run's output directory (already a
+# timestamp like 2026-07-03-1435); all of a run's genomes archive side by side.
+_RUN_TIMESTAMP = os.path.basename(_OUTPUT_ROOT) if _OUTPUT_ROOT else 'adhoc'
+SCORING_ARCHIVE_DIR = f"{SCORING_HISTORICAL_PATH}/{_RUN_TIMESTAMP}"
+SCORING_ARCHIVE_TOKEN = f"{GENOME_PREFIX}scoring/scoring_archived.tkn"
+
+# Reviewer-facing final scoring table export per organism:
+#   /depot/lindems/data/margie/final-tables/<organism>/FINAL_ANNOTATION_WITH_CONFIDENCE.tsv
+FINAL_TABLES_DEPOT_PATH = rc('final_tables_depot.path',
+                             '/depot/lindems/data/margie/final-tables',
+                             config=config)
+FINAL_TABLES_DEPOT_TOKEN = f"{GENOME_PREFIX}scoring/final_tables_depot.tkn"
+
+# ---- Post-scoring REPORT FIGURES (independent, downstream-only) -------------
+# Presentation figures + companion TSVs written into the run's OUTPUT tree only
+# (ephemeral, user-specific; never archived to depot). Reads finished scoring
+# outputs + the depot operon reference (READ-ONLY). Provably cannot alter or
+# block scoring: every rule takes scoring OUTPUTS as input and writes only its
+# own figures/ folder + token, so Snakemake schedules it strictly downstream;
+# and each shell swallows figure/verify errors (never fails the rule). Per
+# organism figures go under <genome>/scoring/figures/ ; the pangenome figures
+# go under <run>/scoring/figures/global/ .
+REPORT_FIGURES_SCRIPTS_DIR = os.path.join(SCORING_SCRIPTS_DIR, "analysis", "report_figures")
+REPORT_FIGURES_OPERON_DB = rc('report_figures.operon_db',
+                              '/depot/lindems/data/margie/fingerprint-database/'
+                              'operon-fingerprint-database-label-ordered.tsv',
+                              config=config)
+REPORT_FIGURES_ORGANISM_DIR = f"{GENOME_PREFIX}scoring/figures"
+REPORT_FIGURES_ORGANISM_TOKEN = f"{GENOME_PREFIX}scoring/report_figures.tkn"
+REPORT_FIGURES_GLOBAL_DIR = f"{_OUTPUT_ROOT}/scoring/figures/global"
+REPORT_FIGURES_GLOBAL_TOKEN = f"{_OUTPUT_ROOT}/scoring/figures/report_figures_global.tkn"
+# Optional, heavier companion to the report figures: the FULL per-organism operon
+# atlas (EVERY multi-gene operon, all sizes, paginated) under
+# <genome>/scoring/figures/complete-organism-operon-diagrams/. OFF by default
+# (opt-in via the analysis page's "generate full-genome operon map" checkbox ->
+# run_full_operon_map); same non-blocking, downstream-only guarantees as above.
+COMPLETE_OPERON_MAP_TOKEN = f"{GENOME_PREFIX}scoring/figures/complete_operon_map.tkn"
+
+
+def _home_config_flag(section, key):
+    """Read a boolean opt-in from the user's home config.yaml -- the SAME file
+    the API backend reads (~/.config/bioinformatics-tools/config.yaml). This lets
+    a persisted per-workflow setting drive a cluster-side gate DIRECTLY, so the
+    flag is honored even when the API/front-end didn't forward it into the run
+    config (e.g. a stale backend that never learned the field). Returns False on
+    any problem (missing file/key/parse error)."""
+    try:
+        import yaml
+        p = os.path.join(os.path.expanduser("~"), ".config",
+                         "bioinformatics-tools", "config.yaml")
+        with open(p) as fh:
+            cfg = yaml.safe_load(fh) or {}
+        val = (cfg.get(section) or {}).get(key, False)
+        if isinstance(val, str):
+            return val.strip().lower() not in ("false", "0", "no", "off", "")
+        return bool(val)
+    except Exception:
+        return False
+
+
+# Default for the full-operon-map gate: honor the persisted Profile/config opt-in
+# even if the run config didn't carry the flag. An explicit run-config value (from
+# the analysis-page checkbox, once the backend forwards it) still wins over this.
+_FULL_OPERON_MAP_DEFAULT = _home_config_flag("margie_sb", "run_full_operon_map")
+
+# Queue a non-blocking SLURM job that snapshots margie.db by pipeline version.
+SQLITE_SNAPSHOT_ROOT = rc('sqlite_pipeline_snapshot.path',
+                          '/depot/lindems/data/margie/sqlite/pipeline-version',
+                          config=config)
+SQLITE_SNAPSHOT_VERSION_DIR = f"{SQLITE_SNAPSHOT_ROOT}/{PIPELINE_VERSION}"
+SQLITE_SNAPSHOT_QUEUE_TOKEN = (
+    f"{_OUTPUT_ROOT}/sqlite/sqlite_snapshot_queued.tkn"
+    if _OUTPUT_ROOT else
+    "sqlite/sqlite_snapshot_queued.tkn"
+)
+
+# Phase14 (evidence): workflow_tools/evidence/build-gene-report.py -- one
+# fully-tabulated, self-contained GENE ANNOTATION REPORT per gene, read
+# straight from CONSOLIDATION_MERGED's own current column names (no
+# adapt-consolidated.py bridging layer -- see the script's own docstring
+# for why that bridge, plus the old _context_builder.py/
+# build-review-document.py pair, were retired in its favor). Runs after
+# phase11 (scoring) and phase12 (fingerprint); useful and inspectable on
+# its own, with or without phase15 (llm) below ever calling a model.
+EVIDENCE_SCRIPTS_DIR = os.path.join(WORKFLOW_DIR, "evidence")
+EVIDENCE_PREPARED_DIR = f"{GENOME_PREFIX}evidence/prepared"
+
+# Phase15 (llm): workflow_tools/llm/score-genes-llm.py -- LLM-assisted
+# review layered on TOP of phase11's already-validated confidence_score
+# (reads its C1/C2/C3 rather than recomputing them), adding its own
+# LLM-judged verdict as new, separate columns. Reads phase14's prepared
+# evidence documents (EVIDENCE_PREPARED_DIR) -- never builds evidence itself.
+LLM_SCRIPTS_DIR = os.path.join(WORKFLOW_DIR, "llm")
+LLM_REPORTS_DIR = f"{GENOME_PREFIX}llm/reports"
+LLM_SUMMARY = f"{GENOME_PREFIX}llm/llm-summary.tsv"
+LLM_COMPUTE_TOKEN = f"{GENOME_PREFIX}llm/llm_compute.tkn"
+LLM_TOKEN = f"{GENOME_PREFIX}llm/llm_db.tkn"
+# Publication-ready LLM file: joins FINAL_ + llm-summary, adds flags.
+# Also in scoring/ so all user-facing final files live in one folder.
+FINAL_LLM_ANNOTATED_PUBLICATION = f"{GENOME_PREFIX}scoring/FINAL_LLM_labeled-genes-annotated.tsv"
+
+# Phase12 (fingerprint): workflow_tools/fingerprint/add-gene-fingerprint.py --
+# runs AFTER scoring, not after labeling, even though its own own folder is
+# its own (separate from both labeling/ and scoring/) -- its
+# full-with-scores output needs SCORING_CONFIDENCE_FINAL, so it can't start
+# until phase11 finishes. The other four outputs only need LABELING_LABELED
+# and could in principle start right after phase10, but the script computes
+# all five in one pass, so the rule's input: gates on phase11 too.
+FINGERPRINT_SCRIPTS_DIR = os.path.join(WORKFLOW_DIR, "fingerprint")
+FINGERPRINT_HASH_PATTERN = f"{GENOME_PREFIX}fingerprint/labeled-genes-fingerprint-hash-pattern.tsv"
+FINGERPRINT_HASH_LABEL = f"{GENOME_PREFIX}fingerprint/labeled-genes-fingerprint-hash-label.tsv"
+FINGERPRINT_LABEL_PATTERN = f"{GENOME_PREFIX}fingerprint/labeled-genes-fingerprint-label-pattern.tsv"
+FINGERPRINT_FULL = f"{GENOME_PREFIX}fingerprint/labeled-genes-fingerprint-full.tsv"
+FINGERPRINT_FULL_WITH_SCORES = f"{GENOME_PREFIX}fingerprint/labeled-genes-fingerprint-full-with-scores.tsv"
+# User-facing final annotated output: confidence_final enriched with fingerprint
+# and operon data. Written to scoring/ (not fingerprint/) because these are the
+# primary scored outputs a user browses.
+FINAL_ANNOTATED = f"{GENOME_PREFIX}scoring/scored-raw-labeled-genes-final-annotated.tsv"
+# Curated publication-ready subset (~43 cols) with full scoring transparency.
+FINAL_ANNOTATED_PUBLICATION = f"{GENOME_PREFIX}scoring/FINAL-scored-labeled-genes-annotated.tsv"
+# GFF3 annotation file built from FINAL_ANNOTATED_PUBLICATION + rast.gff (no LLM).
+ANNOTATION_GFF = f"{GENOME_PREFIX}scoring/annotation.gff3"
+# Same two-stage COMPUTE_TOKEN/TOKEN split as every phase above.
+FINGERPRINT_COMPUTE_TOKEN = f"{GENOME_PREFIX}fingerprint/fingerprint_compute.tkn"
+FINGERPRINT_TOKEN = f"{GENOME_PREFIX}fingerprint/fingerprint_db.tkn"
+
+# Shared, persistent, cross-genome pool every genome's run_fingerprint
+# contributes to -- NOT under GENOME_PREFIX like everything else in this
+# file, since it's one file the whole collection updates, not one per
+# genome. update-fingerprint-database.py guards concurrent updates itself
+# (fcntl.LOCK_EX + .tmp/rename, see its own docstring) since Snakemake's
+# own DAG has no notion of "many rule instances safely share one output."
+FINGERPRINT_DATABASE_PATH = rc('fingerprint_database.path',
+                               '/depot/lindems/data/margie/fingerprint-database/fingerprint-database.tsv',
+                               config=config)
+FINGERPRINT_DATABASE_UPDATED_TOKEN = f"{GENOME_PREFIX}fingerprint/fingerprint_database_updated.tkn"
+_FINGERPRINT_DATABASE_DIR = os.path.dirname(FINGERPRINT_DATABASE_PATH)
+
+# Per-operon fingerprint (add-operon-fingerprint.py): composes this same
+# genome's own gene-level fingerprints, grouped by operon_id, into four
+# operon-level signals -- evidence-based vs label-based, each ordered vs
+# composition. See the script's own docstring for why label-based is the
+# one that actually generalizes across species. Same per-gene output shape
+# (one row per gene, operon fingerprint repeated across members) as every
+# other phase12 file.
+OPERON_FINGERPRINT = f"{GENOME_PREFIX}fingerprint/labeled-genes-operon-fingerprint.tsv"
+OPERON_FINGERPRINT_DATABASE_EVIDENCE_ORDERED = f"{_FINGERPRINT_DATABASE_DIR}/operon-fingerprint-database-evidence-ordered.tsv"
+OPERON_FINGERPRINT_DATABASE_EVIDENCE_COMPOSITION = f"{_FINGERPRINT_DATABASE_DIR}/operon-fingerprint-database-evidence-composition.tsv"
+OPERON_FINGERPRINT_DATABASE_LABEL_ORDERED = f"{_FINGERPRINT_DATABASE_DIR}/operon-fingerprint-database-label-ordered.tsv"
+OPERON_FINGERPRINT_DATABASE_LABEL_COMPOSITION = f"{_FINGERPRINT_DATABASE_DIR}/operon-fingerprint-database-label-composition.tsv"
+OPERON_FINGERPRINT_DATABASE_UPDATED_TOKEN = f"{GENOME_PREFIX}fingerprint/operon_fingerprint_database_updated.tkn"
+
+# Phase13 (synteny/collinearity): build-here/.../phase13-synteny-collinearity/
+# {ani,aai,closest-organisms,mauve,synteny}. Containerized (unlike every
+# phase9-12 script above) -- same container:/shell: shape as phase4 tools.
+#
+# ani/aai compare against a SHARED, PERSISTENT, cross-run genome pool at
+# GENOME_POOL_PATH -- same "ever-growing, configurable, excluded from
+# output caching" shape as FINGERPRINT_DATABASE_PATH, not just this run's
+# own batch. Every genome gets its raw .fna + RASTTK_FAA copied into the
+# pool once ITS OWN scoring is done (copy_to_genome_pool below); ani/aai
+# then point -i directly at the pool's fna/faa subdirectories. Snakemake
+# only tracks "this run's genomes are in the pool" as a real dependency --
+# whatever ELSE is already there from prior runs gets picked up by the
+# container's own directory scan at runtime, with no Snakemake-level
+# cross-run tracking needed. No locking required for the copy step itself
+# (unlike the fingerprint-database's shared-file updates) since every
+# genome writes to its own uniquely-named file in the pool.
+#
+# No fetching of EXTERNAL reference genomes (e.g. from NCBI) is wired
+# here -- synteny's own usage text describes an external-reference
+# workflow (manually downloaded assemblies) that workflow.py's
+# synteny-input/<genome>/... nested-directory convention is designed for,
+# but isn't built out here; only genomes already in the pool serve as
+# mauve/synteny references.
+GENOME_POOL_PATH = rc('genome_pool.path',
+                      '/depot/lindems/data/margie/genome-pool',
+                      config=config)
+GENOME_POOL_FNA_DIR = f"{GENOME_POOL_PATH}/fna"
+GENOME_POOL_FAA_DIR = f"{GENOME_POOL_PATH}/faa"
+GENOME_POOL_TOKEN = f"{GENOME_PREFIX}genome_pool/genome_pool_copy.tkn"
+
+ANI_BATCH_PREFIX = f"{_OUTPUT_ROOT}/original_container_outputs/ani" if _OUTPUT_ROOT else "original_container_outputs/ani"
+ANI_BATCH_OUTPUT_DIR = f"{ANI_BATCH_PREFIX}/container_outputs"
+ANI_RESULTS = f"{_OUTPUT_ROOT}/ani/ani_results.tsv" if _OUTPUT_ROOT else "ani/ani_results.tsv"
+ANI_COMPUTE_TOKEN = f"{_OUTPUT_ROOT}/ani/ani_compute.tkn" if _OUTPUT_ROOT else "ani/ani_compute.tkn"
+ANI_TOKEN = f"{_OUTPUT_ROOT}/ani/ani_db.tkn" if _OUTPUT_ROOT else "ani/ani_db.tkn"
+
+AAI_BATCH_PREFIX = f"{_OUTPUT_ROOT}/original_container_outputs/aai" if _OUTPUT_ROOT else "original_container_outputs/aai"
+AAI_BATCH_OUTPUT_DIR = f"{AAI_BATCH_PREFIX}/container_outputs"
+AAI_RESULTS = f"{_OUTPUT_ROOT}/aai/aai_results.tsv" if _OUTPUT_ROOT else "aai/aai_results.tsv"
+AAI_COMPUTE_TOKEN = f"{_OUTPUT_ROOT}/aai/aai_compute.tkn" if _OUTPUT_ROOT else "aai/aai_compute.tkn"
+AAI_TOKEN = f"{_OUTPUT_ROOT}/aai/aai_db.tkn" if _OUTPUT_ROOT else "aai/aai_db.tkn"
+
+CLOSEST_BATCH_PREFIX = f"{_OUTPUT_ROOT}/original_container_outputs/closest" if _OUTPUT_ROOT else "original_container_outputs/closest"
+CLOSEST_BATCH_OUTPUT_DIR = f"{CLOSEST_BATCH_PREFIX}/container_outputs"
+CLOSEST_RESULTS = f"{_OUTPUT_ROOT}/closest/closest_organisms.tsv" if _OUTPUT_ROOT else "closest/closest_organisms.tsv"
+CLOSEST_COMPUTE_TOKEN = f"{_OUTPUT_ROOT}/closest/closest_compute.tkn" if _OUTPUT_ROOT else "closest/closest_compute.tkn"
+CLOSEST_TOKEN = f"{_OUTPUT_ROOT}/closest/closest_db.tkn" if _OUTPUT_ROOT else "closest/closest_db.tkn"
+
+# mauve/synteny are per-genome (each query needs its OWN curated references
+# subset, picked from CLOSEST_RESULTS) -- stage_references.py (new,
+# host-side) reads CLOSEST_RESULTS and symlinks just this genome's top-N
+# picks' .fna (+ .gff3 for synteny, from each reference's own RASTTK_GFF)
+# into a per-genome references/ directory before the container runs.
+SYNTENY_SCRIPTS_DIR = os.path.join(WORKFLOW_DIR, "synteny")
+# Maps every genome name to its raw fasta path -- stage_references.py reads
+# this rather than trying to re-derive a path from a naming convention,
+# since GENOMES' own paths can have any of GENOME_EXTENSIONS and don't all
+# have to live in one flat directory.
+GENOME_FASTA_INDEX = f"{_OUTPUT_ROOT}/synteny/genome_fasta_index.tsv" if _OUTPUT_ROOT else "synteny/genome_fasta_index.tsv"
+MAUVE_REFERENCES_DIR = f"{GENOME_PREFIX}mauve/references"
+MAUVE_RESULTS = f"{GENOME_PREFIX}mauve/conserved_blocks.tsv"
+MAUVE_COMPUTE_TOKEN = f"{GENOME_PREFIX}mauve/mauve_compute.tkn"
+MAUVE_TOKEN = f"{GENOME_PREFIX}mauve/mauve_db.tkn"
+
+SYNTENY_REFERENCES_DIR = f"{GENOME_PREFIX}synteny/references"
+SYNTENY_MERGED_GFF3 = f"{GENOME_PREFIX}synteny/merged_annotation.gff3"
+SYNTENY_COMPUTE_TOKEN = f"{GENOME_PREFIX}synteny/synteny_compute.tkn"
+SYNTENY_TOKEN = f"{GENOME_PREFIX}synteny/synteny_db.tkn"
+
 # Sequencing contract (same "block behind failures" semantics as phase4-8):
-# genome G's phase9 must not start until G's phase4-8 tools complete; phase10
-# depends on phase9's merged table directly via Snakemake's own input:
-# dependency. rule phase4_10_one_genome chains a per-genome token (same
-# shape as PHASE4_TOKENS) through the same FIFO-queue pattern
-# workflow.py's _run_pipeline_batch_sequential uses for phase4-8 -- its
-# Stage 2 target is now this rule instead, one stage later.
+# genome G's phase9 must not start until G's phase4-8 tools complete;
+# phase10 depends on phase9's merged table directly via Snakemake's own
+# input: dependency, phase11 depends on phase10's outputs the same way, and
+# phase12 (fingerprint) depends on phase11's confidence-final output the
+# same way again. rule phase4_12_one_genome chains a per-genome token (same
+# shape as PHASE4_TOKENS) through the same FIFO-queue pattern workflow.py's
+# _run_pipeline_batch_sequential uses for phase4-8 -- its Stage 2 target is
+# now this rule instead, three stages later.
 
 
 def _phase4_8_targets_for_genome(genome):
@@ -345,18 +620,52 @@ def _phase4_8_targets_for_genome(genome):
     return targets
 
 
-def _phase9_10_targets_for_genome(genome):
-    """Consolidation (phase9) and labeling (phase10) tokens for ONE
-    genome, gated the same way _phase4_8_targets_for_genome gates its own
-    tools -- shared by rule all and rule phase4_10_one_genome below. Must
-    be defined before rule all, not after -- rule all's own input: block
-    calls this at parse time, same as it calls _phase4_8_targets_for_genome
-    just above."""
+def _phase9_12_targets_for_genome(genome, include_llm=True):
+    """Consolidation (phase9), labeling (phase10), scoring (phase11), and
+    fingerprint (phase12) tokens for ONE genome, gated the same way
+    _phase4_8_targets_for_genome gates its own tools -- shared by rule all
+    and rule phase4_12_one_genome below. Must be defined before rule all,
+    not after -- rule all's own input: block calls this at parse time, same
+    as it calls _phase4_8_targets_for_genome just above.
+
+    include_llm=False omits the LLM token so phase4_12_one_genome_no_llm
+    can be used as Stage 2 of the sequential orchestrator while LLM runs
+    across all genomes in a separate Stage 3 (rule llm_all)."""
     targets = []
     if rc_bool('run_consolidation', True, config=config):
         targets.append(CONSOLIDATION_TOKEN.format(genome=genome))
     if rc_bool('run_labeling', True, config=config):
         targets.append(LABELING_TOKEN.format(genome=genome))
+    if rc_bool('run_scoring', True, config=config):
+        targets.append(SCORING_TOKEN.format(genome=genome))
+        if rc_bool('run_scoring_archive', True, config=config):
+            targets.append(SCORING_ARCHIVE_TOKEN.format(genome=genome))
+        if rc_bool('run_final_tables_depot_publish', True, config=config):
+            targets.append(FINAL_TABLES_DEPOT_TOKEN.format(genome=genome))
+        if rc_bool('run_annotation_gff', False, config=config):
+            targets.append(ANNOTATION_GFF.format(genome=genome))
+        # Independent, downstream-only per-organism report figures (default on).
+        # Depends on SCORING_TOKEN; its shell never fails, so it can never block
+        # this genome's scoring/completion.
+        if rc_bool('run_report_figures', True, config=config):
+            targets.append(REPORT_FIGURES_ORGANISM_TOKEN.format(genome=genome))
+        # Optional full-genome operon atlas (every operon, all sizes). Heavy
+        # (~2-3 min/genome), so OFF by default; the analysis-page checkbox sets
+        # run_full_operon_map. Downstream of SCORING_TOKEN, shell never fails.
+        if rc_bool('run_full_operon_map', _FULL_OPERON_MAP_DEFAULT, config=config):
+            targets.append(COMPLETE_OPERON_MAP_TOKEN.format(genome=genome))
+    if rc_bool('run_fingerprint', False, config=config):
+        targets.append(FINGERPRINT_TOKEN.format(genome=genome))
+    if rc_bool('run_fingerprint_database', False, config=config):
+        targets.append(FINGERPRINT_DATABASE_UPDATED_TOKEN.format(genome=genome))
+    if rc_bool('run_operon_fingerprint', False, config=config):
+        targets.append(OPERON_FINGERPRINT_DATABASE_UPDATED_TOKEN.format(genome=genome))
+    if rc_bool('run_genome_pool', False, config=config):
+        targets.append(GENOME_POOL_TOKEN.format(genome=genome))
+    if rc_bool('run_evidence', False, config=config):
+        targets.append(EVIDENCE_PREPARED_DIR.format(genome=genome))
+    if include_llm and rc_bool('run_llm', False, config=config):
+        targets.append(LLM_TOKEN.format(genome=genome))
     return targets
 
 
@@ -373,7 +682,11 @@ rule all:
         (expand(GTDBTK_TOKEN, genome=list(GENOMES.keys())) if rc_bool('run_gtdbtk', True, config=config) else []),
         (expand(RASTTK_TOKEN, genome=list(GENOMES.keys())) if rc_bool('run_rasttk', True, config=config) else []),
         [_phase4_8_targets_for_genome(genome) for genome in GENOMES.keys()],
-        [_phase9_10_targets_for_genome(genome) for genome in GENOMES.keys()]
+        [_phase9_12_targets_for_genome(genome) for genome in GENOMES.keys()],
+        ([SQLITE_SNAPSHOT_QUEUE_TOKEN]
+         if (rc_bool('run_scoring', True, config=config)
+             and rc_bool('run_sqlite_snapshot_queue', True, config=config))
+         else [])
 
 
 rule rasttk_all:
@@ -405,22 +718,44 @@ rule phase4_8_one_genome:
     margie_sb_phase4_slot/margie_sb_phase8_slot exactly as always -- only
     the ACROSS-genome interleaving rule all's full-batch invocation would
     otherwise allow is removed by this narrower target. Kept as its own
-    rule (not folded into phase4_10_one_genome below) so anything that
+    rule (not folded into phase4_12_one_genome below) so anything that
     still names this target specifically keeps working unchanged."""
     input:
         _phase4_8_targets_for_genome(rc('target_genome', '', config=config))
 
 
-rule phase4_10_one_genome:
-    """Stage 2 entry point, extended one stage further than
-    phase4_8_one_genome above: every selected phase4-8 token for one genome
-    plus that genome's consolidation (phase9) and labeling (phase10)
-    tokens. workflow.py's _run_pipeline_batch_sequential targets this rule
-    for Stage 2 now, so a genome's local-compute work, consolidation, and
-    labeling all finish before the next genome's Stage 2 starts."""
+rule phase4_12_one_genome:
+    """Stage 2 entry point, extended further than phase4_8_one_genome
+    above: every selected phase4-8 token for one genome plus that genome's
+    consolidation (phase9), labeling (phase10), scoring (phase11), and
+    fingerprint (phase12) tokens. workflow.py's _run_pipeline_batch_sequential
+    targets this rule for Stage 2 now, so a genome's local-compute work,
+    consolidation, labeling, scoring, and fingerprinting all finish before
+    the next genome's Stage 2 starts."""
     input:
         _phase4_8_targets_for_genome(rc('target_genome', '', config=config)),
-        _phase9_10_targets_for_genome(rc('target_genome', '', config=config))
+        _phase9_12_targets_for_genome(rc('target_genome', '', config=config))
+
+
+rule phase4_12_one_genome_no_llm:
+    """Like phase4_12_one_genome but excludes the LLM token. Used as Stage 2
+    by workflow.py's sequential orchestrator when LLM is enabled, so every
+    genome's CPU-bound phases (4-12, minus LLM) complete sequentially while
+    LLM jobs for all genomes are batched into a single Stage 3 invocation
+    (rule llm_all) that lets SLURM queue them on the GPU one at a time."""
+    input:
+        _phase4_8_targets_for_genome(rc('target_genome', '', config=config)),
+        _phase9_12_targets_for_genome(rc('target_genome', '', config=config), include_llm=False)
+
+
+rule llm_all:
+    """Stage 3 entry point for workflow.py's sequential orchestrator when LLM
+    is enabled. Targets the LLM DB-load token for every genome at once so
+    Snakemake submits all LLM SLURM jobs in one invocation and SLURM's
+    gres=gpu:1 constraint naturally serialises them on the GPU without the
+    orchestrator needing to manage the ordering itself."""
+    input:
+        expand(LLM_TOKEN, genome=list(GENOMES.keys())) if rc_bool('run_llm', False, config=config) else []
 
 
 rule run_consolidation:
@@ -431,8 +766,9 @@ rule run_consolidation:
 
     detect-columns.py and merge-all-columns.py are independent of each
     other; filter-no-stat.py depends on merge-all-columns.py's merged
-    output. All three run sequentially in one rule -- none is expensive
-    enough on a single host to need its own SLURM submission."""
+    output (a derived view over it). All three run sequentially in one
+    rule -- none is expensive enough on a single host to need its own
+    SLURM submission."""
     input:
         phase4_8=lambda wildcards: _phase4_8_targets_for_genome(wildcards.genome),
         gtdbtk_results=GTDBTK_RESULTS
@@ -441,7 +777,7 @@ rule run_consolidation:
         merged=CONSOLIDATION_MERGED,
         manifest=CONSOLIDATION_MANIFEST,
         no_stat=CONSOLIDATION_NO_STAT,
-        tkn=CONSOLIDATION_TOKEN
+        tkn=CONSOLIDATION_COMPUTE_TOKEN
     threads: rc('consolidation.threads', 1, config=config)
     resources:
         mem_mb=rc('consolidation.mem_mb', 8000, config=config),
@@ -473,18 +809,19 @@ rule run_labeling:
     """Phase10 (labeling): assign-canonical-label.py decides each gene's
     canonical_label by walking the trust hierarchy over CONSOLIDATION_MERGED,
     not the no-stat view, which strips the InterPro sub-database and
-    score/threshold columns it needs. add-ec-consensus.py and
-    add-operon-info.py are independent derived views over the labeled
-    output plus the merged table, run sequentially for the same reason as
-    consolidation's scripts. Host-side only, no container."""
+    score/threshold columns it needs. add-ec-consensus.py, add-operon-info.py,
+    and add-cluster-agreement.py are independent derived views over the
+    labeled output plus the merged table, run sequentially for the same
+    reason as consolidation's scripts. Host-side only, no container."""
     input:
         merged=CONSOLIDATION_MERGED,
-        consolidation_tkn=CONSOLIDATION_TOKEN
+        consolidation_tkn=CONSOLIDATION_COMPUTE_TOKEN
     output:
         labeled=LABELING_LABELED,
         ec_consensus=LABELING_EC_CONSENSUS,
         operon_info=LABELING_OPERON_INFO,
-        tkn=LABELING_TOKEN
+        cluster_agreement=LABELING_CLUSTER_AGREEMENT,
+        tkn=LABELING_COMPUTE_TOKEN
     threads: rc('labeling.threads', 1, config=config)
     resources:
         mem_mb=rc('labeling.mem_mb', 8000, config=config),
@@ -503,7 +840,976 @@ rule run_labeling:
             --labeled-input {output.labeled} \
             --merged-input {input.merged} \
             --output {output.operon_info}
+        {LOADER_PYTHON} {LABELING_SCRIPTS_DIR}/add-cluster-agreement.py \
+            --labeled-input {output.labeled} \
+            --merged-input {input.merged} \
+            --output {output.cluster_agreement}
         echo "labeling complete for {wildcards.genome}" > {output.tkn}
+        """
+
+
+rule update_c3_occ_reference_depot:
+    """Update the depot-hosted OCC reference with this organism before scoring."""
+    input:
+        labeled=LABELING_LABELED,
+        operon_info=LABELING_OPERON_INFO,
+        labeling_tkn=LABELING_COMPUTE_TOKEN
+    output:
+        tkn=SCORING_OCC_REFERENCE_TOKEN
+    threads: 1
+    resources:
+        mem_mb=rc('scoring_occ_update.mem_mb', 4000, config=config),
+        runtime=rc('scoring_occ_update.runtime', 30, config=config)
+    params:
+        reference=C3_REFERENCE_PKL
+    shell:
+        """
+        echo "=== MARGIE_SB PHASE 11: OCC-REFERENCE UPDATE ({wildcards.genome}) ==="
+        {LOADER_PYTHON} {SCORING_SCRIPTS_DIR}/update-occ-reference-depot.py \
+            --organism {wildcards.genome} \
+            --labeled-input {input.labeled} \
+            --operon-info-input {input.operon_info} \
+            --reference {params.reference} \
+            --output-token {output.tkn}
+        """
+
+
+rule run_scoring:
+    """Phase11 (scoring): per-gene confidence_score/confidence_score_tier.
+    score-hierarchy-tier.py and score-c2-operon-probability.py each read
+    only one phase10 output directly; score-confidence-tier.py and
+    score-c4-ec-agreement.py chain off score-hierarchy-tier.py's own
+    output; score-c1-tool-coverage.py needs phase9's merged table plus
+    phase10's cluster-agreement view; c3_score_organism.py scores each operon's
+    Operon Context Confidence (C3 = geometric mean of per-pair UniOP probability
+    x pan-genome adjacency reliability rho_adj) against the prebuilt cross-organism
+    OCC reference (reference_data/occ_reference.pkl), reading UniOP per-pair
+    probabilities from operon/operon_results.tsv; score-confidence-final.py blends all
+    four C1-C4 outputs into the final confidence_score. Ordered to respect
+    every one of those dependencies in a single rule, same reasoning as
+    consolidation/labeling above. Host-side only, no container."""
+    input:
+        merged=CONSOLIDATION_MERGED,
+        labeled=LABELING_LABELED,
+        ec_consensus=LABELING_EC_CONSENSUS,
+        operon_info=LABELING_OPERON_INFO,
+        operon_results=OPERON_RESULTS,
+        cluster_agreement=LABELING_CLUSTER_AGREEMENT,
+        occ_ref_tkn=SCORING_OCC_REFERENCE_TOKEN,
+        labeling_tkn=LABELING_COMPUTE_TOKEN
+    output:
+        hierarchy_tier=SCORING_HIERARCHY_TIER,
+        confidence_tier=SCORING_CONFIDENCE_TIER,
+        c1=SCORING_C1,
+        c2=SCORING_C2,
+        c3=SCORING_C3,
+        c4=SCORING_C4,
+        confidence_final=SCORING_CONFIDENCE_FINAL,
+        final_annotation_with_confidence=SCORING_FINAL_ANNOTATION_WITH_CONFIDENCE,
+        tkn=SCORING_COMPUTE_TOKEN
+    threads: rc('scoring.threads', 1, config=config)
+    resources:
+        mem_mb=rc('scoring.mem_mb', 8000, config=config),
+        runtime=rc('scoring.runtime', 30, config=config)
+    shell:
+        """
+        echo "=== MARGIE_SB PHASE 11: SCORING ({wildcards.genome}) ==="
+        {LOADER_PYTHON} {SCORING_SCRIPTS_DIR}/score-hierarchy-tier.py \
+            --labeled-input {input.labeled} \
+            --output {output.hierarchy_tier}
+        {LOADER_PYTHON} {SCORING_SCRIPTS_DIR}/score-confidence-tier.py \
+            --hierarchy-tier-input {output.hierarchy_tier} \
+            --ec-consensus-input {input.ec_consensus} \
+            --output {output.confidence_tier}
+        {LOADER_PYTHON} {SCORING_SCRIPTS_DIR}/score-c1-tool-coverage.py \
+            --labeled-input {input.labeled} \
+            --cluster-agreement-input {input.cluster_agreement} \
+            --output {output.c1}
+        {LOADER_PYTHON} {SCORING_SCRIPTS_DIR}/score-c2-operon-probability.py \
+            --operon-input {input.operon_info} \
+            --operon-results {input.operon_results} \
+            --output {output.c2}
+        {LOADER_PYTHON} {SCORING_SCRIPTS_DIR}/c3_score_organism.py \
+            --operon-info {input.operon_info} \
+            --genes-file {input.labeled} \
+            --operon-results {input.operon_results} \
+            --reference {C3_REFERENCE_PKL} \
+            --output {output.c3}
+        {LOADER_PYTHON} {SCORING_SCRIPTS_DIR}/score-c4-ec-agreement.py \
+            --ec-consensus-input {input.ec_consensus} \
+            --confidence-tier-input {output.confidence_tier} \
+            --output {output.c4}
+        {LOADER_PYTHON} {SCORING_SCRIPTS_DIR}/score-confidence-final.py \
+            --c1-input {output.c1} \
+            --c2-input {output.c2} \
+            --c3-input {output.c3} \
+            --c4-input {output.c4} \
+            --operon-input {input.operon_info} \
+            --merged-input {input.merged} \
+            --output {output.confidence_final}
+        {LOADER_PYTHON} {SCORING_SCRIPTS_DIR}/make-final-annotation-with-confidence.py \
+            --labeled-input {input.labeled} \
+            --operon-info-input {input.operon_info} \
+            --operon-results-input {input.operon_results} \
+            --merged-input {input.merged} \
+            --hierarchy-tier-input {output.hierarchy_tier} \
+            --confidence-final-input {output.confidence_final} \
+            --c4-input {output.c4} \
+            --occ-reference {C3_REFERENCE_PKL} \
+            --output {output.final_annotation_with_confidence}
+        echo "scoring complete for {wildcards.genome}" > {output.tkn}
+        """
+
+
+rule run_fingerprint:
+    """Phase12 (fingerprint): add-gene-fingerprint.py distills each gene's
+    already-clean per-tool id/description columns (labeled-genes.tsv) plus
+    its confidence score (labeled-genes-confidence-final.tsv) into five
+    small, self-contained per-gene fingerprint strings -- see the script's
+    own docstring for the exact five combinations. Runs after scoring, not
+    right after labeling, since full-with-scores needs SCORING_CONFIDENCE_FINAL.
+    Host-side only, no container."""
+    input:
+        labeled=LABELING_LABELED,
+        confidence_final=SCORING_CONFIDENCE_FINAL,
+        scoring_tkn=SCORING_COMPUTE_TOKEN
+    output:
+        hash_pattern=FINGERPRINT_HASH_PATTERN,
+        hash_label=FINGERPRINT_HASH_LABEL,
+        label_pattern=FINGERPRINT_LABEL_PATTERN,
+        full=FINGERPRINT_FULL,
+        full_with_scores=FINGERPRINT_FULL_WITH_SCORES,
+        tkn=FINGERPRINT_COMPUTE_TOKEN
+    threads: rc('fingerprint.threads', 1, config=config)
+    resources:
+        mem_mb=rc('fingerprint.mem_mb', 8000, config=config),
+        runtime=rc('fingerprint.runtime', 30, config=config)
+    shell:
+        """
+        echo "=== MARGIE_SB PHASE 12: FINGERPRINT ({wildcards.genome}) ==="
+        {LOADER_PYTHON} {FINGERPRINT_SCRIPTS_DIR}/add-gene-fingerprint.py \
+            --labeled-input {input.labeled} \
+            --confidence-final-input {input.confidence_final} \
+            --output-hash-pattern {output.hash_pattern} \
+            --output-hash-label {output.hash_label} \
+            --output-label-pattern {output.label_pattern} \
+            --output-full {output.full} \
+            --output-full-with-scores {output.full_with_scores}
+        echo "fingerprint complete for {wildcards.genome}" > {output.tkn}
+        """
+
+
+rule update_fingerprint_database:
+    """Merges this genome's fingerprint-hash-label pairs into the shared,
+    persistent FINGERPRINT_DATABASE_PATH -- runs every time a genome is
+    annotated, not just once. Sibling to load_fingerprint_to_db (both read
+    FINGERPRINT_COMPUTE_TOKEN's outputs independently), not sequenced after
+    it -- updating the shared cross-genome pool has no dependency on this
+    genome's own per-tool tables already being loaded into main_database."""
+    input:
+        hash_label=FINGERPRINT_HASH_LABEL,
+        compute_tkn=FINGERPRINT_COMPUTE_TOKEN
+    output:
+        tkn=FINGERPRINT_DATABASE_UPDATED_TOKEN
+    params:
+        db=FINGERPRINT_DATABASE_PATH
+    threads: rc('fingerprint_database.threads', 1, config=config)
+    resources:
+        mem_mb=rc('fingerprint_database.mem_mb', 4000, config=config),
+        runtime=rc('fingerprint_database.runtime', 15, config=config)
+    shell:
+        """
+        {LOADER_PYTHON} {FINGERPRINT_SCRIPTS_DIR}/update-fingerprint-database.py \
+            --hash-label-input {input.hash_label} \
+            --organism {wildcards.genome} \
+            --fingerprint-database {params.db}
+        echo "fingerprint-database updated for {wildcards.genome}" > {output.tkn}
+        """
+
+
+rule run_operon_fingerprint:
+    """add-operon-fingerprint.py: groups this genome's own genes by
+    operon_id (phase10) and composes their gene-level fingerprints
+    (phase12's own run_fingerprint output) into the four operon-level
+    signals. Depends on FINGERPRINT_COMPUTE_TOKEN, not run_fingerprint's
+    individual file outputs directly, since it specifically needs
+    FINGERPRINT_HASH_LABEL -- same dependency shape as run_fingerprint
+    itself depending on scoring. Host-side only, no container.
+
+    Also produces FINAL_ANNOTATED here (not in run_fingerprint) because
+    add-fingerprint-to-final.py needs the operon fingerprint file to
+    populate operon-pattern frequency columns and the ordered member
+    detail string."""
+    input:
+        operon_info=LABELING_OPERON_INFO,
+        hash_label=FINGERPRINT_HASH_LABEL,
+        fingerprint_full=FINGERPRINT_FULL,
+        ec_consensus=LABELING_EC_CONSENSUS,
+        confidence_final=SCORING_CONFIDENCE_FINAL,
+        fingerprint_tkn=FINGERPRINT_COMPUTE_TOKEN,
+        labeling_genes=LABELING_LABELED,
+        phobius_top1=PHOBIUS_TOP1
+    output:
+        operon_fingerprint=OPERON_FINGERPRINT,
+        final_annotated=FINAL_ANNOTATED,
+        final_annotated_publication=FINAL_ANNOTATED_PUBLICATION,
+        tkn=f"{GENOME_PREFIX}fingerprint/operon_fingerprint_compute.tkn"
+    params:
+        gene_fp_db=FINGERPRINT_DATABASE_PATH,
+        operon_fp_db_label_ordered=OPERON_FINGERPRINT_DATABASE_LABEL_ORDERED,
+        operon_fp_db_label_composition=OPERON_FINGERPRINT_DATABASE_LABEL_COMPOSITION
+    threads: rc('operon_fingerprint.threads', 1, config=config)
+    resources:
+        mem_mb=rc('operon_fingerprint.mem_mb', 4000, config=config),
+        runtime=rc('operon_fingerprint.runtime', 15, config=config)
+    shell:
+        """
+        echo "=== MARGIE_SB PHASE 12: OPERON FINGERPRINT ({wildcards.genome}) ==="
+        {LOADER_PYTHON} {FINGERPRINT_SCRIPTS_DIR}/add-operon-fingerprint.py \
+            --operon-input {input.operon_info} \
+            --hash-label-input {input.hash_label} \
+            --output {output.operon_fingerprint}
+        {LOADER_PYTHON} {FINGERPRINT_SCRIPTS_DIR}/add-fingerprint-to-final.py \
+            --confidence-final-input {input.confidence_final} \
+            --fingerprint-hash-label-input {input.hash_label} \
+            --operon-fingerprint-input {output.operon_fingerprint} \
+            --fingerprint-database {params.gene_fp_db} \
+            --operon-fp-label-ordered-database {params.operon_fp_db_label_ordered} \
+            --operon-fp-label-composition-database {params.operon_fp_db_label_composition} \
+            --ec-consensus-input {input.ec_consensus} \
+            --output {output.final_annotated}
+        {LOADER_PYTHON} {FINGERPRINT_SCRIPTS_DIR}/make-final-annotated.py \
+            --full-evidence-input {output.final_annotated} \
+            --labeling-genes-input {input.labeling_genes} \
+            --phobius-top1-input {input.phobius_top1} \
+            --fingerprint-full-input {input.fingerprint_full} \
+            --output {output.final_annotated_publication}
+        echo "operon fingerprint complete for {wildcards.genome}" > {output.tkn}
+        """
+
+
+rule update_operon_fingerprint_database:
+    """Merges this genome's distinct operons into the four shared,
+    persistent operon-fingerprint pools -- sibling to
+    update_fingerprint_database, same independence from load_*_to_db."""
+    input:
+        operon_fingerprint=OPERON_FINGERPRINT,
+        compute_tkn=f"{GENOME_PREFIX}fingerprint/operon_fingerprint_compute.tkn"
+    output:
+        tkn=OPERON_FINGERPRINT_DATABASE_UPDATED_TOKEN
+    params:
+        evidence_ordered=OPERON_FINGERPRINT_DATABASE_EVIDENCE_ORDERED,
+        evidence_composition=OPERON_FINGERPRINT_DATABASE_EVIDENCE_COMPOSITION,
+        label_ordered=OPERON_FINGERPRINT_DATABASE_LABEL_ORDERED,
+        label_composition=OPERON_FINGERPRINT_DATABASE_LABEL_COMPOSITION
+    threads: rc('operon_fingerprint_database.threads', 1, config=config)
+    resources:
+        mem_mb=rc('operon_fingerprint_database.mem_mb', 4000, config=config),
+        runtime=rc('operon_fingerprint_database.runtime', 15, config=config)
+    shell:
+        """
+        {LOADER_PYTHON} {FINGERPRINT_SCRIPTS_DIR}/update-operon-fingerprint-database.py \
+            --operon-fingerprint-input {input.operon_fingerprint} \
+            --organism {wildcards.genome} \
+            --evidence-ordered-database {params.evidence_ordered} \
+            --evidence-composition-database {params.evidence_composition} \
+            --label-ordered-database {params.label_ordered} \
+            --label-composition-database {params.label_composition}
+        echo "operon-fingerprint-database updated for {wildcards.genome}" > {output.tkn}
+        """
+
+
+rule load_consolidation_to_db:
+    """Load phase9 (consolidation) results into main_database -- same
+    load_to_db.py tsv <file> <db> <table> shape as every load_<tool>_to_db
+    rule above, just two tables instead of one (the master merged-evidence
+    table, plus the stripped readable view)."""
+    input:
+        merged=CONSOLIDATION_MERGED,
+        no_stat=CONSOLIDATION_NO_STAT,
+        compute_tkn=CONSOLIDATION_COMPUTE_TOKEN,
+        fasta=lambda wildcards: GENOMES[wildcards.genome]
+    output:
+        tkn=CONSOLIDATION_TOKEN
+    params:
+        db=MAIN_DATABASE,
+        script=LOAD_SCRIPT
+    shell:
+        """
+        {LOADER_PYTHON} {params.script} tsv {input.merged} {params.db} consolidation_merged \
+            --fasta {input.fasta} --delete-organism {wildcards.genome}
+        {LOADER_PYTHON} {params.script} tsv {input.no_stat} {params.db} consolidation_no_stat \
+            --fasta {input.fasta} --delete-organism {wildcards.genome}
+        echo "consolidation loaded for {wildcards.genome}" > {output.tkn}
+        """
+
+
+rule load_labeling_to_db:
+    """Load phase10 (labeling) results into main_database -- one table per
+    output TSV, same shape as load_consolidation_to_db above."""
+    input:
+        labeled=LABELING_LABELED,
+        ec_consensus=LABELING_EC_CONSENSUS,
+        operon_info=LABELING_OPERON_INFO,
+        cluster_agreement=LABELING_CLUSTER_AGREEMENT,
+        compute_tkn=LABELING_COMPUTE_TOKEN,
+        fasta=lambda wildcards: GENOMES[wildcards.genome]
+    output:
+        tkn=LABELING_TOKEN
+    params:
+        db=MAIN_DATABASE,
+        script=LOAD_SCRIPT
+    shell:
+        """
+        {LOADER_PYTHON} {params.script} tsv {input.labeled} {params.db} labeling_labeled \
+            --fasta {input.fasta} --delete-organism {wildcards.genome}
+        {LOADER_PYTHON} {params.script} tsv {input.ec_consensus} {params.db} labeling_ec_consensus \
+            --fasta {input.fasta} --delete-organism {wildcards.genome}
+        {LOADER_PYTHON} {params.script} tsv {input.operon_info} {params.db} labeling_operon_info \
+            --fasta {input.fasta} --delete-organism {wildcards.genome}
+        {LOADER_PYTHON} {params.script} tsv {input.cluster_agreement} {params.db} labeling_cluster_agreement \
+            --fasta {input.fasta} --delete-organism {wildcards.genome}
+        echo "labeling loaded for {wildcards.genome}" > {output.tkn}
+        """
+
+
+rule load_scoring_to_db:
+    """Load phase11 (scoring) results into main_database -- one table per
+    output TSV, including every C1-C4 component (not just the final blended
+    confidence_score) so the API can show the breakdown behind a gene's
+    score, not just the number.
+
+    OVERWRITE semantics: scoring is a moving target (its C3 OCC operon reference
+    grows as organisms are added), so the DB must always hold the LATEST scores.
+    Every load passes --delete-organism (replace this genome's rows) AND --force
+    (bypass load_to_db.py's version-aware "already loaded" skip), so a same-version
+    re-run refreshes the DB instead of skipping. Scoring recomputes on every run
+    (see _genome_cache_map in workflow.py). The pre-overwrite scores are preserved
+    for history by rule archive_scoring_to_depot."""
+    input:
+        hierarchy_tier=SCORING_HIERARCHY_TIER,
+        confidence_tier=SCORING_CONFIDENCE_TIER,
+        c1=SCORING_C1,
+        c2=SCORING_C2,
+        c3=SCORING_C3,
+        c4=SCORING_C4,
+        confidence_final=SCORING_CONFIDENCE_FINAL,
+        compute_tkn=SCORING_COMPUTE_TOKEN,
+        fasta=lambda wildcards: GENOMES[wildcards.genome]
+    output:
+        tkn=SCORING_TOKEN
+    params:
+        db=MAIN_DATABASE,
+        script=LOAD_SCRIPT
+    shell:
+        """
+        {LOADER_PYTHON} {params.script} tsv {input.hierarchy_tier} {params.db} scoring_hierarchy_tier \
+            --fasta {input.fasta} --delete-organism {wildcards.genome} --force
+        {LOADER_PYTHON} {params.script} tsv {input.confidence_tier} {params.db} scoring_confidence_tier \
+            --fasta {input.fasta} --delete-organism {wildcards.genome} --force
+        {LOADER_PYTHON} {params.script} tsv {input.c1} {params.db} scoring_c1_tool_coverage \
+            --fasta {input.fasta} --delete-organism {wildcards.genome} --force
+        {LOADER_PYTHON} {params.script} tsv {input.c2} {params.db} scoring_c2_operon_probability \
+            --fasta {input.fasta} --delete-organism {wildcards.genome} --force
+        {LOADER_PYTHON} {params.script} tsv {input.c3} {params.db} scoring_c3_operon_context \
+            --fasta {input.fasta} --delete-organism {wildcards.genome} --force
+        {LOADER_PYTHON} {params.script} tsv {input.c4} {params.db} scoring_c4_ec_agreement \
+            --fasta {input.fasta} --delete-organism {wildcards.genome} --force
+        {LOADER_PYTHON} {params.script} tsv {input.confidence_final} {params.db} scoring_confidence_final \
+            --fasta {input.fasta} --delete-organism {wildcards.genome} --force
+        echo "scoring loaded for {wildcards.genome}" > {output.tkn}
+        """
+
+
+rule archive_scoring_to_depot:
+    """Snapshot this genome's FINAL scoring table into a timestamped, immutable
+    depot folder (SCORING_ARCHIVE_DIR = SCORING_HISTORICAL_PATH/<run-timestamp>).
+
+    Scoring is deliberately never cached and is re-scored on every run because
+    its cross-organism OCC operon reference grows over time -- so the DB only
+    ever holds the LATEST scores (load_scoring_to_db --force). This archive keeps
+    the full history: one confidence-final TSV per genome per run, so any past
+    run's scores can always be recovered even though the DB has moved on. Sibling
+    to load_scoring_to_db (both read the scoring outputs independently), same
+    depot-pool shape as update_fingerprint_database. Gate with run_scoring_archive
+    (default true); set false when the depot mount is unavailable."""
+    input:
+        confidence_final=SCORING_CONFIDENCE_FINAL,
+        compute_tkn=SCORING_COMPUTE_TOKEN
+    output:
+        tkn=SCORING_ARCHIVE_TOKEN
+    params:
+        dest_dir=SCORING_ARCHIVE_DIR
+    threads: 1
+    resources:
+        mem_mb=rc('scoring_archive.mem_mb', 1000, config=config),
+        runtime=rc('scoring_archive.runtime', 10, config=config)
+    shell:
+        """
+        echo "=== MARGIE_SB: ARCHIVE SCORING TO DEPOT ({wildcards.genome}) ==="
+        mkdir -p {params.dest_dir}
+        cp {input.confidence_final} {params.dest_dir}/{wildcards.genome}-scored-labeled-genes-confidence-final.tsv
+        echo "scoring archived for {wildcards.genome} -> {params.dest_dir}" > {output.tkn}
+        """
+
+
+rule publish_final_annotation_to_depot:
+    """Publish reviewer-facing final scoring table to depot per organism."""
+    input:
+        final_with_confidence=SCORING_FINAL_ANNOTATION_WITH_CONFIDENCE,
+        scoring_tkn=SCORING_COMPUTE_TOKEN
+    output:
+        tkn=FINAL_TABLES_DEPOT_TOKEN
+    params:
+        dest_root=FINAL_TABLES_DEPOT_PATH
+    threads: 1
+    resources:
+        mem_mb=rc('final_tables_depot.mem_mb', 1000, config=config),
+        runtime=rc('final_tables_depot.runtime', 10, config=config)
+    shell:
+        """
+        echo "=== MARGIE_SB: PUBLISH FINAL TABLE TO DEPOT ({wildcards.genome}) ==="
+        DEST="{params.dest_root}/{wildcards.genome}"
+        mkdir -p "$DEST"
+        cp {input.final_with_confidence} "$DEST/FINAL_ANNOTATION_WITH_CONFIDENCE.tsv"
+        echo "final annotation published for {wildcards.genome} -> $DEST" > {output.tkn}
+        """
+
+
+rule run_report_figures_one_genome:
+    """Independent, downstream-only: per-organism presentation figures + TSVs
+    into <genome>/scoring/figures/ , showing this genome's confidence results in
+    the context of the pangenome operon reference. Depends only on SCORING_TOKEN
+    (scoring computed AND loaded); writes only its own figures/ folder + token.
+    The shell swallows any figure/verify error (|| echo ...) so this rule can
+    NEVER fail or block the genome. Gate: run_report_figures (default true)."""
+    input:
+        scoring_tkn=SCORING_TOKEN
+    output:
+        tkn=REPORT_FIGURES_ORGANISM_TOKEN
+    params:
+        scripts=REPORT_FIGURES_SCRIPTS_DIR,
+        outdir=REPORT_FIGURES_ORGANISM_DIR,
+        operon_db=REPORT_FIGURES_OPERON_DB,
+        run_root=_OUTPUT_ROOT
+    threads: 1
+    resources:
+        mem_mb=rc('report_figures.mem_mb', 8000, config=config),
+        runtime=rc('report_figures.runtime', 30, config=config)
+    shell:
+        """
+        echo "=== MARGIE_SB: REPORT FIGURES ({wildcards.genome}) ==="
+        {LOADER_PYTHON} {params.scripts}/make_organism_report.py \
+            --run-root "{params.run_root}" --organism "{wildcards.genome}" \
+            --operon-db "{params.operon_db}" --output-dir "{params.outdir}" \
+            || echo "[report_figures] organism figures failed (non-fatal)"
+        {LOADER_PYTHON} {params.scripts}/verify_report.py \
+            --run-root "{params.run_root}" --organism "{wildcards.genome}" \
+            --figures-dir "{params.outdir}" \
+            || echo "[report_figures] organism verify reported issues (non-fatal)"
+        echo "report figures generated for {wildcards.genome}" > {output.tkn}
+        """
+
+
+rule run_full_operon_map_one_genome:
+    """OPT-IN, downstream-only: the FULL per-organism operon atlas -- every
+    multi-gene operon (all sizes, nothing truncated; large operons wrap across
+    rows) as fig07/08-style block-arrow maps + gene tables, grouped by operon
+    size and paginated, into <genome>/scoring/figures/complete-organism-operon-
+    diagrams/. Same guarantees as run_report_figures_one_genome: depends only on
+    SCORING_TOKEN, writes only its own folder + token, and the shell swallows any
+    error so it can NEVER fail or block the genome. Heavier than the standard
+    report (hundreds of pages/genome), hence its own runtime resource and the
+    default-off run_full_operon_map gate."""
+    input:
+        scoring_tkn=SCORING_TOKEN
+    output:
+        tkn=COMPLETE_OPERON_MAP_TOKEN
+    params:
+        scripts=REPORT_FIGURES_SCRIPTS_DIR,
+        outdir=REPORT_FIGURES_ORGANISM_DIR,
+        operon_db=REPORT_FIGURES_OPERON_DB,
+        run_root=_OUTPUT_ROOT
+    threads: 1
+    resources:
+        mem_mb=rc('full_operon_map.mem_mb', 8000, config=config),
+        runtime=rc('full_operon_map.runtime', 90, config=config)
+    shell:
+        """
+        echo "=== MARGIE_SB: FULL OPERON MAP ({wildcards.genome}) ==="
+        {LOADER_PYTHON} {params.scripts}/make_complete_operon_diagrams.py \
+            --run-root "{params.run_root}" --organism "{wildcards.genome}" \
+            --operon-db "{params.operon_db}" --output-dir "{params.outdir}" \
+            || echo "[full_operon_map] atlas failed (non-fatal)"
+        echo "full operon map generated for {wildcards.genome}" > {output.tkn}
+        """
+
+
+rule run_report_figures_global:
+    """Independent, downstream-only: pangenome (all-organism) presentation
+    figures + TSVs into <run>/scoring/figures/global/ . Depends on every
+    genome's SCORING_TOKEN; writes only its own folder + token; shell never
+    fails. Invoked as an isolated finalize subprocess after the Stage-2 loop
+    (warning-only on failure), like queue_sqlite_backup_snapshot."""
+    input:
+        scoring_tokens=expand(SCORING_TOKEN, genome=list(GENOMES.keys()))
+    output:
+        tkn=REPORT_FIGURES_GLOBAL_TOKEN
+    params:
+        scripts=REPORT_FIGURES_SCRIPTS_DIR,
+        outdir=REPORT_FIGURES_GLOBAL_DIR,
+        operon_db=REPORT_FIGURES_OPERON_DB,
+        run_root=_OUTPUT_ROOT
+    threads: 1
+    resources:
+        mem_mb=rc('report_figures.global_mem_mb', 16000, config=config),
+        runtime=rc('report_figures.global_runtime', 45, config=config)
+    shell:
+        """
+        echo "=== MARGIE_SB: REPORT FIGURES (global / pangenome) ==="
+        {LOADER_PYTHON} {params.scripts}/make_global_report.py \
+            --run-root "{params.run_root}" --operon-db "{params.operon_db}" \
+            --output-dir "{params.outdir}" \
+            || echo "[report_figures] global figures failed (non-fatal)"
+        {LOADER_PYTHON} {params.scripts}/verify_report.py \
+            --run-root "{params.run_root}" --figures-dir "{params.outdir}" \
+            || echo "[report_figures] global verify reported issues (non-fatal)"
+        echo "global report figures generated" > {output.tkn}
+        """
+
+
+rule queue_sqlite_backup_snapshot:
+    """Queue a background SLURM copy of margie.db into pipeline-version snapshots."""
+    input:
+        scoring_tokens=expand(SCORING_TOKEN, genome=list(GENOMES.keys())),
+        depot_tokens=(expand(FINAL_TABLES_DEPOT_TOKEN, genome=list(GENOMES.keys()))
+                      if rc_bool('run_final_tables_depot_publish', True, config=config) else [])
+    output:
+        tkn=SQLITE_SNAPSHOT_QUEUE_TOKEN
+    params:
+        source_db=MAIN_DATABASE,
+        dest_dir=SQLITE_SNAPSHOT_VERSION_DIR,
+        account=rc('sqlite_backup.account', '', config=config),
+        partition=rc('sqlite_backup.partition', '', config=config),
+        time_limit=rc('sqlite_backup.time', '01:00:00', config=config)
+    threads: 1
+    resources:
+        mem_mb=rc('sqlite_backup.mem_mb', 1000, config=config),
+        runtime=rc('sqlite_backup.runtime', 10, config=config)
+    shell:
+        """
+        echo "=== MARGIE_SB: QUEUE SQLITE BACKUP SNAPSHOT ==="
+        mkdir -p $(dirname {output.tkn})
+        mkdir -p {params.dest_dir}
+        SBATCH_ACCOUNT=""
+        SBATCH_PARTITION=""
+        if [ -n "{params.account}" ]; then
+            SBATCH_ACCOUNT="--account={params.account}"
+        fi
+        if [ -n "{params.partition}" ]; then
+            SBATCH_PARTITION="--partition={params.partition}"
+        fi
+        DEST_DB="{params.dest_dir}/margie.db"
+        JOB_ID=$(sbatch --parsable $SBATCH_ACCOUNT $SBATCH_PARTITION --time={params.time_limit} \
+            --job-name=margie-sqlite-snapshot \
+            --output={params.dest_dir}/sqlite-backup-%j.out \
+            --error={params.dest_dir}/sqlite-backup-%j.err \
+            --wrap="set -euo pipefail; mkdir -p {params.dest_dir}; cp {params.source_db} $DEST_DB")
+        {{
+            echo "will copy the sqlite database to backup location"
+            echo "sqlite backup job submitted: $JOB_ID"
+            echo "source_db={params.source_db}"
+            echo "dest_db=$DEST_DB"
+            echo "workflow is complete now."
+        }} > {output.tkn}
+        cat {output.tkn}
+        """
+
+
+
+
+
+
+rule make_annotation_gff:
+    """Build a GFF3 annotation file from the mechanical FINAL-scored TSV
+    (no LLM). Reads FINAL_ANNOTATED_PUBLICATION for all per-gene scores/labels
+    and rast.gff for contig seqname lookup. Output: scoring/annotation.gff3
+    with one CDS feature per gene carrying feature_id, gene_id, concordant_label,
+    fingerprint, confidence_score, and flagging as attributes."""
+    input:
+        final=FINAL_ANNOTATED_PUBLICATION,
+        rast_gff=RASTTK_GFF,
+        scoring_tkn=SCORING_TOKEN
+    output:
+        gff=ANNOTATION_GFF
+    shell:
+        """
+        echo "=== MARGIE_SB: ANNOTATION GFF ({wildcards.genome}) ==="
+        {LOADER_PYTHON} {SCORING_SCRIPTS_DIR}/make-gff.py \
+            --final {input.final} \
+            --rast-gff {input.rast_gff} \
+            --output {output.gff}
+        """
+
+
+rule build_gene_evidence_report:
+    """Phase14 (evidence, CPU, no container): build ONE fully-tabulated,
+    self-contained GENE ANNOTATION REPORT per protein-coding gene -- full
+    evidence from every general/specialized/localization database, phase11's
+    C1-C4 with its own literal formula strings (no recomputation), and this
+    gene's + its operon's fingerprints with live cross-genome frequency from
+    the persistent fingerprint database. Reads CONSOLIDATION_MERGED's
+    current column names directly (see build-gene-report.py's own docstring
+    for the handful of DBs where the template's exact column couldn't be
+    sourced as-is).
+
+    Deliberately separate from run_llm below (which only reads this rule's
+    output) -- per the user's own request, the evidence document is useful
+    and inspectable on its own, with or without ever calling a model, and
+    isolating it here means the expensive GPU step never has to rebuild
+    evidence."""
+    input:
+        merged=CONSOLIDATION_MERGED,
+        confidence_final=SCORING_CONFIDENCE_FINAL,
+        fingerprint_full=FINGERPRINT_FULL,
+        operon_fingerprint=OPERON_FINGERPRINT,
+        fingerprint_tkn=FINGERPRINT_COMPUTE_TOKEN
+    output:
+        prepared_dir=directory(EVIDENCE_PREPARED_DIR)
+    threads: rc('evidence.threads', 1, config=config)
+    resources:
+        mem_mb=rc('evidence.mem_mb', 8000, config=config),
+        runtime=rc('evidence.runtime', 60, config=config)
+    params:
+        # Persistent, cross-genome -- NOT per-genome outputs, so passed
+        # as read-only lookup paths rather than declared inputs: every
+        # other genome's own phase12/13 fingerprint_database update step
+        # (own file lock, own atomic write) is the only writer, and
+        # tracking a constantly-externally-mutated shared pool as a
+        # formal Snakemake input would force spurious reruns of every
+        # genome whenever any OTHER genome updates it.
+        gene_fp_db=FINGERPRINT_DATABASE_PATH,
+        operon_fp_db_evidence_ordered=OPERON_FINGERPRINT_DATABASE_EVIDENCE_ORDERED,
+        operon_fp_db_evidence_composition=OPERON_FINGERPRINT_DATABASE_EVIDENCE_COMPOSITION,
+        operon_fp_db_label_ordered=OPERON_FINGERPRINT_DATABASE_LABEL_ORDERED,
+        operon_fp_db_label_composition=OPERON_FINGERPRINT_DATABASE_LABEL_COMPOSITION
+    shell:
+        """
+        echo "=== MARGIE_SB PHASE 14: EVIDENCE ({wildcards.genome}) ==="
+        {LOADER_PYTHON} {EVIDENCE_SCRIPTS_DIR}/build-gene-report.py \
+            --consolidated {input.merged} \
+            --confidence-final {input.confidence_final} \
+            --fingerprint-full {input.fingerprint_full} \
+            --operon-fingerprint {input.operon_fingerprint} \
+            --fingerprint-database {params.gene_fp_db} \
+            --operon-fingerprint-database-evidence-ordered {params.operon_fp_db_evidence_ordered} \
+            --operon-fingerprint-database-evidence-composition {params.operon_fp_db_evidence_composition} \
+            --operon-fingerprint-database-label-ordered {params.operon_fp_db_label_ordered} \
+            --operon-fingerprint-database-label-composition {params.operon_fp_db_label_composition} \
+            --organism-name {wildcards.genome} \
+            --output-dir {output.prepared_dir}
+        """
+
+
+rule run_llm:
+    """Phase15 (llm) (GPU): read phase14's (build_gene_evidence_report)
+    prepared documents and ask the model for one evidence-grounded verdict per
+    gene -- does the confidence_score and canonical_label actually make
+    sense given everything tabulated in the document. This rule never
+    builds evidence itself; it only reads from prepared_dir. Needs GPU --
+    runs in the llm.sif container, same per-genome shape as every other
+    phased tool."""
+    input:
+        prepared_dir=EVIDENCE_PREPARED_DIR
+    output:
+        reports_dir=directory(LLM_REPORTS_DIR),
+        summary=LLM_SUMMARY,
+        tkn=LLM_COMPUTE_TOKEN
+    threads: rc('llm.threads', 10, config=config)
+    resources:
+        mem_mb=rc('llm.mem_mb', 32000, config=config),
+        runtime=rc('llm.runtime', 240, config=config),
+        slurm_partition=rc('llm.partition', 'gpu', config=config),
+        gres=rc('llm.gres', 'gpu:1', config=config)
+    params:
+        # Not db_path('llm', ...) -- that resolves to db_root/llm
+        # (/scratch/.../margie/db/llm), missing the /base subdirectory the
+        # actual model weights live under, alongside fused-model/
+        # trained-adapter/ as siblings. The exact path is baked in as this
+        # rc() call's own default rather than a config.yaml entry, since
+        # llm has no analog in the legacy (non-_sb) margie pipeline and a
+        # bare top-level llm: config block gets silently dropped on a
+        # Profile-settings round-trip save (verified: gtdbtk/cog/etc.
+        # survive because they DO have a legacy-pipeline counterpart).
+        model=rc('llm.model_path', '', config=config),
+        batch_size=rc('llm.batch_size', 5, config=config),
+        max_tokens=rc('llm.max_tokens', 800, config=config)
+    container: sif_path('llm.sif', config=config, workflow_id='margie_sb')
+    shell:
+        """
+        echo "=== MARGIE_SB PHASE 15: LLM (review, {wildcards.genome}) ==="
+        export PYTORCH_HIP_ALLOC_CONF=expandable_segments:True
+        python3 {LLM_SCRIPTS_DIR}/score-genes-llm.py \
+            --trained-model {params.model} \
+            --prepared-dir {input.prepared_dir} \
+            --reports-dir {output.reports_dir} \
+            --summary {output.summary} \
+            --batch-size {params.batch_size} \
+            --max-tokens {params.max_tokens}
+        echo "llm analysis complete for {wildcards.genome}" > {output.tkn}
+        """
+
+
+rule load_llm_to_db:
+    """Load phase15 (llm) results into main_database -- same shape as
+    load_scoring_to_db/load_fingerprint_to_db above. Only the summary TSV
+    is loaded; the full per-gene text reports in reports_dir are meant to
+    be read directly off disk (or served by the API), not flattened into
+    a DB table. Also produces FINAL_LLM_labeled-genes-annotated.tsv by
+    joining llm-summary with the curated FINAL_ fingerprint file."""
+    input:
+        summary=LLM_SUMMARY,
+        compute_tkn=LLM_COMPUTE_TOKEN,
+        full_annotated=FINAL_ANNOTATED
+    output:
+        final_llm_publication=FINAL_LLM_ANNOTATED_PUBLICATION,
+        tkn=LLM_TOKEN
+    params:
+        db=MAIN_DATABASE,
+        script=LOAD_SCRIPT
+    shell:
+        """
+        {LOADER_PYTHON} {params.script} tsv {input.summary} {params.db} llm_summary
+        {LOADER_PYTHON} {LLM_SCRIPTS_DIR}/make-final-llm-annotated.py \
+            --full-annotated-input {input.full_annotated} \
+            --llm-summary-input {input.summary} \
+            --output {output.final_llm_publication}
+        echo "llm loaded for {wildcards.genome}" > {output.tkn}
+        """
+
+
+rule load_fingerprint_to_db:
+    """Load phase12 (fingerprint) results into main_database -- one table
+    per output TSV, same shape as load_consolidation_to_db/load_labeling_to_db/
+    load_scoring_to_db above.
+
+    Idempotency note: scoring is never cached and re-scores on every run (see
+    _genome_cache_map in workflow.py), so run_fingerprint -- which consumes
+    SCORING_CONFIDENCE_FINAL -- also recomputes every run, which re-fires this
+    load. Every load therefore passes --delete-organism so a genome's rows are
+    replaced, never duplicated. The four label/hash fingerprints are derived
+    only from labeling (stable across runs), so their content-hash naturally
+    skips the reload when unchanged; fingerprint_full_with_scores embeds the
+    confidence score (a moving target like scoring itself), so it additionally
+    passes --force to guarantee a fresh overwrite whenever scores change."""
+    input:
+        hash_pattern=FINGERPRINT_HASH_PATTERN,
+        hash_label=FINGERPRINT_HASH_LABEL,
+        label_pattern=FINGERPRINT_LABEL_PATTERN,
+        full=FINGERPRINT_FULL,
+        full_with_scores=FINGERPRINT_FULL_WITH_SCORES,
+        compute_tkn=FINGERPRINT_COMPUTE_TOKEN
+    output:
+        tkn=FINGERPRINT_TOKEN
+    params:
+        db=MAIN_DATABASE,
+        script=LOAD_SCRIPT
+    shell:
+        """
+        {LOADER_PYTHON} {params.script} tsv {input.hash_pattern} {params.db} fingerprint_hash_pattern --delete-organism {wildcards.genome}
+        {LOADER_PYTHON} {params.script} tsv {input.hash_label} {params.db} fingerprint_hash_label --delete-organism {wildcards.genome}
+        {LOADER_PYTHON} {params.script} tsv {input.label_pattern} {params.db} fingerprint_label_pattern --delete-organism {wildcards.genome}
+        {LOADER_PYTHON} {params.script} tsv {input.full} {params.db} fingerprint_full --delete-organism {wildcards.genome}
+        {LOADER_PYTHON} {params.script} tsv {input.full_with_scores} {params.db} fingerprint_full_with_scores --delete-organism {wildcards.genome} --force
+        echo "fingerprint loaded for {wildcards.genome}" > {output.tkn}
+        """
+
+
+rule copy_to_genome_pool:
+    """Copies this genome's raw .fna + RASTTK_FAA into the shared,
+    persistent GENOME_POOL_PATH once ITS OWN scoring is done (the gate the
+    user specified: "every genome we add ... and for which the scores have
+    been generated"). No locking needed -- every genome writes to its own
+    uniquely-named {{genome}}.fna/.faa, so concurrent copies from different
+    genomes' rule instances never collide on the same file."""
+    input:
+        fna=lambda wildcards: GENOMES[wildcards.genome],
+        faa=RASTTK_FAA,
+        scoring_tkn=SCORING_COMPUTE_TOKEN
+    output:
+        tkn=GENOME_POOL_TOKEN
+    threads: 1
+    resources:
+        mem_mb=rc('genome_pool.mem_mb', 1000, config=config),
+        runtime=rc('genome_pool.runtime', 10, config=config)
+    params:
+        fna_dir=GENOME_POOL_FNA_DIR,
+        faa_dir=GENOME_POOL_FAA_DIR
+    shell:
+        """
+        mkdir -p {params.fna_dir} {params.faa_dir}
+        cp -f {input.fna} {params.fna_dir}/{wildcards.genome}.fna
+        cp -f {input.faa} {params.faa_dir}/{wildcards.genome}.faa
+        echo "copied {wildcards.genome} to genome pool" > {output.tkn}
+        """
+
+
+rule run_ani_batch:
+    """Phase13 (ANI): skani all-vs-all nucleotide identity across the
+    SHARED, cross-run GENOME_POOL_FNA_DIR -- not just this run's own
+    genomes. Depends on every genome in THIS run having been copied into
+    the pool (for freshness); whatever else is already there from prior
+    runs gets picked up by skani's own directory scan with no further
+    Snakemake-level tracking."""
+    input:
+        pool_tkns=expand(GENOME_POOL_TOKEN, genome=list(GENOMES.keys()))
+    output:
+        results=ANI_RESULTS,
+        tkn=ANI_COMPUTE_TOKEN
+    group: "ani"
+    threads: rc('ani.threads', 8, config=config)
+    resources:
+        mem_mb=rc('ani.mem_mb', 8000, config=config),
+        runtime=rc('ani.runtime', 60, config=config)
+    params:
+        pool_dir=GENOME_POOL_FNA_DIR,
+        output_dir=rc('ani.output_dir', ANI_BATCH_OUTPUT_DIR, config=config),
+        genome_count=len(GENOMES),
+        min_af=rc('ani.min_af', '0.15', config=config),
+        kmer=rc('ani.kmer', '15', config=config)
+    container: sif_path('ani.sif', config=config, workflow_id='margie_sb')
+    shell:
+        """
+        echo "=== MARGIE_SB PHASE 13: ANI (pool, this run contributed {params.genome_count} genomes) ==="
+        /usr/local/bin/run -i {params.pool_dir} -o {params.output_dir} -t {threads} \
+            --min-af {params.min_af} --kmer {params.kmer} --organism-name margie_genome_pool
+        cp {params.output_dir}/ani/processed/ani_results.tsv {output.results}
+        echo "ani complete" > {output.tkn}
+        """
+
+
+rule load_ani_to_db:
+    """Load phase13 ANI results into main_database."""
+    input:
+        results=ANI_RESULTS,
+        compute_tkn=ANI_COMPUTE_TOKEN
+    output:
+        tkn=ANI_TOKEN
+    group: "ani"
+    params:
+        db=MAIN_DATABASE,
+        script=LOAD_SCRIPT
+    shell:
+        """
+        {LOADER_PYTHON} {params.script} tsv {input.results} {params.db} ani
+        echo "ani loaded" > {output.tkn}
+        """
+
+
+rule run_aai_batch:
+    """Phase13 (AAI): CompareM/DIAMOND all-vs-all amino acid identity
+    across the SHARED, cross-run GENOME_POOL_FAA_DIR -- same pool-based
+    reasoning as run_ani_batch. copy_to_genome_pool already renamed every
+    genome's RASTTK_FAA (always literally named rast.faa) to
+    {{genome}}.faa when it copied it into the pool, so no further staging
+    is needed here."""
+    input:
+        pool_tkns=expand(GENOME_POOL_TOKEN, genome=list(GENOMES.keys()))
+    output:
+        results=AAI_RESULTS,
+        tkn=AAI_COMPUTE_TOKEN
+    group: "aai"
+    threads: rc('aai.threads', 8, config=config)
+    resources:
+        mem_mb=rc('aai.mem_mb', 8000, config=config),
+        runtime=rc('aai.runtime', 60, config=config)
+    params:
+        pool_dir=GENOME_POOL_FAA_DIR,
+        output_dir=rc('aai.output_dir', AAI_BATCH_OUTPUT_DIR, config=config),
+        genome_count=len(GENOMES),
+        min_identity=rc('aai.min_identity', '30.0', config=config),
+        min_aln_len=rc('aai.min_aln_len', '70.0', config=config),
+        evalue=rc('aai.evalue', '0.001', config=config)
+    container: sif_path('aai.sif', config=config, workflow_id='margie_sb')
+    shell:
+        """
+        echo "=== MARGIE_SB PHASE 13: AAI (pool, this run contributed {params.genome_count} genomes) ==="
+        /usr/local/bin/run -i {params.pool_dir} -o {params.output_dir} -t {threads} \
+            --min-identity {params.min_identity} --min-aln-len {params.min_aln_len} \
+            --evalue {params.evalue} --organism-name margie_genome_pool
+        cp {params.output_dir}/aai/processed/aai_results.tsv {output.results}
+        echo "aai complete" > {output.tkn}
+        """
+
+
+rule load_aai_to_db:
+    """Load phase13 AAI results into main_database."""
+    input:
+        results=AAI_RESULTS,
+        compute_tkn=AAI_COMPUTE_TOKEN
+    output:
+        tkn=AAI_TOKEN
+    group: "aai"
+    params:
+        db=MAIN_DATABASE,
+        script=LOAD_SCRIPT
+    shell:
+        """
+        {LOADER_PYTHON} {params.script} tsv {input.results} {params.db} aai
+        echo "aai loaded" > {output.tkn}
+        """
+
+
+rule run_closest_organisms_batch:
+    """Phase13 (closest-organisms): ranks each genome's top-N closest
+    relatives from ANI (primary) + AAI (fallback). Single batch call
+    across the whole collection -- the container itself reads both
+    matrices and emits one closest_organisms.tsv covering every genome."""
+    input:
+        ani=ANI_RESULTS,
+        aai=AAI_RESULTS,
+        ani_tkn=ANI_COMPUTE_TOKEN,
+        aai_tkn=AAI_COMPUTE_TOKEN
+    output:
+        results=CLOSEST_RESULTS,
+        tkn=CLOSEST_COMPUTE_TOKEN
+    group: "closest"
+    threads: rc('closest.threads', 2, config=config)
+    resources:
+        mem_mb=rc('closest.mem_mb', 4000, config=config),
+        runtime=rc('closest.runtime', 30, config=config)
+    params:
+        output_dir=rc('closest.output_dir', CLOSEST_BATCH_OUTPUT_DIR, config=config),
+        top_n=rc('closest.top_n', '5', config=config),
+        min_identity=rc('closest.min_identity', '30.0', config=config),
+        gap_scaling=rc('closest.gap_scaling', '100', config=config)
+    container: sif_path('closest.sif', config=config, workflow_id='margie_sb')
+    shell:
+        """
+        echo "=== MARGIE_SB PHASE 13: CLOSEST-ORGANISMS ==="
+        /usr/local/bin/run -o {params.output_dir} --ani {input.ani} --aai {input.aai} \
+            --top-n {params.top_n} --min-identity {params.min_identity} \
+            --gap-scaling {params.gap_scaling} --collection-name margie_collection
+        cp {params.output_dir}/closest/processed/closest_organisms.tsv {output.results}
+        echo "closest-organisms complete" > {output.tkn}
+        """
+
+
+rule load_closest_to_db:
+    """Load phase13 closest-organisms results into main_database."""
+    input:
+        results=CLOSEST_RESULTS,
+        compute_tkn=CLOSEST_COMPUTE_TOKEN
+    output:
+        tkn=CLOSEST_TOKEN
+    group: "closest"
+    params:
+        db=MAIN_DATABASE,
+        script=LOAD_SCRIPT
+    shell:
+        """
+        {LOADER_PYTHON} {params.script} tsv {input.results} {params.db} closest_organisms
+        echo "closest-organisms loaded" > {output.tkn}
         """
 
 
@@ -646,10 +1952,10 @@ rule run_gtdbtk_batch:
         #
         # GTDBTK_PPLACER_CPUS: the container defaults pplacer to 1 CPU
         # regardless of --cpus/-t, since its memory use on GTDB-Tk's
-        # bacterial reference tree scales poorly with thread count. Set to 8
-        # as a moderate starting point; check peak memory via
+        # bacterial reference tree scales poorly with thread count. Set to 16
+        # as a cautious bump; check peak memory via
         # `seff <slurm_job_id>` (MaxRSS) before raising further.
-        GTDBTK_PLACE_SPECIES=1 GTDBTK_PPLACER_CPUS=8 /usr/local/bin/run -i {params.stage_dir} -o {params.output_dir} -d {params.db} -t {threads} --collection-name margie_sb_batch
+        GTDBTK_PLACE_SPECIES=1 GTDBTK_PPLACER_CPUS=16 /usr/local/bin/run -i {params.stage_dir} -o {params.output_dir} -d {params.db} -t {threads} --collection-name margie_sb_batch
 
         cp $(find {params.output_dir} -name "gtdbtk_results.tsv") {output.results}
         cp $(find {params.output_dir} -name "gtdbtk.translation_table_summary.tsv") {output.translation_table}
@@ -786,7 +2092,27 @@ rule run_rasttk:
     domain-derived suffix entrypoint.sh appends (_bact/_arch/_unknown);
     find still locates the real processed/rast*.tsv rather than guessing
     that suffix here too.
-    {genome}-wildcarded, same shape as run_quast/run_gtdbtk."""
+    {genome}-wildcarded, same shape as run_quast/run_gtdbtk.
+
+    BV-BRC submissions are serialized by a plain mkdir-based mutex
+    (RASTTK_BVBRC_LOCK, one fixed path per run, shared by every genome) around
+    just the BV-BRC call -- a Snakemake resource pool leaks under the SLURM
+    jobstep executor (two rasttk jobs can start at once and the pool can stick
+    at 0, deadlocking the run). mkdir is atomic and needs no extra binary in the
+    container (no flock dependency in rasttk.sif). The stale-lock check (age vs.
+    2x this rule's own runtime) self-heals if a holder is hard-killed
+    (walltime/OOM) before its EXIT trap can fire.
+
+    This mutex alone still let Snakemake submit up to max_jobs genomes'
+    rasttk SLURM jobs at once, all but one just idling on the mutex's sleep
+    loop -- wasted cluster allocation that starved other phases of account
+    quota (observed live on 2026-06-26: 8 concurrent rasttk jobs, 1 doing
+    real work). workflow.py's Stage 1 (_run_pipeline_batch_sequential, the
+    only caller of rule rasttk_all) now also passes max_jobs_override=1, so
+    Snakemake's own --jobs scheduler stops a second rasttk job from even
+    being submitted until the first finishes. This mutex stays as a
+    backstop (e.g. against --jobs cap edge cases or a future caller that
+    doesn't set the override) rather than the sole guarantee."""
     input:
         fasta=lambda wildcards: GENOMES[wildcards.genome],
         gtdbtk_results=GTDBTK_RESULTS,
@@ -799,11 +2125,11 @@ rule run_rasttk:
     threads: rc('rasttk.threads', 8, config=config)
     resources:
         mem_mb=rc('rasttk.mem_mb', 8000, config=config),
-        runtime=rc('rasttk.runtime', 120, config=config),
-        margie_sb_phase3_slot=1
+        runtime=rc('rasttk.runtime', 120, config=config)
     params:
         output_dir=lambda wildcards: rc('rasttk.output_dir', f"{CONTAINER_OUTPUTS_PREFIX}rasttk".format(genome=wildcards.genome), config=config),
-        db=db_path('rasttk', config=config, workflow_id='margie_sb')
+        db=db_path('rasttk', config=config, workflow_id='margie_sb'),
+        lock=RASTTK_BVBRC_LOCK
     container: sif_path('rasttk.sif', config=config, workflow_id='margie_sb')
     shell:
         """
@@ -823,6 +2149,22 @@ rule run_rasttk:
             echo "ERROR: could not read a genetic code for {wildcards.genome} from {input.translation_table} -- refusing to guess" >&2
             exit 1
         fi
+
+        STALE_SECONDS=$(( {resources.runtime} * 60 * 2 ))
+        while ! mkdir "{params.lock}" 2>/dev/null; do
+            if [[ -f "{params.lock}/acquired_at" ]]; then
+                AGE=$(( $(date +%s) - $(cat "{params.lock}/acquired_at" 2>/dev/null || echo 0) ))
+                if [[ $AGE -gt $STALE_SECONDS ]]; then
+                    echo "WARNING: stale RASTtk/BV-BRC lock (age ${{AGE}}s) -- assuming the holder was killed, taking over" >&2
+                    rm -rf "{params.lock}"
+                    continue
+                fi
+            fi
+            sleep 10
+        done
+        date +%s > "{params.lock}/acquired_at"
+        trap 'rm -rf "{params.lock}"' EXIT
+
         /usr/local/bin/run -i {input.fasta} -o {params.output_dir} -t {threads} -d {params.db} --scientific {wildcards.genome} --domain "$DOMAIN" --genetic-code "$GCODE"
         cp $(find {params.output_dir} -path "*/processed/rast*.tsv") {output.results}
         cp $(find {params.output_dir} -name "genome.faa") {output.faa}

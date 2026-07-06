@@ -11,6 +11,7 @@ with it — no separate cache directory needed.
 """
 import hashlib
 import logging
+import os
 import sqlite3
 import time
 from datetime import datetime, timezone
@@ -100,6 +101,7 @@ def _compute_file_hash(file_path: str) -> str:
         for chunk in iter(lambda: f.read(8192), b""):
             sha256.update(chunk)
     return sha256.hexdigest()[:16]
+
 
 
 def _ensure_table(conn: sqlite3.Connection) -> None:
@@ -195,6 +197,32 @@ def restore(db_path: str, input_file: str, tool_name: str,
     return True
 
 
+def cached_tools(db_path: str, input_file: str) -> set:
+    """Return the set of tool names that already have cached outputs for
+    *input_file* (matched by the file's content hash). Read-only, never
+    raises: returns an empty set if the DB or file is missing/unreadable.
+
+    Used by the batch scheduler to tell how many phases a genome has already
+    completed in a prior run, so the most-complete genomes can be processed
+    first even when nothing has been written to the output directory yet."""
+    try:
+        if not Path(db_path).expanduser().exists():
+            return set()
+        input_hash = _compute_file_hash(input_file)
+        conn = _get_connection(str(Path(db_path).expanduser()))
+        try:
+            _ensure_table(conn)
+            rows = conn.execute(
+                "SELECT DISTINCT tool FROM output_cache WHERE input_hash = ?",
+                (input_hash,),
+            ).fetchall()
+        finally:
+            conn.close()
+        return {r[0] for r in rows}
+    except Exception:
+        return set()
+
+
 def store(db_path: str, input_file: str, tool_name: str,
           output_paths: list[str]) -> None:
     """Read each output file and INSERT OR REPLACE into output_cache.
@@ -242,16 +270,38 @@ def restore_all(db_path: str, input_file: str,
 
     Returns ``{tool_name: hit_bool}`` so the caller can log which tools
     were restored.
+
+    After restoring, every restored file is stamped with ONE common mtime.
+    Files are restored tool-by-tool in ``build_filepaths_map`` insertion
+    order, so a file written later (e.g. envelope_summary.tsv, whose tool is
+    inserted into the map AFTER its deepsig/psortb consumers) would otherwise
+    get a newer mtime than the outputs that depend on it -- and Snakemake's
+    mtime rerun-trigger would then recompute those already-cached rules and
+    cascade downstream into consolidation/labeling/scoring. A single shared
+    mtime makes no restored INPUT strictly newer than any restored OUTPUT, so
+    Snakemake keeps them all. Every restored file still lands newer than the
+    Stage-1 rasttk output (produced before this restore runs), so rules keyed
+    only on rast.faa are unaffected.
     """
     results: dict[str, bool] = {}
+    restored_paths: list[str] = []
     for tool_name, output_paths in build_filepaths_map.items():
         hit = restore(db_path, input_file, tool_name, output_paths)
         results[tool_name] = hit
         if hit:
+            restored_paths.extend(output_paths)
             LOGGER.info("Cache HIT for %s (genome=%s) — skipping recomputation",
                         tool_name, Path(input_file).stem)
         else:
             LOGGER.info("Cache miss for %s — will compute", tool_name)
+
+    if restored_paths:
+        stamp = time.time()
+        for path in restored_paths:
+            try:
+                os.utime(path, (stamp, stamp))
+            except OSError:
+                pass
     return results
 
 
