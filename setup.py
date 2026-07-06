@@ -32,6 +32,7 @@ setup(
     package_data={
         '': ['caragols/*.yaml', 'caragols/*.json'],
         'bioinformatics_tools.misc_tools': ['*.sh'],
+        'bioinformatics_tools.api.licensing': ['*.json', '*.md'],
     },
     classifiers=[
         "Programming Language :: Python :: 3",

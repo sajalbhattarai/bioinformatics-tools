@@ -45,7 +45,8 @@ dependencies = [
     "snakemake-interface-storage-plugins==4.3.*",
     "snakemake-executor-plugin-slurm",
     "typer",
-    "uvicorn"
+    "uvicorn",
+    "scipy>=1.17.1",
 ]
 
 [project.optional-dependencies]
@@ -78,3 +79,4 @@ packages = { find = {} }
 "*" = ["caragols/*.yaml", "caragols/*.json"]
 "bioinformatics_tools.misc_tools" = ["*.sh"]
 "bioinformatics_tools.workflow_tools" = ["*.smk"]
+"bioinformatics_tools.api.licensing" = ["*.json", "*.md"]
