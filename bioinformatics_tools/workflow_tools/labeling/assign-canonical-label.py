@@ -11,25 +11,39 @@ an informative description.
 Bare script, no container -- pure stdlib, same reasoning as every other
 margie_sb consolidation/labeling script.
 
-PRIORITY ORDER (highest confidence first, decision-making tools):
-  PGAP > TIGRFAM > HAMAP > NCBIFAM > PIRSF > UNIPROT > PFAM > CDD > KEGG
-  > EGGNOG > COG > RAST
+PRIORITY ORDER (highest confidence first, decision-making tools). Tools are
+grouped into trust TIERS; within a tier the first tool that yields a hit
+wins, then the next, and the chain falls through tier by tier. Tier 1 has
+the first priority overall:
+  Tier 1: PGAP > NCBIFAM > TIGRFAM   -- curated, prokaryote-built family rules
+  Tier 2: HAMAP > PIRSF > UNIPROT    -- family rule / whole-protein HMM / Swiss-Prot best hit
+  Tier 3: KEGG                       -- per-KO adaptive-threshold orthology
+  Tier 4: EGGNOG                     -- ortholog-group inference
+  Tier 5: RAST                       -- RASTtk annotation
+  Tier 6: PFAM                       -- domain-level curation
+  Tier 7: CDD                        -- conserved-domain DB (kept after PFAM as its own tier)
+  Tier 8: COG                        -- coarse ortholog-group inference
+  Tier 9: Fallback labels            -- hypothetical / conserved hypothetical /
+                                        uncharacterized / predicted / DUF-containing /
+                                        protein of unknown function, etc.; used only
+                                        when no tier above yields an informative descriptor
 
-  - PGAP/TIGRFAM/HAMAP/NCBIFAM: expert-curated, prokaryote-built-from-
+  - PGAP/NCBIFAM/TIGRFAM/HAMAP: expert-curated, prokaryote-built-from-
     day-one, equivalog/family-rule-level specificity.
   - PIRSF: whole-protein (not domain-only) HMM classification, ranked
     above UniProt because an HMM generalises better across a divergent
     family member than a single best-alignment hit.
   - UNIPROT: Swiss-Prot's curation is gold-standard, but reached via
     BLAST/DIAMOND best-hit -- gated at >=40% identity.
-  - PFAM/CDD: domain-level curation spanning all of life, not
-    prokaryote-specific.
   - KEGG: a real, per-KO adaptive score threshold, already enforced
     upstream (merge-all-columns.py's TOOL_ROW_FILTERS).
+  - RAST: Rastkk annotation, always available.
   - EGGNOG/COG: orthology *inference*, broader/coarser calls.
-  - RAST: always-available fallback.
+  - PFAM/CDD: domain-level curation spanning all of life, not
+    prokaryote-specific.
 
-  PANTHER excluded -- eukaryote-curation-skewed. MEROPS/TCDB/DBCAN/
+  PANTHER excluded -- because it is believed to be eukaryote-curation-skewed.
+  MEROPS/TCDB/DBCAN/
   GeneProp are NOT part of this decision chain -- specialist databases
   that only apply to a subset of genes. They're still computed and kept
   as CONFIRMATORY reference columns (see CONFIRMATORY TOOLS below):
@@ -75,7 +89,6 @@ this override happens, gate_note records it explicitly (which hit was
 used, which one would have won on e-value alone, and why).
 """
 from __future__ import annotations
-
 import argparse
 import csv
 import re
@@ -102,6 +115,7 @@ _UNINFORMATIVE = frozenset({
     "poorly characterized",
     "open reading frame",
 })
+_NULLISH_UNINFORMATIVE = frozenset({"", "-", ".", "na", "n/a", "none", "null"})
 
 _UNINFORMATIVE_PREFIXES = (
     "domain of unknown function",
@@ -134,6 +148,32 @@ _DB_ID_HYPOTHETICAL_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Additional groups of the UNINFORMATIVE HIT CATEGORY (kept identical to
+# scoring/score-c1-tool-coverage.py -- if you edit one, edit both). These catch
+# descriptions the start-anchored rules above miss: eggNOG "Belongs to the
+# UPF#### family" (UPF = Uncharacterized Protein Family), bare DUF tags,
+# "protein containing domains DUF###", and mid-string "of unknown function" /
+# "uncharacterized" phrasings. Only a molecular-function word (…ase, transport,
+# kinase, …) rescues those last two; localization-only words do not.
+_UPF_ONLY_RE = re.compile(r'^\s*belongs to the upf\d+', re.IGNORECASE)
+_BARE_DUF_RE = re.compile(r'^\s*(?:pfam:)?\(?duf\d+\)?(?:\s+(?:family|domain))?\s*$', re.IGNORECASE)
+_PROTEIN_DOMAINS_DUF_RE = re.compile(r'^\s*protein containing domains?\s+duf', re.IGNORECASE)
+_HYPOTHETICAL_ANYWHERE_RE = re.compile(r'\bhypothetical\b', re.IGNORECASE)
+_PROTEIN_CONSERVED_IN_BACTERIA_RE = re.compile(r'\bprotein\s+conserved\s+in\s+bacteria\b', re.IGNORECASE)
+_INTEGRAL_MEMBRANE_PROTEIN_RE = re.compile(r'^\s*integral\s+membrane\s+protein\s*$', re.IGNORECASE)
+_FUNCTION_SIGNAL_RE = re.compile(
+    r'(ase\b|transport|permease|pump|export|import|channel|carrier|symport|antiport|'
+    r'bind|synth|kinas|reductas|hydrolas|transferas|isomeras|ligas|lyas|mutas|oxidas|'
+    r'dehydrogen|regulat|repressor|activator|\bfactor\b|receptor|sensor|subunit|ribosom|'
+    r'polymeras|oxidoreduct|enzyme|proteas|peptidas|nucleas|phosphatas|efflux|resistance|'
+    r'virulence|toxin|flippase|homeostasis|assembly|motility|adhesin|chaperone|'
+    r'helicas|topoisomeras|gyrase|recombinas|integras|transposas|methylas|glycosyl|'
+    r'dismutas|catalas|peroxidas|cytochrome|ferredoxin|cytoskelet|cell division|'
+    r'degradation|tolerance|translation|utilization)', re.IGNORECASE,
+)
+_UNCHARACTERIZED_RE = re.compile(r'\buncharacteri[sz]ed\b', re.IGNORECASE)
+_LOCUS_OR_TAG_RE = re.compile(r'^\(?(?:duf\d+|upf\d+|[a-z]{1,5}\d{0,4}[a-z]?\d{0,4})\)?$', re.IGNORECASE)
+
 
 def is_uninformative(val: str) -> bool:
     v = val.strip().lower()
@@ -142,10 +182,22 @@ def is_uninformative(val: str) -> bool:
     for prefix in _UNINFORMATIVE_PREFIXES:
         if v.startswith(prefix):
             return True
-    if _UNKNOWN_FUNC_RE.match(v):
+    if (_UNKNOWN_FUNC_RE.match(v) or _DB_ID_HYPOTHETICAL_RE.match(v)
+            or _UPF_ONLY_RE.match(v) or _BARE_DUF_RE.match(v)
+            or _HYPOTHETICAL_ANYWHERE_RE.search(v)
+            or _PROTEIN_CONSERVED_IN_BACTERIA_RE.search(v)
+            or _INTEGRAL_MEMBRANE_PROTEIN_RE.match(v)
+            or _PROTEIN_DOMAINS_DUF_RE.match(v)):
         return True
-    if _DB_ID_HYPOTHETICAL_RE.match(v):
-        return True
+    if not _FUNCTION_SIGNAL_RE.search(v):
+        if "of unknown function" in v:
+            return True
+        if _UNCHARACTERIZED_RE.search(v):
+            return True
+        if v.startswith("conserved protein"):
+            rest = v[len("conserved protein"):].strip(" ,.;:-")
+            if not rest or _BARE_DUF_RE.match(rest) or _LOCUS_OR_TAG_RE.match(rest):
+                return True
     return False
 
 
@@ -281,8 +333,19 @@ def evaluate_accession_tool(
         return _no_hit(tool_name, confirmatory)
 
     chosen, overrode = select_best_hit(hits, rank_mode="min")
-    informative = not is_uninformative(chosen.description)
     stat_norm = normalize_evalue(chosen.stat)
+
+    # Keep uninformative hits as non-qualifying in pass-1 so the hierarchy can
+    # continue searching for an informative winner in lower-priority tools.
+    # If description is missing/nullish, use accession as a traceable pass-2
+    # fallback label only (avoid propagating raw "-" labels).
+    desc_norm = chosen.description.strip().lower()
+    if desc_norm and desc_norm not in _NULLISH_UNINFORMATIVE:
+        effective_desc = chosen.description
+        informative = not is_uninformative(chosen.description)
+    else:
+        effective_desc = chosen.hit_id
+        informative = False
 
     all_ids = ";".join(h.hit_id for h in hits)
     all_descs = "; ".join(f"{h.hit_id}: {h.description}" for h in hits) if len(hits) > 1 else chosen.description
@@ -293,10 +356,12 @@ def evaluate_accession_tool(
         literal_best = min(hits, key=lambda h: safe_float(h.stat, float("inf")))
         note += (f" (used {chosen.hit_id} over lower-evalue-but-uninformative "
                 f"{literal_best.hit_id}, evalue={normalize_evalue(literal_best.stat)})")
+    if effective_desc != chosen.description:
+        note += f" (description missing; accession used as fallback label)"
     if gate_note_suffix:
         note += f" {gate_note_suffix}"
 
-    return ToolEvaluation(tool_name, chosen.hit_id, chosen.description, informative,
+    return ToolEvaluation(tool_name, chosen.hit_id, effective_desc, informative,
                           True, note, informative, stat_norm,
                           all_ids, all_descs, all_stats, confirmatory)
 
@@ -398,9 +463,8 @@ def eval_kegg(row: dict[str, str]) -> ToolEvaluation:
 
 
 # ─── STEP 10: EGGNOG ─────────────────────────────────────────────────────────────
-# Accepted on presence -- no gate. Now multi-hit-aware (previously this
-# tool used a bare row.get(), missing the same informative-preference
-# logic every other tool gets).
+# Accepted on presence -- no gate. Multi-hit-aware: uses the same
+# informative-preference logic every other tool gets.
 def eval_eggnog(row: dict[str, str]) -> ToolEvaluation:
     return evaluate_accession_tool(row, "EGGNOG", "EGGNOG_id", "EGGNOG_description", "EGGNOG_evalue")
 
@@ -411,10 +475,9 @@ def eval_cog(row: dict[str, str]) -> ToolEvaluation:
     return evaluate_accession_tool(row, "COG", "COG_id", "COG_description", "COG_evalue")
 
 
-# ─── STEP 12: RAST ───────────────────────────────────────────────────────────────
-# Always-available fallback -- no id/e-value of its own, accepted on
-# presence. Last in priority order: curation consistency varies a lot
-# across RAST/SEED's subsystems.
+# ─── RAST ────────────────────────────────────────────────────────────────────────
+# Tier 5 (below EGGNOG, above PFAM/CDD/COG) -- SEED subsystem annotation,
+# no id/e-value of its own, accepted on presence.
 def eval_rast(row: dict[str, str]) -> ToolEvaluation:
     desc = row.get("RAST_description", "")
     if not desc:
@@ -425,9 +488,12 @@ def eval_rast(row: dict[str, str]) -> ToolEvaluation:
 
 
 # Priority order -- the only place the trust hierarchy is actually encoded.
+# Tier 1: PGAP>NCBIFAM>TIGRFAM | Tier 2: HAMAP>PIRSF>UNIPROT | Tier 3: KEGG |
+# Tier 4: EGGNOG | Tier 5: RAST | Tier 6: PFAM | Tier 7: CDD | Tier 8: COG.
+# (Tier 9 fallback labels are handled by assign_label's pass-2 below.)
 _EVALUATORS: list[Callable[[dict[str, str]], ToolEvaluation]] = [
-    eval_pgap, eval_tigrfam, eval_hamap, eval_ncbifam, eval_pirsf,
-    eval_uniprot, eval_pfam, eval_cdd, eval_kegg, eval_eggnog, eval_cog, eval_rast,
+    eval_pgap, eval_ncbifam, eval_tigrfam, eval_hamap, eval_pirsf,
+    eval_uniprot, eval_kegg, eval_eggnog, eval_rast, eval_pfam, eval_cdd, eval_cog,
 ]
 
 
@@ -605,17 +671,23 @@ def _evidence_columns(tool_name: str) -> list[str]:
     ]
 
 
-_DECISION_TOOL_NAMES = ["PGAP", "TIGRFAM", "HAMAP", "NCBIFAM", "PIRSF", "UNIPROT",
-                        "PFAM", "CDD", "KEGG", "EGGNOG", "COG"]
+_DECISION_TOOL_NAMES = ["PGAP", "NCBIFAM", "TIGRFAM", "HAMAP", "PIRSF", "UNIPROT",
+                        "KEGG", "EGGNOG", "PFAM", "CDD", "COG"]
 _CONFIRMATORY_TOOL_NAMES = ["MEROPS", "TCDB", "DBCAN"]
 
 _OUTPUT_COLUMNS = (
     _IDENTITY_COLUMNS
-    + ["canonical_label", "label_source", "label_source_id", "label_hierarchy", "label_audit_trail"]
+    + [
+        "best_consensus_product_descriptor",
+        "product_descriptor_source",
+        "product_descriptor_source_id",
+        "product_descriptor_hierarchy",
+        "product_descriptor_audit_trail",
+    ]
     + [col for name in _DECISION_TOOL_NAMES for col in _evidence_columns(name)]
     + ["RAST_description"]
     + [col for name in _CONFIRMATORY_TOOL_NAMES for col in _evidence_columns(name)]
-    + ["label_confirmatory_summary"]
+    + ["product_descriptor_confirmatory_summary"]
 )
 
 
@@ -656,11 +728,11 @@ def main() -> None:
              evaluations, confirmatory_evals, confirmatory_summary) = assign_label(row)
 
             out_row = {col: row.get(col, "") for col in _IDENTITY_COLUMNS}
-            out_row["canonical_label"] = label
-            out_row["label_source"] = source
-            out_row["label_source_id"] = source_id
-            out_row["label_hierarchy"] = hierarchy
-            out_row["label_audit_trail"] = trail
+            out_row["best_consensus_product_descriptor"] = label
+            out_row["product_descriptor_source"] = source
+            out_row["product_descriptor_source_id"] = source_id
+            out_row["product_descriptor_hierarchy"] = hierarchy
+            out_row["product_descriptor_audit_trail"] = trail
             for ev in evaluations:
                 if ev.tool_name == "RAST":
                     continue  # no id/stat of its own -- RAST_description alone, written below
@@ -668,7 +740,7 @@ def main() -> None:
             out_row["RAST_description"] = row.get("RAST_description", "")
             for ev in confirmatory_evals:
                 _write_evidence(out_row, ev)
-            out_row["label_confirmatory_summary"] = confirmatory_summary
+            out_row["product_descriptor_confirmatory_summary"] = confirmatory_summary
 
             writer.writerow(out_row)
             by_source[source] = by_source.get(source, 0) + 1

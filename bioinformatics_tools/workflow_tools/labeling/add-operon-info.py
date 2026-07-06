@@ -62,7 +62,13 @@ csv.field_size_limit(10_000_000)
 
 _GEOMETRIC_MEAN_PATTERN = re.compile(r"^([\d.]+)\s*\(")
 
-_IDENTITY_COLUMNS = ["feature_id", "organism_name", "canonical_label", "label_source", "label_source_id"]
+_IDENTITY_COLUMNS = [
+    "feature_id",
+    "organism_name",
+    "best_consensus_product_descriptor",
+    "product_descriptor_source",
+    "product_descriptor_source_id",
+]
 
 
 def normalize_operon_id(raw: str) -> str:

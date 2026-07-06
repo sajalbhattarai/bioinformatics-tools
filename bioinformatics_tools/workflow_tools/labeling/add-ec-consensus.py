@@ -94,7 +94,13 @@ EC_SOURCE_COLUMN: dict[str, str] = {
     "GENEPROP": "GENEPROP_description",
 }
 
-_IDENTITY_COLUMNS = ["feature_id", "organism_name", "canonical_label", "label_source", "label_source_id"]
+_IDENTITY_COLUMNS = [
+    "feature_id",
+    "organism_name",
+    "best_consensus_product_descriptor",
+    "product_descriptor_source",
+    "product_descriptor_source_id",
+]
 
 
 def extract_ec_numbers(text: str) -> set[str]:
@@ -202,14 +208,14 @@ def classify_ec_agreement(evidence: dict[str, set[str]]) -> tuple[str, str, int,
     return "conflicting", top_class, len(top_tools), total_distinct, ";".join(sorted(top_tools))
 
 
-def check_label_consistency(label_source: str, evidence: dict[str, set[str]], consensus_ecs: str) -> str:
+def check_label_consistency(product_descriptor_source: str, evidence: dict[str, set[str]], consensus_ecs: str) -> str:
     """True/False/NA -- does the winning tool's own EC set overlap AT
     ALL with the consensus EC set? (Overlap, not exact match -- a
     winning tool reporting just one of two agreed bifunctional ECs is
     still consistent, not a mismatch.)"""
-    if not consensus_ecs or label_source not in EC_SOURCE_COLUMN:
+    if not consensus_ecs or product_descriptor_source not in EC_SOURCE_COLUMN:
         return "NA"
-    winner_values = evidence.get(label_source)
+    winner_values = evidence.get(product_descriptor_source)
     if not winner_values:
         return "NA"
     consensus_set = set(consensus_ecs.split(";"))
@@ -254,7 +260,7 @@ def main() -> None:
 
     out_columns = _IDENTITY_COLUMNS + [
         "ec_consensus_number", "ec_consensus_count", "ec_total_distinct",
-        "ec_agreement_status", "ec_supporting_tools", "ec_all_evidence", "label_ec_consistent",
+        "ec_agreement_status", "ec_supporting_tools", "ec_all_evidence", "product_descriptor_ec_consistent",
     ]
 
     output_path = Path(args.output)
@@ -268,10 +274,12 @@ def main() -> None:
         writer.writeheader()
         for row in reader:
             fid = row.get("feature_id", "")
-            label_source = row.get("label_source", "")
+            product_descriptor_source = (
+                row.get("product_descriptor_source", "") or row.get("label_source", "")
+            )
             evidence = ec_evidence_by_gene.get(fid, {})
             status, value, count, distinct, supporting = classify_ec_agreement(evidence)
-            consistent = check_label_consistency(label_source, evidence, value)
+            consistent = check_label_consistency(product_descriptor_source, evidence, value)
 
             out_row = {col: row.get(col, "") for col in _IDENTITY_COLUMNS}
             out_row["ec_consensus_number"] = value
@@ -280,7 +288,7 @@ def main() -> None:
             out_row["ec_agreement_status"] = status
             out_row["ec_supporting_tools"] = supporting
             out_row["ec_all_evidence"] = build_evidence_string(evidence)
-            out_row["label_ec_consistent"] = consistent
+            out_row["product_descriptor_ec_consistent"] = consistent
 
             writer.writerow(out_row)
             status_counts[status] = status_counts.get(status, 0) + 1
