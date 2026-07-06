@@ -59,17 +59,47 @@ This produces `~/bioinformatics-tools/.venv/bin/dane_wf`.
 
 ### 2. Configure (once)
 
-MARGIE reads a per-user config file. The repo ships a template at
-[`bioinformatics_tools/caragols/config-template.yaml`](bioinformatics_tools/caragols/config-template.yaml);
-on first run it is copied to `~/.config/bioinformatics-tools/config.yaml` — the
-copy you edit. Point it at your results database (and, if you don't use the
-defaults, your depot paths); your cluster's SLURM submission settings live here
-too.
+**How the config is created:** MARGIE reads a per-user config file at
+**`~/.config/bioinformatics-tools/config.yaml`**. It is **not** created by
+`uv sync`. The **first** time you run any CLI command (e.g. `dane_wf …`), the app
+checks for that file and, if it doesn't exist yet, creates the folder and copies
+the repo template
+([`bioinformatics_tools/caragols/config-template.yaml`](bioinformatics_tools/caragols/config-template.yaml))
+into it. If it already exists, it's left untouched.
+
+**This file is where you control everything MARGIE does** — the results
+database, your cluster's SLURM submission settings, all container/database
+paths, and any per-tool overrides. Edit it after that first run. At minimum,
+set your results database and (if not using the defaults) your compute settings:
 
 ```yaml
 main_database: <path-to-your-results-db>.sqlite
 # db_root  defaults to /depot/lindems/data/margie/db  if not set
 # sif_path defaults to /depot/lindems/data/margie/sif if not set
+```
+
+#### Databases — use the lab's, or bring your own
+
+Every database MARGIE reads from or writes to depot is a config key with a
+`/depot/lindems/...` default. Override any of them to point at your **own**
+writable location; the update steps are incremental and idempotent, so a fresh
+empty path **builds itself up** as you run genomes — no lab depot required.
+
+```yaml
+operon_database:
+  occ_reference_pkl: <path>/occ_reference.pkl     # operon (OCC) database
+fingerprint_database:
+  path: <path>/fingerprint-database.tsv           # gene fingerprint database
+report_figures:
+  operon_db: <path>/fingerprint-database/         # operon-fingerprint DB (figures)
+genome_pool:
+  path: <path>/genome-pool                        # shared genome pool (AAI/ANI)
+final_tables_depot:
+  path: <path>/final-tables                       # persisted FINAL tables
+scoring_results_historical:
+  path: <path>/scoring-results-historical         # historical scoring snapshots
+sqlite_pipeline_snapshot:
+  path: <path>/sqlite/pipeline-version            # pipeline-version SQLite snapshot
 ```
 
 ### 3. Run the pipeline
