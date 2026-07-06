@@ -16,7 +16,7 @@ from datetime import datetime
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query
-from openpyxl.styles import Font, PatternFill
+from openpyxl.styles import Border, Font, PatternFill, Side
 from fastapi.responses import Response, StreamingResponse
 
 from dataclasses import asdict
@@ -135,10 +135,9 @@ _TIER_FONT_COLORS: dict[str, str] = {
 
 
 # ── FINAL publication file coloring — MATCHES the operon-diagram FIGURES
-#    (reportfig_lib.CONF_TIER_COLOR). Each row gets a LIGHT tint of its
-#    confidence-tier colour so the sheet is scannable; the key "answer" cells
-#    (tier, adjusted-confidence, needs-review, operon-context direction) get the
-#    BRIGHT figure colour with auto-contrast text. Kept in sync with
+#    (reportfig_lib.CONF_TIER_COLOR). Every row is tinted edge to edge with its
+#    CONFIDENCE_TIER_HYBRID tier colour so the sheet is scannable; review rows
+#    additionally get a box border. Kept in sync with
 #    workflow_tools/fingerprint/make-final-excel.py. ───────────────────────────
 _TIER_BRIGHT = {
     "highest": "1F77FF",   # blue
@@ -147,24 +146,8 @@ _TIER_BRIGHT = {
     "fair":    "FF8C00",   # orange
     "low":     "EE2233",   # red
 }
-_CTX_RAISED = "6B8E23"      # operon context increases confidence (olive)
-_CTX_LOWERED = "8B0000"     # operon context decreases confidence (dark red)
-_REVIEW_YES = "EE2233"      # needs review (bright red)
-_REVIEW_NO = "1E9E57"       # ok (green)
 _ROW_NONCODING_TINT = "F2F2F2"
 _ROW_NONCODING_FG = "8A8A8A"
-_ROW_NONCDS_BG = "FFF2A8"    # light yellow: non-CDS features (rna / prophage)
-_ROW_NOEC_BG = "F1A9A0"      # light red: CDS genes with NO EC evidence
-
-
-def _hex_lum(h: str) -> float:
-    h = h.lstrip("#")
-    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-    return (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
-
-
-def _contrast_fg(h: str) -> str:
-    return "000000" if _hex_lum(h) > 0.55 else "FFFFFF"
 
 
 def _tint_hex(h: str, toward_white: float = 0.86) -> str:
@@ -199,87 +182,41 @@ def _has_any_column(df: pd.DataFrame, *candidate_names: str) -> bool:
     return False
 
 
+_ROW_TINT = 0.72                                     # tier-colour lightness per row
+_REVIEW_SIDE = Side(style="medium", color="000000")  # box border on review rows
+
+
 def _row_tint(row: pd.Series) -> tuple[str, str]:
-    """(bg, fg) whole-row highlight, priority: non-CDS (light yellow) > CDS with no
-    EC evidence (light red) > confidence-tier tint. Bright accents added on top."""
-    ftype = str(_series_get(row, "FEATURE_TYPE", "feature_type")).strip().lower()
-    if ftype and ftype != "cds":                         # rna, prophage, ...
-        return _ROW_NONCDS_BG, "000000"
-    final_raw = str(_series_get(
-        row,
-        "final_confidence_operon_context",
-        "ADJUSTED_CONFIDENCE_WITH_OPERON_CONTEXT",
-    )).strip()
-    try:
-        float(final_raw)
-    except (TypeError, ValueError):
+    """(bg, fg) whole-row colour = the row's CONFIDENCE_TIER_HYBRID tier colour,
+    tinted and applied across the entire row (matches make-final-excel.py). Rows
+    with no scored tier -- empty or NOT_APPLICABLE_NON_CODING (rna / prophage) --
+    get grey. This is the only colouring; no accents."""
+    tier = str(_series_get(row, "confidence_tier_hybrid", "CONFIDENCE_TIER_hybrid")).strip().lower()
+    if tier not in _TIER_BRIGHT:
         return _ROW_NONCODING_TINT, _ROW_NONCODING_FG
-    ec_status = str(_series_get(row, "EC_EVIDENCE_STATUS", "c4_ec_agreement_status")).strip().lower()
-    if ec_status == "no_evidence":
-        return _ROW_NOEC_BG, "000000"
-    tier = str(_series_get(row, "confidence_tier", "CONFIDENCE_TIER")).strip().lower()
-    bright = _TIER_BRIGHT.get(tier, _TIER_BRIGHT["medium"])
-    # deeper tint (matches make-final-excel.py) so the whole tier row reads as one
-    # colour band for easy row tracking, accents still pop
-    return _tint_hex(bright, 0.72), "000000"
+    return _tint_hex(_TIER_BRIGHT[tier], _ROW_TINT), "000000"
 
 
 def _apply_review_flag_colors(ws, df: pd.DataFrame) -> None:
-    """FINAL-file coloring that MATCHES the figures: light tier-tinted rows plus
-    bright accent cells (tier / adjusted-confidence / needs-review / context
-    direction), each with auto-contrast text. Both adjacency and hybrid tiers."""
-    colidx: dict[str, int] = {}
-    for i, c in enumerate(df.columns, 1):
-        colidx.setdefault(_norm_col(c), i)
-
-    def cidx(*names: str) -> int | None:
-        for nm in names:
-            j = colidx.get(_norm_col(nm))
-            if j:
-                return j
-        return None
-
-    tier_i = cidx("confidence_tier", "CONFIDENCE_TIER")
-    tierh_i = cidx("confidence_tier_hybrid", "CONFIDENCE_TIER_hybrid")
-    adj_i = cidx("final_confidence_operon_context", "ADJUSTED_CONFIDENCE_WITH_OPERON_CONTEXT")
-    adjh_i = cidx("ADJUSTED_CONFIDENCE_WITH_OPERON_CONTEXT_hybrid")
-    rev_i = cidx("needs_review?", "NEEDS_REVIEW?", "needs_review")
-    ctx_i = cidx("does_operon_context_improve_confidence?", "DOES_OPERON_CONTEXT_IMPROVE_CONFIDENCE?")
+    """Colour each data row edge to edge with its CONFIDENCE_TIER_HYBRID tier
+    colour; rows flagged NEEDS_REVIEW? = yes get a box border around the whole
+    row. Matches make-final-excel.py (no per-cell accents)."""
     n_cols = len(df.columns)
-
-    def accent(r: int, col_i: int | None, bg: str | None, bold: bool = True) -> None:
-        if not col_i or not bg:
-            return
-        cell = ws.cell(row=r, column=col_i)
-        cell.fill = PatternFill(fill_type="solid", fgColor=bg)
-        cell.font = Font(color=_contrast_fg(bg), bold=bold)
-
     for offset, (_, row) in enumerate(df.iterrows()):
         r = offset + 2  # row 1 is the header
         bg, fg = _row_tint(row)
         fill = PatternFill(fill_type="solid", fgColor=bg)
         font = Font(color=fg)
+        review = str(_series_get(row, "needs_review?", "NEEDS_REVIEW?", "needs_review")).strip().lower() == "yes"
         for col in range(1, n_cols + 1):
             cell = ws.cell(row=r, column=col)
             cell.fill = fill
             cell.font = font
-        tier_adj = str(_series_get(row, "confidence_tier", "CONFIDENCE_TIER")).strip().lower()
-        tier_hyb = str(_series_get(row, "confidence_tier_hybrid", "CONFIDENCE_TIER_hybrid")).strip().lower()
-        accent(r, tier_i, _TIER_BRIGHT.get(tier_adj))
-        accent(r, adj_i, _TIER_BRIGHT.get(tier_adj))
-        accent(r, tierh_i, _TIER_BRIGHT.get(tier_hyb))
-        accent(r, adjh_i, _TIER_BRIGHT.get(tier_hyb))
-        rev = str(_series_get(row, "needs_review?", "NEEDS_REVIEW?", "needs_review")).strip().lower()
-        if rev == "yes":
-            accent(r, rev_i, _REVIEW_YES)
-        elif rev == "no":
-            accent(r, rev_i, _REVIEW_NO)
-        ctx = str(_series_get(row, "does_operon_context_improve_confidence?",
-                              "DOES_OPERON_CONTEXT_IMPROVE_CONFIDENCE?")).strip().lower()
-        if "increase" in ctx:
-            accent(r, ctx_i, _CTX_RAISED, bold=False)
-        elif "decrease" in ctx:
-            accent(r, ctx_i, _CTX_LOWERED, bold=False)
+            if review:                          # box border around the whole review row
+                cell.border = Border(
+                    top=_REVIEW_SIDE, bottom=_REVIEW_SIDE,
+                    left=_REVIEW_SIDE if col == 1 else None,
+                    right=_REVIEW_SIDE if col == n_cols else None)
 
 
 def _apply_tier_row_colors(ws, df: pd.DataFrame) -> None:

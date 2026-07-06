@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
-"""make-final-excel.py — convert FINAL-scored-labeled-genes-annotated.tsv to a colored Excel workbook.
+"""make-final-excel.py — convert the FINAL annotation TSV to a coloured Excel workbook.
 
-Whole-row reviewer coloring:
-  - needs_review == "yes"  -> red gradient by confidence tier
-      (low=pink -> highest=strong red)
-  - needs_review != "yes"  -> green gradient by confidence tier
-      (low=very light green -> highest=stronger bright green)
-  - non-coding / unscored  -> light gray
-
-Text color is auto-picked for contrast on each shade.
+Each data row is filled edge to edge with its CONFIDENCE_TIER_HYBRID tier colour
+(highest=blue, high=green, medium=yellow, fair=orange, low=red; non-coding=grey),
+so every row reads as a single tier band. Rows flagged NEEDS_REVIEW? = yes also
+get a box border around the whole row. A second "Legend" sheet explains both.
 """
 from __future__ import annotations
 
@@ -19,16 +15,15 @@ import sys
 from pathlib import Path
 
 from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 csv.field_size_limit(10_000_000)
 
 # ── FINAL-file coloring — MATCHES the operon-diagram figures
-#    (reportfig_lib.CONF_TIER_COLOR). Each row gets a LIGHT tint of its
-#    confidence-tier colour; the key "answer" cells (tier, adjusted-confidence,
-#    needs-review, operon-context direction) get the BRIGHT figure colour with
-#    auto-contrast text. Kept in sync with api/routers/ssh.py. ─────────────────
+#    (reportfig_lib.CONF_TIER_COLOR). Every row is tinted edge to edge with its
+#    CONFIDENCE_TIER_HYBRID tier colour; review rows also get a box border.
+#    Kept in sync with api/routers/ssh.py. ─────────────────────────────────────
 _TIER_BRIGHT = {
     "highest": "1F77FF",   # blue
     "high":    "00B84D",   # green
@@ -36,25 +31,10 @@ _TIER_BRIGHT = {
     "fair":    "FF8C00",   # orange
     "low":     "EE2233",   # red
 }
-_CTX_RAISED = "6B8E23"      # operon context increases confidence (olive)
-_CTX_LOWERED = "8B0000"     # decreases (dark red)
-_REVIEW_YES = "EE2233"      # needs review (bright red)
-_REVIEW_NO = "1E9E57"       # ok (green)
-_ROW_NONCODING_BG = "F2F2F2"
+_ROW_NONCODING_BG = "F2F2F2"   # non-coding / unscored rows (no confidence tier)
 _ROW_NONCODING_FG = "8A8A8A"
-# Whole-row highlight by feature type / EC availability (added for transparency):
-_ROW_NONCDS_BG = "FFF2A8"   # light yellow: non-CDS features (rna / prophage)
-_ROW_NOEC_BG = "F1A9A0"     # light red: CDS genes with NO EC evidence (not an enzyme)
-
-
-def _hex_lum(h: str) -> float:
-    h = h.lstrip("#")
-    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-    return (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
-
-
-def _contrast_fg(h: str) -> str:
-    return "000000" if _hex_lum(h) > 0.55 else "FFFFFF"
+_ROW_TINT = 0.72               # how light the tier colour is across each row
+_REVIEW_SIDE = Side(style="medium", color="000000")  # box border on review rows
 
 
 def _tint_hex(h: str, toward_white: float = 0.86) -> str:
@@ -139,13 +119,6 @@ def _font(hex_color: str, bold: bool = False) -> Font:
     return f
 
 
-def _safe_float(value: str) -> float | None:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def _norm_col(name: str) -> str:
     # FINAL_ANNOTATION_WITH_CONFIDENCE supports prefixed headers like:
     #   "[AN]-NEEDS_REVIEW?"  (legacy)
@@ -162,27 +135,15 @@ def _row_get(row: dict, *candidate_names: str) -> str:
 
 
 def _row_tint(row: dict) -> tuple[str, str]:
-    """(bg, fg) whole-row highlight, priority: non-CDS features (light yellow) >
-    CDS with no EC evidence (light red) > confidence-tier tint. Bright accent
-    cells are added on top per-column."""
-    ftype = str(_row_get(row, "FEATURE_TYPE", "feature_type")).strip().lower()
-    if ftype and ftype != "cds":                         # rna, prophage, ...
-        return _ROW_NONCDS_BG, "000000"
-    final = _safe_float(_row_get(
-        row,
-        "final_confidence_operon_context",
-        "ADJUSTED_CONFIDENCE_WITH_OPERON_CONTEXT",
-    ))
-    if final is None:
+    """(bg, fg) whole-row colour = the row's CONFIDENCE_TIER_HYBRID tier colour,
+    tinted and applied across the ENTIRE row so each row reads as one tier band.
+    Rows with no scored tier -- empty or NOT_APPLICABLE_NON_CODING (rna /
+    prophage) -- get neutral grey. This is the only colouring; no per-cell
+    accents."""
+    tier = str(_row_get(row, "confidence_tier_hybrid", "CONFIDENCE_TIER_hybrid")).strip().lower()
+    if tier not in _TIER_BRIGHT:
         return _ROW_NONCODING_BG, _ROW_NONCODING_FG
-    ec_status = str(_row_get(row, "EC_EVIDENCE_STATUS", "c4_ec_agreement_status")).strip().lower()
-    if ec_status == "no_evidence":                       # coding, but no enzyme call to verify
-        return _ROW_NOEC_BG, "000000"
-    tier = str(_row_get(row, "confidence_tier", "CONFIDENCE_TIER")).strip().lower()
-    bright = _TIER_BRIGHT.get(tier, _TIER_BRIGHT["medium"])
-    # deeper tint (was 0.86 -> near-white) so the WHOLE confidence-tier row reads as
-    # one colour band for easy row tracking, while the bright accent cells still pop
-    return _tint_hex(bright, 0.72), "000000"
+    return _tint_hex(_TIER_BRIGHT[tier], _ROW_TINT), "000000"
 
 
 def main() -> None:
@@ -219,78 +180,39 @@ def main() -> None:
             cell.alignment = Alignment(horizontal="center", vertical="center",
                                        wrap_text=True)
 
-        # normalized column-name -> 1-based index (headers are "Column-XX: name")
-        norm_idx: dict[str, int] = {}
-        for i, h in enumerate(headers, 1):
-            norm_idx.setdefault(_norm_col(h), i)
-
-        def cidx(*names: str) -> int | None:
-            for nm in names:
-                j = norm_idx.get(_norm_col(nm))
-                if j:
-                    return j
-            return None
-
-        tier_i = cidx("confidence_tier", "CONFIDENCE_TIER")
-        tierh_i = cidx("confidence_tier_hybrid", "CONFIDENCE_TIER_hybrid")
-        adj_i = cidx("final_confidence_operon_context", "ADJUSTED_CONFIDENCE_WITH_OPERON_CONTEXT")
-        adjh_i = cidx("ADJUSTED_CONFIDENCE_WITH_OPERON_CONTEXT_hybrid")
-        rev_i = cidx("needs_review?", "NEEDS_REVIEW?", "needs_review")
-        ctx_i = cidx("does_operon_context_improve_confidence?", "DOES_OPERON_CONTEXT_IMPROVE_CONFIDENCE?")
-
-        def _accent(cell_ri: int, col_i: int | None, bg: str | None, bold: bool = True) -> None:
-            if not col_i or not bg:
-                return
-            cell = ws.cell(row=cell_ri, column=col_i)
-            cell.fill = _fill(bg)
-            cell.font = _font(_contrast_fg(bg), bold=bold)
-
         # ── data rows ───────────────────────────────────────────────────────
         # ONE shared alignment object for every data cell (creating a fresh
         # Alignment per cell is what made a 4.6k-row sheet take minutes).
         data_align = Alignment(wrap_text=False, vertical="top")
+        ncol = len(headers)
         n = 0
-        flag_counts = {"noncds_yellow": 0, "noec_red": 0, "tier": 0,
-                       "review_yes": 0}
+        review_n = 0
+        band_counts: dict[str, int] = {}
         for ri, row in enumerate(reader, 2):
             row_bg, row_fg = _row_tint(row)
             row_fill = _fill(row_bg)
             row_font = _font(row_fg)
+            review = str(_row_get(row, "needs_review?", "NEEDS_REVIEW?",
+                                  "needs_review")).strip().lower() == "yes"
 
             for ci, h in enumerate(headers, 1):
                 cell = ws.cell(row=ri, column=ci, value=row.get(h, ""))
                 cell.alignment = data_align
                 cell.fill = row_fill
                 cell.font = row_font
+                if review:                          # box border around the whole review row
+                    cell.border = Border(
+                        top=_REVIEW_SIDE, bottom=_REVIEW_SIDE,
+                        left=_REVIEW_SIDE if ci == 1 else None,
+                        right=_REVIEW_SIDE if ci == ncol else None)
 
-            # bright accent cells (match the operon-diagram figures)
-            tier_adj = str(_row_get(row, "confidence_tier", "CONFIDENCE_TIER")).strip().lower()
-            tier_hyb = str(_row_get(row, "confidence_tier_hybrid", "CONFIDENCE_TIER_hybrid")).strip().lower()
-            _accent(ri, tier_i, _TIER_BRIGHT.get(tier_adj))
-            _accent(ri, adj_i, _TIER_BRIGHT.get(tier_adj))
-            _accent(ri, tierh_i, _TIER_BRIGHT.get(tier_hyb))
-            _accent(ri, adjh_i, _TIER_BRIGHT.get(tier_hyb))
-            rev = str(_row_get(row, "needs_review?", "NEEDS_REVIEW?", "needs_review")).strip().lower()
-            if rev == "yes":
-                _accent(ri, rev_i, _REVIEW_YES)
-            elif rev == "no":
-                _accent(ri, rev_i, _REVIEW_NO)
-            ctx = str(_row_get(row, "does_operon_context_improve_confidence?",
-                               "DOES_OPERON_CONTEXT_IMPROVE_CONFIDENCE?")).strip().lower()
-            if "increase" in ctx:
-                _accent(ri, ctx_i, _CTX_RAISED, bold=False)
-            elif "decrease" in ctx:
-                _accent(ri, ctx_i, _CTX_LOWERED, bold=False)
-
-            # tally by the whole-row highlight category (see _row_tint)
-            if row_bg == _ROW_NONCDS_BG:
-                flag_counts["noncds_yellow"] += 1
-            elif row_bg == _ROW_NOEC_BG:
-                flag_counts["noec_red"] += 1
-            else:
-                flag_counts["tier"] += 1
-            if rev == "yes":
-                flag_counts["review_yes"] += 1
+            # tally by the row's CONFIDENCE_TIER_HYBRID band (the whole-row colour)
+            band = str(_row_get(row, "confidence_tier_hybrid",
+                                "CONFIDENCE_TIER_hybrid")).strip().lower()
+            if band not in _TIER_BRIGHT:
+                band = "non-coding"
+            band_counts[band] = band_counts.get(band, 0) + 1
+            review_n += 1 if review else 0
             n += 1
 
     # ── freeze panes and row height ─────────────────────────────────────────
@@ -301,14 +223,53 @@ def main() -> None:
     for ci, h in enumerate(headers, 1):
         ws.column_dimensions[get_column_letter(ci)].width = _COL_WIDTHS.get(h, _DEFAULT_WIDTH)
 
+    # ── Legend sheet: what each row colour and the box border mean ───────────
+    lg = wb.create_sheet("Legend")
+    lg.column_dimensions["A"].width = 12
+    lg.column_dimensions["B"].width = 14
+    lg.column_dimensions["C"].width = 66
+
+    def _legend_row(r: int, swatch_bg: str, label: str, meaning: str, boxed: bool = False) -> None:
+        sw = lg.cell(r, 1)
+        sw.fill = _fill(swatch_bg)
+        if boxed:
+            sw.border = Border(top=_REVIEW_SIDE, bottom=_REVIEW_SIDE,
+                               left=_REVIEW_SIDE, right=_REVIEW_SIDE)
+        lg.cell(r, 2, label).font = _font("000000", bold=True)
+        lg.cell(r, 3, meaning)
+
+    t = lg.cell(1, 1, "How to read this workbook")
+    t.font = _font(_HDR_FG, bold=True)
+    for c in (1, 2, 3):
+        lg.cell(1, c).fill = _fill(_HDR_BG)
+
+    lg.cell(3, 1, "ROW COLOUR = confidence tier (CONFIDENCE_TIER_HYBRID)").font = _font("000000", bold=True)
+    tiers = [
+        ("highest", "highest confidence  (final > 0.90)"),
+        ("high",    "high confidence  (0.70 – 0.90)"),
+        ("medium",  "medium confidence  (0.50 – 0.70)"),
+        ("fair",    "fair confidence  (0.30 – 0.50)"),
+        ("low",     "low confidence  (final <= 0.30)"),
+    ]
+    r = 4
+    for tier, meaning in tiers:
+        _legend_row(r, _tint_hex(_TIER_BRIGHT[tier], _ROW_TINT), tier, meaning)
+        r += 1
+    _legend_row(r, _ROW_NONCODING_BG, "non-coding", "no confidence score (rna / prophage / unscored)")
+
+    r += 2
+    lg.cell(r, 1, "ROW BORDER = review status").font = _font("000000", bold=True)
+    _legend_row(r + 1, "FFFFFF", "boxed row", "flagged for manual review (NEEDS_REVIEW? = yes)", boxed=True)
+    _legend_row(r + 2, "FFFFFF", "no box", "does not need review (NEEDS_REVIEW? = no)")
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(str(out_path))
     print(f"[make-final-excel] {n} genes → {out_path}")
-    print(f"  {len(headers)} columns; whole-row highlighting applied")
-    print(f"    light-yellow (non-CDS: rna/prophage) : {flag_counts['noncds_yellow']}")
-    print(f"    light-red    (CDS, no EC evidence)   : {flag_counts['noec_red']}")
-    print(f"    tier-tinted  (CDS with EC evidence)  : {flag_counts['tier']}")
-    print(f"    (of which needs_review=yes hard flag : {flag_counts['review_yes']})")
+    print(f"  {len(headers)} columns; whole-row colour = CONFIDENCE_TIER_HYBRID band")
+    for band in ("highest", "high", "medium", "fair", "low", "non-coding"):
+        if band_counts.get(band):
+            print(f"    {band:11s}: {band_counts[band]}")
+    print(f"  {review_n} rows boxed (need review); + Legend sheet")
 
 
 if __name__ == "__main__":
