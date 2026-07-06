@@ -37,7 +37,8 @@ A phased [Snakemake](https://snakemake.github.io/) workflow, four stages:
 
 > **Note** — stages 1–2 use already-available tools; MARGIE introduces no new
 > algorithm for annotation or operon calling. It integrates those tools and
-> processes their output downstream to derive confidence.
+> processes their output downstream to derive confidence. 
+> NOTE: "Stage" (only for readme) is different from the "Phases" the Pipeline uses.
 
 ### The name
 
@@ -85,7 +86,7 @@ the repo template
 ([`bioinformatics_tools/caragols/config-template.yaml`](bioinformatics_tools/caragols/config-template.yaml))
 into it. If it already exists, it's left untouched.
 
-**This file is where you control everything MARGIE does** — the results
+**This "[~/.config/bioinformatics-tools/config.yaml]" file is where you control everything MARGIE does** — the results
 database, your cluster's SLURM submission settings, all container/database
 paths, and any per-tool overrides. Edit it after that first run. At minimum,
 set your results database and (if not using the defaults) your compute settings:
@@ -96,7 +97,7 @@ main_database: <path-to-where-you-want-to-keep-the-db>.db
 # sif_path defaults to /depot/lindems/data/margie/sif if not set
 ```
 ###### This ".db" database is important because it is where the results are cached.
-###### When you rerun the pipeline on same organisms (exact same fasta file), the results get
+###### When you rerun the pipeline on same organisms (exact same fasta file content), the results get
 ###### restored back--saves time!
 
 #### Databases — use the lab's, or bring your own
