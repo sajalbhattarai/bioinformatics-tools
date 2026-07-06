@@ -1519,6 +1519,52 @@ def breakdown_col_layout(entries, fontsize: float, page_width_in: float,
     return pos
 
 
+def _fit_desc_wrap(members_per, fontsize: float, page_width_in: float,
+                   desc_wrap: int, left: float, right: float) -> int:
+    """Largest descriptor wrap width (chars, <= desc_wrap) at which the descriptor
+    column fits between the gene tag and the location column without spilling into
+    it. Uses the same width model as breakdown_col_layout, applied BEFORE the table
+    height and column layout are computed, so the wrap, the row count, and the
+    columns all agree. Returns desc_wrap unchanged when there is already room."""
+    fs, fsn, fsf = fontsize, fontsize - 0.4, fontsize - 2.1
+    Win = page_width_in or 18.0
+    def _wf(s, pt):
+        return (len(str(s)) * 0.60 * pt / 72.0) / Win
+    GAP = 0.24 / Win
+    def _numw(h, sub):
+        return max(_wf(h, fs), _wf(sub, fsf), _wf("+0.00", fsn))
+    def _numw2(h, sub):
+        return max(_wf(h, fs), _wf(sub, fsf), _wf("0.00/0.00", fsn))
+    members = [m for ms in members_per for m in ms]
+    if not members:
+        return desc_wrap
+    def _loc(m):
+        try:
+            return f"{int(m['start']):,}–{int(m['end']):,} ({m.get('strand', '+')})"
+        except (TypeError, ValueError, KeyError):
+            return ""
+    tag_w = max([_wf("gene", fs)]
+                + [_wf(str(i + 1), fs) for ms in members_per for i in range(len(ms))])
+    loc_w = max([_wf("location (bp)", fs)] + [_wf(_loc(m), fsn) for m in members])
+    type_w = max(_wf("type", fs), _wf("CDS/RNA", fsf), _wf("prophage", fsn))
+    c1w, c2w = _numw("C1", "tool cov"), _numw("C2", "operon")
+    c3w, c4w = _numw2("C3", "cons adj/hyb"), _numw("C4", "EC agree")
+    prew = _numw("prelim", "C1×C4")
+    opw = max(_numw("operon boost", "C2×C3 a/h"), _wf("+0.00/+0.00", fsn))
+    finw = _numw2("final", "clip adj/hyb")
+    revw = max(_wf("review?", fs), _wf("needs_review", fsf), _wf("yes", fsn))
+    reasons = [_review_reason_short(m) for m in members]
+    reason_nat = max([_wf("review reason", fs)] + [_wf(r, fsn) for r in reasons])
+    fixed = (tag_w + loc_w + type_w + c1w + c2w + c3w + c4w + prew + opw + finw + revw
+             + 12 * GAP)
+    # width the descriptor column can take once the fixed columns and the reason
+    # column (kept at its natural width) are placed
+    w_desc = (right - left) - fixed - reason_nat
+    char_w = 0.60 * fs / 72.0 / Win
+    n = int(w_desc / char_w) if char_w > 0 else desc_wrap
+    return max(20, min(desc_wrap, n))
+
+
 def render_gene_table(ax, entries, fontsize: float = 7.6, show_location: bool = True,
                       show_scores: bool = True, desc_wrap: int = _TABLE_DESC_WRAP,
                       full_breakdown: bool = False, page_width_in: float = None,
@@ -1730,6 +1776,17 @@ def render_operon_page(outpath, blocks, *, org_label, suptitle, run_root=None,
         return
     members_per = [b["members"] for b in blocks]
 
+    # Page geometry, computed up front so the descriptor wrap can be fit to the
+    # real column width -- this keeps the wrap, the table row count, and the column
+    # layout in agreement so long descriptors never spill into the location column.
+    xw = 0.945
+    x0 = (1.0 - xw) / 2.0                  # CENTERED axis -> equal left/right margins
+    page_width_in = fig_width * xw
+    span_ref = min_span or max((len(m) for m in members_per), default=1)
+    left_frac = 0.10 / (span_ref + 0.40)
+    desc_wrap = _fit_desc_wrap(members_per, table_fs, page_width_in, desc_wrap,
+                               left_frac, 1.0 - left_frac)
+
     def _nrows(m):
         return (-(-len(m) // per_row)) if (per_row and len(m) > per_row) else 1
     nrows_per = [_nrows(m) for m in members_per]
@@ -1753,18 +1810,12 @@ def render_operon_page(outpath, blocks, *, org_label, suptitle, run_root=None,
     _TITLE_GAP, _INTRA_GAP, _INTER_GAP, _FOOTER_IN = 0.46, 0.12, 0.38, 0.85
     block_in = [_TITLE_GAP + track_h[i] + _INTRA_GAP + table_h[i] for i in range(n)]
     H = _HEADER_IN + sum(block_in) + _INTER_GAP * (n - 1) + _FOOTER_IN
-    xw = 0.945
-    x0 = (1.0 - xw) / 2.0              # CENTERED axis -> equal left/right margins
-    page_width_in = fig_width * xw
 
     # The arrow backbone spans axis x = -0.60..span-0.40 over an xlim of span+0.40,
     # i.e. axis fractions [left_frac, 1-left_frac]. Lay the title, the table and the
     # arrows all between those SAME mirrored bounds so the ink is symmetric within
     # the axis -> the page crops to EQUAL left/right margins and the table sits
     # within the same margins as the operon map.
-    span_ref = min_span or max((len(m) for m in members_per), default=1)
-    left_frac = 0.10 / (span_ref + 0.40)
-
     fig = plt.figure(figsize=(fig_width, H))
     track_axes, tables = [], []
     cur_top = H - _HEADER_IN
