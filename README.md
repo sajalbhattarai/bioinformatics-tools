@@ -224,3 +224,20 @@ dane_wf margie sb \
     output_dir: <path to the folder where this run's results should go> \
     run_full_operon_map: true
 ```
+##Citation:
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+  - family-names: "Bhattarai"
+    given-names: "Sajal"
+    orcid: "https://orcid.org/0000-0002-3143-5483"
+  - family-names: "Deemer"
+    given-names: "Dane"
+    orcid: "https://orcid.org/0000-0002-4485-0280"
+  - family-names: "Lindemann"
+    given-names: "Stephen"
+    orcid: "https://orcid.org/0000-0002-3788-5389"
+title: "bioinformatics-tools"
+version: 1.0.0
+date-released: 2026-07-27
+url: "https://github.com/Diet-Microbiome-Interactions-Lab"
