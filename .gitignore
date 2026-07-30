@@ -7,6 +7,9 @@ uv.lock
 *_mock*/
 data/
 
+# Reference data (regenerable OCC pickle -- rebuilt by score_occ.py build)
+reference_data/
+
 # AI / Claude
 settings.local.json
 .claude/*
