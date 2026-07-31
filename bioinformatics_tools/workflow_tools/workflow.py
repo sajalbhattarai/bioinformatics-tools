@@ -1259,6 +1259,52 @@ class WorkflowBase(ProgramBase):
             # deselected at all) -- so their SIFs stay validated regardless.
             sif_files_override = margie_sb_sif_files(selected_tool_keys | {'gtdbtk', 'rasttk'})
 
+        # --- Licensing gate ---------------------------------------------------
+        # Require accepted terms (interactive first run, or web-app acceptance
+        # passed via env), then disable any license-required tool the operator
+        # is not entitled to run. The web path already enforced acceptance in
+        # dane-api and passes the entitlement down, so this never re-prompts it.
+        from bioinformatics_tools.workflow_tools.license_gate import (
+            ensure_cli_license, LicenseError,
+        )
+        from bioinformatics_tools.api.licensing.catalog import disabled_tool_ids
+        try:
+            _entitlement = ensure_cli_license()
+        except LicenseError as _exc:
+            LOGGER.error('%s', _exc)
+            self.failed(str(_exc))
+            return 1
+        _gateable_keys = {tool['key'] for tool in MARGIE_SB_PHASED_TOOLS}
+        _disabled = disabled_tool_ids(
+            _entitlement.get('usage_type'), _entitlement.get('licensed_tools')
+        ) & _gateable_keys
+        if _disabled:
+            # Refuse if the caller explicitly asked for a tool they can't run.
+            if selected_tools_raw:
+                _conflict = selected_tool_keys & _disabled
+                if _conflict:
+                    _msg = (
+                        'These tools require a license you have not confirmed: '
+                        f"{', '.join(sorted(_conflict))}. Remove them from "
+                        'selected_tools, or record the license via the pipeline '
+                        'setup / web app, then re-run.'
+                    )
+                    LOGGER.error('%s', _msg)
+                    self.failed(_msg)
+                    return 1
+            # Otherwise disable them (and drop their containers from validation).
+            for _tid in _disabled:
+                config_overrides[_tool_to_run_flag.get(_tid, f'run_{_tid}')] = False
+            if selected_tools_raw:
+                _keep = (selected_tool_keys - _disabled) | {'gtdbtk', 'rasttk'}
+            else:
+                _keep = _gateable_keys - _disabled
+            sif_files_override = margie_sb_sif_files(_keep)
+            LOGGER.warning(
+                'Licensing: disabled (not licensed for your usage type): %s',
+                ', '.join(sorted(_disabled)),
+            )
+
         def _genome_cache_map(genome: str) -> dict[str, list[str]]:
             '''Every phase4-8 tool's real output files for one genome, keyed by
             tool name, for restore_all()/store_all() -- mirrors reference-work's
