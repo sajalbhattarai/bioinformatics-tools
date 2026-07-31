@@ -252,6 +252,7 @@ def record_acceptance(
     licensed_tools = sorted(set(licensed_tools or []))
 
     terms = load_terms()
+    catalog = load_catalog()
     accepted_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     timestamp_dir = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
@@ -263,10 +264,13 @@ def record_acceptance(
         "user_agent": user_agent,
         "terms_version": terms["version"],
         "terms_sha256": terms["sha256"],
-        "catalog_version": load_catalog().get("catalog_version"),
+        "catalog_version": catalog.get("catalog_version"),
         "accepted_acknowledgments": accepted_items,
         "usage_type": usage_type,
         "licensed_tools": licensed_tools,
+        # Exact snapshot of the per-tool license details shown to the user, so
+        # the depot record holds precisely what was displayed and accepted.
+        "license_catalog": catalog,
     }
 
     # Write the exact copy to the depot records dir. If that fails we still

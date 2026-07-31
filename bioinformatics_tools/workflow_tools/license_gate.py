@@ -113,6 +113,42 @@ def _ask_yes_no(prompt: str) -> bool:
         print("  Please answer y or n.")
 
 
+def _print_license_disclosure(cat: dict) -> None:
+    """Print the license of every third-party tool / database, verbatim from the
+    catalog, so the user can review and accept them (and credit the authors)."""
+    tools = sorted(cat.get("tools", []), key=lambda t: (t.get("phase", 0), t.get("name", "")))
+    print("\n" + "=" * 74)
+    print("PER-TOOL / DATABASE LICENSE DETAILS")
+    print("=" * 74)
+    print("MARGIE runs these third-party tools and databases, each under its own")
+    print("license. By continuing you agree to use each responsibly, within its")
+    print("license, and to credit its authors.")
+    for t in tools:
+        allowed = "; ".join(t.get("allowed") or [])
+        not_allowed = "; ".join(t.get("not_allowed") or [])
+        print("\n" + "-" * 74)
+        print(f"  Tool / database:       {t.get('name', t.get('id', ''))}")
+        print(f"  License type:          {t.get('license', '')}")
+        print(f"  Academic use:          {t.get('academic_use', '')}")
+        print(f"  Research use:          {t.get('research_use', '')}")
+        print(f"  Commercial use:        {t.get('commercial_use', '')}")
+        print(f"  Permission required:   {t.get('user_action', '')}")
+        if allowed:
+            print(f"  You may:               {allowed}")
+        if not_allowed:
+            print(f"  You may not:           {not_allowed}")
+        if t.get("citation"):
+            print(f"  Cite:                  {t['citation']}")
+        if t.get("obtain_url"):
+            print(f"  License / source:      {t['obtain_url']}")
+        if t.get("license_quote"):
+            tag = "verbatim" if t.get("license_quote_kind") == "verbatim" else "summary"
+            print(f"  License notice ({tag}):")
+            for ln in t["license_quote"].splitlines():
+                print(f"      {ln}" if ln else "")
+    print("\n" + "=" * 74)
+
+
 def _interactive_accept(current_version: str) -> dict:
     terms = catalog.load_terms()
     cat = catalog.load_catalog()
@@ -123,6 +159,7 @@ def _interactive_accept(current_version: str) -> dict:
     print("MARGIE PIPELINE — LICENSING TERMS")
     print("=" * 74 + "\n")
     print(terms["text"])
+    _print_license_disclosure(cat)
     print("\n" + "-" * 74)
     print("Your acknowledgments:")
     for item in catalog.ACK_ITEMS:
@@ -182,6 +219,8 @@ def _interactive_accept(current_version: str) -> dict:
         "accepted_acknowledgments": [item["id"] for item in catalog.ACK_ITEMS],
         "usage_type": usage_type,
         "licensed_tools": sorted(set(licensed)),
+        # Exact snapshot of the per-tool license details shown, recorded to depot.
+        "license_catalog": cat,
         "source": "cli",
     }
 

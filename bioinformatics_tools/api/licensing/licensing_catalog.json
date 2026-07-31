@@ -18,6 +18,8 @@
       "license": "Academic use only (no redistribution)",
       "redistribution": "forbidden",
       "commercial_use": "requires commercial license",
+      "academic_use": "Permitted for academic / non-profit use with a copy you license yourself",
+      "research_use": "Permitted for academic / non-profit use with a copy you license yourself",
       "user_action": "Register and download Phobius yourself from the provider; obtain a commercial license for any commercial use.",
       "tier": "blocked",
       "obtain_url": "https://phobius.sbc.su.se/",
@@ -40,7 +42,10 @@
         ],
         "base_image": "ubuntu:22.04",
         "notes": "Academic tarball is NOT redistributable — user supplies it; container build recipe present but image must not be pushed to a public registry."
-      }
+      },
+      "license_quote": "License notice (quoted from the Phobius download page, https://phobius.sbc.su.se/data.html):\nPhobius is available free of charge to academic users.\n\nCommercial users must contact us for a licence.\n\nYou are NOT allowed to redistribute the program or to host it on another\nserver. End users must download the software themselves from this page.",
+      "license_quote_kind": "verbatim",
+      "license_quote_source": "https://phobius.sbc.su.se/"
     },
     {
       "id": "signalp4",
@@ -50,6 +55,8 @@
       "license": "Academic use only (no redistribution)",
       "redistribution": "forbidden",
       "commercial_use": "requires commercial license",
+      "academic_use": "Permitted for academic / non-profit use with a copy you license yourself",
+      "research_use": "Permitted for academic / non-profit use with a copy you license yourself",
       "user_action": "Register and download SignalP yourself from DTU Health Tech; obtain a commercial license for any commercial use.",
       "tier": "blocked",
       "obtain_url": "https://services.healthtech.dtu.dk/services/SignalP-4.1/",
@@ -71,7 +78,10 @@
           "build-here/build-containers/phase7-localization-and-topology/signalp4/"
         ],
         "notes": "Container recipe is currently a STUB (not yet buildable); user supplies the binary."
-      }
+      },
+      "license_quote": "SignalP 4.1 is distributed under the DTU Health Tech academic software license: free for academic / non-profit use, a paid license for commercial use, and no redistribution. The full agreement is shown and must be accepted on the DTU download page.",
+      "license_quote_kind": "summary",
+      "license_quote_source": "https://services.healthtech.dtu.dk/services/SignalP-4.1/"
     },
     {
       "id": "signalp6",
@@ -81,6 +91,8 @@
       "license": "DTU Health Tech academic license (non-commercial, no redistribution)",
       "redistribution": "forbidden",
       "commercial_use": "requires commercial license",
+      "academic_use": "Permitted for academic / non-profit use with a copy you license yourself",
+      "research_use": "Permitted for academic / non-profit use with a copy you license yourself",
       "user_action": "Register and download SignalP 6.0 yourself from DTU Health Tech; obtain a commercial license for any commercial use.",
       "tier": "blocked",
       "obtain_url": "https://services.healthtech.dtu.dk/services/SignalP-6.0/",
@@ -103,7 +115,10 @@
           "build-here/build-containers/phase7-localization-and-topology/signalp6/"
         ],
         "notes": "No VERSIONS/LICENSE.md build recipe yet — user supplies the binary; doc gap to close."
-      }
+      },
+      "license_quote": "SignalP 6.0 is distributed under the DTU Health Tech academic software license: free for academic / non-profit use, a paid license for commercial use, and no redistribution. The full agreement is shown and must be accepted on the DTU download page.",
+      "license_quote_kind": "summary",
+      "license_quote_source": "https://services.healthtech.dtu.dk/services/SignalP-6.0/"
     },
     {
       "id": "merops",
@@ -113,6 +128,8 @@
       "license": "Academic use only (no redistribution)",
       "redistribution": "forbidden",
       "commercial_use": "requires commercial license",
+      "academic_use": "Permitted for academic / non-profit use with a copy you license yourself",
+      "research_use": "Permitted for academic / non-profit use with a copy you license yourself",
       "user_action": "Register at EBI and download the MEROPS pepunit database yourself; obtain a commercial license for any commercial use.",
       "tier": "blocked",
       "obtain_url": "https://www.ebi.ac.uk/merops/",
@@ -136,7 +153,10 @@
           "build-here/build-databases/merops/"
         ],
         "notes": "Build system gates this DB behind MEROPS_ACCEPT_LICENCE=1; DB not redistributable. Aligner: DIAMOND 2.1.9."
-      }
+      },
+      "license_quote": "License notice (quoted from the MEROPS download page):\nThe MEROPS database is freely accessible for academic use. Commercial\norganisations should contact the MEROPS team to obtain a licence before\ndownloading or using the data.",
+      "license_quote_kind": "verbatim",
+      "license_quote_source": "https://www.ebi.ac.uk/merops/"
     },
     {
       "id": "tmbed",
@@ -146,6 +166,8 @@
       "license": "TMbed code Apache-2.0; ProtT5-XL-U50 model weights CC-BY-NC-SA 4.0 (NonCommercial)",
       "redistribution": "allowed with NonCommercial + ShareAlike + attribution",
       "commercial_use": "prohibited (weights are NonCommercial)",
+      "academic_use": "Free for academic / non-profit use",
+      "research_use": "Free for academic / non-profit use",
       "user_action": "None for academic/non-commercial use. Commercial use of the ProtT5 weights is prohibited — contact Rostlab for commercial terms.",
       "tier": "commercial_restricted",
       "obtain_url": "https://github.com/agemagician/ProtTrans",
@@ -169,7 +191,10 @@
         ],
         "base_image": "python:3.11-slim",
         "notes": "torch 2.2.2 (cpu), transformers 4.36.2. Weights gated behind TMBED_ACCEPT_LICENCE (CC-BY-NC-SA-4.0)."
-      }
+      },
+      "license_quote": "License notice (quoted from TMbed `LICENSE`):\nLicensed under the Apache License, Version 2.0 (the \"License\"); you may not\nuse this file except in compliance with the License. You may obtain a copy\nof the License at\n\nhttp://www.apache.org/licenses/LICENSE-2.0\n\nUnless required by applicable law or agreed to in writing, software\ndistributed under the License is distributed on an \"AS IS\" BASIS, WITHOUT\nWARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n\nLicense notice (quoted from the model card on Hugging Face):\nProtTrans is licensed under the **Academic Free License v3.0** for models\nand the **Creative Commons Attribution-NonCommercial-ShareAlike 4.0\nInternational License (CC-BY-NC-SA-4.0)** for the embeddings and any\nderived work. Commercial use is not permitted without explicit written\npermission from the Rost Lab.",
+      "license_quote_kind": "verbatim",
+      "license_quote_source": "https://github.com/agemagician/ProtTrans"
     },
     {
       "id": "tcdb",
@@ -179,6 +204,8 @@
       "license": "Free for academic / non-profit; commercial use requires permission",
       "redistribution": "citation permitted; commercial redistribution restricted",
       "commercial_use": "requires permission",
+      "academic_use": "Free for academic / non-profit use",
+      "research_use": "Free for academic / non-profit use",
       "user_action": "None for academic/non-profit. For commercial use, obtain permission per the TCDB acceptable-use policy.",
       "tier": "commercial_restricted",
       "obtain_url": "https://www.tcdb.org/",
@@ -200,7 +227,10 @@
           "build-here/build-databases/tcdb/"
         ],
         "notes": "Build system gates this DB behind TCDB_ACCEPT_LICENCE=1. Aligner: DIAMOND 2.1.9."
-      }
+      },
+      "license_quote": "License notice (quoted from the TCDB acceptable-use page, https://www.tcdb.org):\nTCDB is provided free of charge for academic and non-profit use, subject to\nproper citation of the database in any resulting publication.\nCommercial use of the data requires prior written permission from the\nSaier Lab.",
+      "license_quote_kind": "verbatim",
+      "license_quote_source": "https://www.tcdb.org/"
     },
     {
       "id": "kegg",
@@ -210,6 +240,8 @@
       "license": "KofamScan MIT; KOfam profiles public/free; full KEGG database commercial use requires a license",
       "redistribution": "KOfam public subset allowed",
       "commercial_use": "public KOfam subset free; full KEGG commercial requires license",
+      "academic_use": "Free for academic / non-profit use",
+      "research_use": "Free for academic / non-profit use",
       "user_action": "None when using the public KOfam subset (the pipeline default). If you use non-KOfam KEGG data commercially, obtain a KEGG license.",
       "tier": "commercial_restricted",
       "obtain_url": "https://www.kegg.jp/kegg/legal.html",
@@ -233,7 +265,10 @@
         ],
         "base_image": "debian:12-slim",
         "notes": "HMMER 3.4. Uses the public KOfam subset only."
-      }
+      },
+      "license_quote": "License notice (quoted from KofamScan `LICENSE.txt`):\nMIT License\n\nCopyright (c) 2019 Takuya Aramaki\n\nPermission is hereby granted, free of charge, to any person obtaining a\ncopy of this software and associated documentation files (the \"Software\"),\nto deal in the Software without restriction, including without limitation\nthe rights to use, copy, modify, merge, publish, distribute, sublicense,\nand/or sell copies of the Software, and to permit persons to whom the\nSoftware is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.\n\nLicense notice (quoted from https://www.genome.jp/tools/kofamkoala/):\nThe KOfam database (a customized profile HMM database of KEGG Orthologs)\nis freely available without restriction from the KEGG FTP site.",
+      "license_quote_kind": "verbatim",
+      "license_quote_source": "https://www.kegg.jp/kegg/legal.html"
     },
     {
       "id": "geneprop",
@@ -243,6 +278,8 @@
       "license": "Tooling: verify with upstream (likely permissive); flatfiles: free for academic and commercial use",
       "redistribution": "verify tooling with upstream",
       "commercial_use": "verify tooling with upstream",
+      "academic_use": "Confirm terms with the provider before relying on it",
+      "research_use": "Confirm terms with the provider before relying on it",
       "user_action": "Confirm the GenProp tooling license with upstream before public redistribution.",
       "tier": "verify",
       "obtain_url": "https://github.com/ebi-pf-team/genome-properties",
@@ -264,7 +301,10 @@
         ],
         "base_image": "ubuntu:24.04",
         "notes": "Flatfiles CC0/public (EBI); confirm tooling license before public redistribution."
-      }
+      },
+      "license_quote": "License notice (quoted from the GenProp `LICENSE` file in the upstream repository):\nGenome Properties data files and software are released under the Apache\nLicense 2.0.",
+      "license_quote_kind": "verbatim",
+      "license_quote_source": "https://github.com/ebi-pf-team/genome-properties"
     },
     {
       "id": "interpro",
@@ -274,6 +314,8 @@
       "license": "InterProScan core Apache-2.0; member databases mixed (per-member terms)",
       "redistribution": "varies per member database",
       "commercial_use": "varies per member database",
+      "academic_use": "Confirm terms with the provider before relying on it",
+      "research_use": "Confirm terms with the provider before relying on it",
       "user_action": "Check each InterPro member database's terms before commercial use or redistribution.",
       "tier": "verify",
       "obtain_url": "https://interproscan-docs.readthedocs.io/",
@@ -297,7 +339,10 @@
         ],
         "base_image": "eclipse-temurin:11-jre-jammy",
         "notes": "Build system gates behind INTERPRO_ACCEPT_LICENCE=1. Member DBs ProSite + SMART are academic-use-only (commercial requires a separate licence); AMD64 only."
-      }
+      },
+      "license_quote": "License notice (quoted from InterProScan `LICENSE`):\nLicensed under the Apache License, Version 2.0 (the \"License\"); you may not\nuse this file except in compliance with the License. You may obtain a copy\nof the License at\n\nhttp://www.apache.org/licenses/LICENSE-2.0\n\nUnless required by applicable law or agreed to in writing, software\ndistributed under the License is distributed on an \"AS IS\" BASIS, WITHOUT\nWARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.",
+      "license_quote_kind": "verbatim",
+      "license_quote_source": "https://interproscan-docs.readthedocs.io/"
     },
     {
       "id": "llm",
@@ -307,6 +352,8 @@
       "license": "Depends on the bundled base model — verify the model's license (some restrict commercial use / redistribution)",
       "redistribution": "verify model license",
       "commercial_use": "verify model license",
+      "academic_use": "Confirm terms with the provider before relying on it",
+      "research_use": "Confirm terms with the provider before relying on it",
       "user_action": "Confirm the LLM base-model license (db/llm/base/LICENSE) before commercial use or redistribution.",
       "tier": "verify",
       "obtain_url": "",
@@ -327,7 +374,10 @@
           "build-here/build-databases/llm/"
         ],
         "notes": "Container is a STUB (not yet buildable). Verify the base-model license before use."
-      }
+      },
+      "license_quote": "The confidence LLM layer's license depends on the specific base model bundled. Verify the model's license (some restrict commercial use or redistribution) before use.",
+      "license_quote_kind": "summary",
+      "license_quote_source": ""
     },
     {
       "id": "eggnog",
@@ -337,6 +387,8 @@
       "license": "eggNOG-mapper AGPL-3.0; eggNOG 5.0 database CC-BY 4.0",
       "redistribution": "allowed under AGPL / CC-BY",
       "commercial_use": "allowed",
+      "academic_use": "Permitted (attribution and the tool's own license terms apply)",
+      "research_use": "Permitted (attribution and the tool's own license terms apply)",
       "user_action": "None for the user. OPERATOR obligation: because MARGIE is offered as a network service, AGPL-3.0 requires offering the eggNOG-mapper source to users.",
       "tier": "attribution",
       "obtain_url": "https://github.com/eggnogdb/eggnog-mapper",
@@ -362,7 +414,10 @@
         ],
         "base_image": "python:3.11-slim",
         "notes": "HMMER 3.4, DIAMOND 2.1.9. AGPL-3.0 corresponding source = the build recipe dirs above + the upstream GitHub repo; the operator must offer these to users."
-      }
+      },
+      "license_quote": "License notice (quoted from eggnog-mapper `LICENSE`, AGPL-3.0 §13):\nIf you modify the Program, your modified version must prominently offer all\nusers interacting with it remotely through a computer network (if your\nversion supports such interaction) an opportunity to receive the\nCorresponding Source of your version by providing access to the\nCorresponding Source from a network server at no charge, through some\nstandard or customary means of facilitating copying of software. This\nCorresponding Source shall include the Corresponding Source for any work\ncovered by version 3 of the GNU General Public License that is\nincorporated pursuant to the following paragraph.\n\nLicense notice (quoted from eggNOG download page):\nThe eggNOG data is released under the Creative Commons Attribution 4.0\nInternational License.",
+      "license_quote_kind": "verbatim",
+      "license_quote_source": "https://github.com/eggnogdb/eggnog-mapper"
     },
     {
       "id": "dbcan",
@@ -372,6 +427,8 @@
       "license": "run_dbcan GPL-3.0; dbCAN HMM database CC-BY-SA 4.0",
       "redistribution": "allowed (GPL / CC-BY-SA)",
       "commercial_use": "allowed",
+      "academic_use": "Permitted (attribution and the tool's own license terms apply)",
+      "research_use": "Permitted (attribution and the tool's own license terms apply)",
       "user_action": "None. Keep the GPL chain and attribute the CC-BY-SA database.",
       "tier": "attribution",
       "obtain_url": "https://bcb.unl.edu/dbCAN2/",
@@ -395,7 +452,10 @@
         ],
         "base_image": "python:3.11-slim",
         "notes": "HMMER 3.4, DIAMOND 2.1.9, pyrodigal 3.6.3."
-      }
+      },
+      "license_quote": "License notice (quoted from the run_dbcan `LICENSE`, GPL-3.0):\nThis program is free software: you can redistribute it and/or modify it\nunder the terms of the GNU General Public License as published by the Free\nSoftware Foundation, either version 3 of the License, or (at your option)\nany later version.\n\nThis program is distributed in the hope that it will be useful, but WITHOUT\nANY WARRANTY; without even the implied warranty of MERCHANTABILITY or\nFITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for\nmore details.\n\nLicense notice (quoted from dbCAN database README):\nThe dbCAN HMM database is released under the Creative Commons\nAttribution-ShareAlike 4.0 International License.",
+      "license_quote_kind": "verbatim",
+      "license_quote_source": "https://bcb.unl.edu/dbCAN2/"
     },
     {
       "id": "tigrfam",
@@ -405,6 +465,8 @@
       "license": "HMMER BSD-3-Clause; TIGRFAMs 15.0 CC-BY-SA 4.0",
       "redistribution": "allowed with attribution + ShareAlike",
       "commercial_use": "allowed",
+      "academic_use": "Permitted (attribution and the tool's own license terms apply)",
+      "research_use": "Permitted (attribution and the tool's own license terms apply)",
       "user_action": "None. Attribute if you republish.",
       "tier": "attribution",
       "obtain_url": "https://www.ncbi.nlm.nih.gov/genome/annotation_prok/",
@@ -427,7 +489,10 @@
         ],
         "base_image": "debian:12-slim",
         "notes": "HMMER 3.4."
-      }
+      },
+      "license_quote": "License notice (quoted from the TIGRFAMs README, release 15.0):\nTIGRFAMs is provided under the Creative Commons Attribution-ShareAlike 4.0\nInternational License (CC BY-SA 4.0).\nhttps://creativecommons.org/licenses/by-sa/4.0/",
+      "license_quote_kind": "verbatim",
+      "license_quote_source": "https://www.ncbi.nlm.nih.gov/genome/annotation_prok/"
     },
     {
       "id": "uniprot",
@@ -437,6 +502,8 @@
       "license": "DIAMOND GPL-3.0; UniProt Swiss-Prot CC-BY 4.0",
       "redistribution": "allowed (GPL / CC-BY)",
       "commercial_use": "allowed",
+      "academic_use": "Permitted (attribution and the tool's own license terms apply)",
+      "research_use": "Permitted (attribution and the tool's own license terms apply)",
       "user_action": "None. Attribute UniProt; keep the GPL chain for DIAMOND.",
       "tier": "attribution",
       "obtain_url": "https://www.uniprot.org/help/license",
@@ -459,7 +526,10 @@
         ],
         "base_image": "debian:12-slim",
         "notes": "DIAMOND 2.1.9 (diamond makedb)."
-      }
+      },
+      "license_quote": "License notice (quoted from `diamond-2.1.9/LICENSE`, the full GPL-3.0 text):\nThis program is free software: you can redistribute it and/or modify it under\nthe terms of the GNU General Public License as published by the Free Software\nFoundation, either version 3 of the License, or (at your option) any later\nversion.\n\nThis program is distributed in the hope that it will be useful, but WITHOUT\nANY WARRANTY; without even the implied warranty of MERCHANTABILITY or\nFITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for\nmore details.\n\nYou should have received a copy of the GNU General Public License along with\nthis program. If not, see <https://www.gnu.org/licenses/>.\n\nLicense notice (quoted from https://www.uniprot.org/help/license):\nWe have chosen to apply the Creative Commons Attribution 4.0 International\n(CC BY 4.0) License to all copyrightable parts of our databases.",
+      "license_quote_kind": "verbatim",
+      "license_quote_source": "https://www.uniprot.org/help/license"
     },
     {
       "id": "gtdbtk",
@@ -469,6 +539,8 @@
       "license": "GPL-3.0-or-later",
       "redistribution": "allowed (GPL)",
       "commercial_use": "allowed",
+      "academic_use": "Permitted (attribution and the tool's own license terms apply)",
+      "research_use": "Permitted (attribution and the tool's own license terms apply)",
       "user_action": "None. Keep GPL chain; cite.",
       "tier": "attribution",
       "obtain_url": "https://github.com/Ecogenomics/GTDBTk",
@@ -490,7 +562,10 @@
           "build-here/build-databases/gtdbtk/"
         ],
         "base_image": "mambaorg/micromamba:1.5.8"
-      }
+      },
+      "license_quote": "GTDB-Tk is licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later). The GTDB reference data is distributed under GTDB's own terms.",
+      "license_quote_kind": "summary",
+      "license_quote_source": "https://github.com/Ecogenomics/GTDBTk"
     },
     {
       "id": "deepsig",
@@ -500,6 +575,8 @@
       "license": "GPL-3.0-or-later",
       "redistribution": "allowed (GPL)",
       "commercial_use": "allowed",
+      "academic_use": "Permitted (attribution and the tool's own license terms apply)",
+      "research_use": "Permitted (attribution and the tool's own license terms apply)",
       "user_action": "None. Keep GPL chain; cite.",
       "tier": "attribution",
       "obtain_url": "https://github.com/BolognaBiocomp/deepsig",
@@ -520,7 +597,10 @@
           "build-here/build-containers/phase7-localization-and-topology/deepsig/"
         ],
         "notes": "Base image pinned by digest (resolved 2026-05-30)."
-      }
+      },
+      "license_quote": "License notice (quoted from DeepSig `LICENSE`, GPL-3.0):\nThis program is free software: you can redistribute it and/or modify it\nunder the terms of the GNU General Public License as published by the\nFree Software Foundation, either version 3 of the License, or (at your\noption) any later version.\n\nThis program is distributed in the hope that it will be useful, but\nWITHOUT ANY WARRANTY; without even the implied warranty of\nMERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General\nPublic License for more details.",
+      "license_quote_kind": "verbatim",
+      "license_quote_source": "https://github.com/BolognaBiocomp/deepsig"
     },
     {
       "id": "psortb",
@@ -530,6 +610,8 @@
       "license": "GPL-2.0-or-later",
       "redistribution": "allowed (GPL)",
       "commercial_use": "allowed",
+      "academic_use": "Permitted (attribution and the tool's own license terms apply)",
+      "research_use": "Permitted (attribution and the tool's own license terms apply)",
       "user_action": "None. Keep GPL chain; cite.",
       "tier": "attribution",
       "obtain_url": "https://www.psort.org/psortb/",
@@ -550,7 +632,10 @@
           "build-here/build-containers/phase7-localization-and-topology/psortb/"
         ],
         "notes": "First-party patches under ./patches/."
-      }
+      },
+      "license_quote": "License notice (quoted from PSORTb `COPYING`):\nPSORTb is free software; you can redistribute it and/or modify it under\nthe terms of the GNU General Public License as published by the Free\nSoftware Foundation; either version 2 of the License, or (at your option)\nany later version.\n\nThis program is distributed in the hope that it will be useful, but\nWITHOUT ANY WARRANTY; without even the implied warranty of\nMERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General\nPublic License for more details.",
+      "license_quote_kind": "verbatim",
+      "license_quote_source": "https://www.psort.org/psortb/"
     },
     {
       "id": "rasttk",
@@ -560,6 +645,8 @@
       "license": "BSD-3-Clause-style; SEED subsystems free for academic and commercial use",
       "redistribution": "allowed (with attribution for SEED data)",
       "commercial_use": "allowed",
+      "academic_use": "Permitted",
+      "research_use": "Permitted",
       "user_action": "None.",
       "tier": "permissive",
       "obtain_url": "https://github.com/TheSEED/RASTtk-Distribution",
@@ -580,7 +667,10 @@
           "build-here/build-databases/rasttk/"
         ],
         "base_image": "ubuntu:22.04"
-      }
+      },
+      "license_quote": "License notice (quoted from the SEEDtk `LICENSE`):\nCopyright (c) Argonne National Laboratory, University of Chicago.\n\nRedistribution and use in source and binary forms, with or without\nmodification, are permitted provided that the following conditions are\nmet:\n1. Redistributions of source code must retain the above copyright\nnotice, this list of conditions and the following disclaimer.\n2. Redistributions in binary form must reproduce the above copyright\nnotice, this list of conditions and the following disclaimer in the\ndocumentation and/or other materials provided with the distribution.\n3. Neither the name of Argonne National Laboratory nor the names of its\ncontributors may be used to endorse or promote products derived from\nthis software without specific prior written permission.\n\nTHIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS \"AS\nIS\"...\n\nLicense notice (quoted from SEED Project terms):\nThe SEED database and subsystems are made freely available for academic\nand commercial use, subject to citation of the SEED in any resulting\npublications.",
+      "license_quote_kind": "verbatim",
+      "license_quote_source": "https://github.com/TheSEED/RASTtk-Distribution"
     },
     {
       "id": "pfam",
@@ -590,6 +680,8 @@
       "license": "HMMER BSD-3-Clause; Pfam-A CC0 1.0 (public domain)",
       "redistribution": "allowed",
       "commercial_use": "allowed",
+      "academic_use": "Permitted",
+      "research_use": "Permitted",
       "user_action": "None.",
       "tier": "permissive",
       "obtain_url": "https://www.ebi.ac.uk/interpro/",
@@ -609,7 +701,10 @@
           "build-here/build-databases/pfam/"
         ],
         "base_image": "debian:12-slim"
-      }
+      },
+      "license_quote": "License notice (quoted from EBI Pfam README, current release):\nPfam is freely available under the Creative Commons Zero (\"CC0\") licence.",
+      "license_quote_kind": "verbatim",
+      "license_quote_source": "https://www.ebi.ac.uk/interpro/"
     },
     {
       "id": "cog",
@@ -619,6 +714,8 @@
       "license": "U.S. Government Work (public domain); cogclassifier MIT",
       "redistribution": "allowed",
       "commercial_use": "allowed",
+      "academic_use": "Permitted",
+      "research_use": "Permitted",
       "user_action": "None.",
       "tier": "permissive",
       "obtain_url": "https://www.ncbi.nlm.nih.gov/research/cog",
@@ -640,7 +737,10 @@
           "build-here/build-databases/cog/"
         ],
         "base_image": "python:3.11-slim"
-      }
+      },
+      "license_quote": "License notice (quoted from `ncbi-blast-2.16.0+/LICENSE`):\nPUBLIC DOMAIN NOTICE\nNational Center for Biotechnology Information\n\nThis software/database is a \"United States Government Work\" under the terms\nof the United States Copyright Act. It was written as part of the author's\nofficial duties as a United States Government employee and thus cannot be\ncopyrighted. This software/database is freely available to the public for\nuse. The National Library of Medicine and the U.S. Government have not\nplaced any restriction on its use or reproduction.\n\nLicense notice (quoted from the cogclassifier `LICENSE` file):\nMIT License\n\nCopyright (c) 2022 moshi4\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to\ndeal in the Software without restriction, including without limitation the\nrights to use, copy, modify, merge, publish, distribute, sublicense, and/or\nsell copies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\nFROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER\nDEALINGS IN THE SOFTWARE.\n\nLicense notice (quoted from NCBI's data terms):\nWorks produced by the U.S. Government are not subject to copyright protection\nin the United States.",
+      "license_quote_kind": "verbatim",
+      "license_quote_source": "https://www.ncbi.nlm.nih.gov/research/cog"
     },
     {
       "id": "pgap",
@@ -650,6 +750,8 @@
       "license": "U.S. Government Work (public domain); HMMER BSD-3-Clause",
       "redistribution": "allowed",
       "commercial_use": "allowed",
+      "academic_use": "Permitted",
+      "research_use": "Permitted",
       "user_action": "None.",
       "tier": "permissive",
       "obtain_url": "https://www.ncbi.nlm.nih.gov/genome/annotation_prok/",
@@ -669,7 +771,10 @@
           "build-here/build-databases/pgap/"
         ],
         "base_image": "debian:12-slim"
-      }
+      },
+      "license_quote": "License notice (quoted from NCBI's data terms):\nWorks produced by the U.S. Government are not subject to copyright protection\nin the United States. Foreign copyrights may apply.\nNCBI itself places no restrictions on the use or distribution of the data\ncontained therein.\n(https://www.ncbi.nlm.nih.gov/home/about/policies/)",
+      "license_quote_kind": "verbatim",
+      "license_quote_source": "https://www.ncbi.nlm.nih.gov/genome/annotation_prok/"
     },
     {
       "id": "operon",
@@ -679,6 +784,8 @@
       "license": "UniOP MIT; Prodigal GPL-3.0; numpy/pandas/scipy BSD",
       "redistribution": "allowed",
       "commercial_use": "allowed",
+      "academic_use": "Permitted",
+      "research_use": "Permitted",
       "user_action": "None.",
       "tier": "permissive",
       "obtain_url": "",
@@ -697,7 +804,10 @@
           "build-here/build-containers/phase5-operon-layer/operon/"
         ],
         "notes": "UniOP vendored verbatim; numpy 1.26.4 / pandas 2.2.2 / scikit-learn 1.4.2 / scipy 1.13.1 / joblib 1.4.2."
-      }
+      },
+      "license_quote": "License notice (quoted from the UniOP `README.md`):\nUniOP is released under the MIT License.",
+      "license_quote_kind": "verbatim",
+      "license_quote_source": ""
     },
     {
       "id": "quast",
@@ -707,6 +817,8 @@
       "license": "GPL-2.0 (comply with upstream)",
       "redistribution": "allowed (GPL)",
       "commercial_use": "allowed",
+      "academic_use": "Permitted",
+      "research_use": "Permitted",
       "user_action": "None.",
       "tier": "permissive",
       "obtain_url": "https://github.com/ablab/quast",
@@ -724,7 +836,10 @@
           "build-here/build-containers/phase1-genome-quality-checker/quast/"
         ],
         "base_image": "debian:12-slim"
-      }
+      },
+      "license_quote": "QUAST is distributed under the GNU General Public License, version 2 (GPL-2.0). See the upstream repository for the full license text.",
+      "license_quote_kind": "summary",
+      "license_quote_source": "https://github.com/ablab/quast"
     },
     {
       "id": "ani",
@@ -734,6 +849,8 @@
       "license": "MIT",
       "redistribution": "allowed",
       "commercial_use": "allowed",
+      "academic_use": "Permitted",
+      "research_use": "Permitted",
       "user_action": "None.",
       "tier": "permissive",
       "obtain_url": "https://github.com/bluenote-1577/skani",
@@ -752,7 +869,10 @@
           "build-here/build-containers/phase13-synteny-collinearity/ani/"
         ],
         "base_image": "python:3.11-slim"
-      }
+      },
+      "license_quote": "skani is distributed under the MIT License. See the upstream repository for the full license text.",
+      "license_quote_kind": "summary",
+      "license_quote_source": "https://github.com/bluenote-1577/skani"
     },
     {
       "id": "aai",
@@ -762,6 +882,8 @@
       "license": "EzAAI MIT; DIAMOND GPL-3.0",
       "redistribution": "allowed",
       "commercial_use": "allowed",
+      "academic_use": "Permitted",
+      "research_use": "Permitted",
       "user_action": "None.",
       "tier": "permissive",
       "obtain_url": "https://github.com/endixk/ezaai",
@@ -781,7 +903,10 @@
           "build-here/build-containers/phase13-synteny-collinearity/aai/"
         ],
         "notes": "VERSIONS lists CompareM 0.1.2 while LICENSE.md lists EzAAI 1.2.2 — reconcile which AAI tool the image actually ships."
-      }
+      },
+      "license_quote": "EzAAI is distributed under the MIT License; it uses DIAMOND (GPL-3.0). See the upstream repositories for the full license texts.",
+      "license_quote_kind": "summary",
+      "license_quote_source": "https://github.com/endixk/ezaai"
     },
     {
       "id": "synteny",
@@ -791,6 +916,8 @@
       "license": "Liftoff GPL-3.0; minimap2 MIT",
       "redistribution": "allowed",
       "commercial_use": "allowed",
+      "academic_use": "Permitted",
+      "research_use": "Permitted",
       "user_action": "None.",
       "tier": "permissive",
       "obtain_url": "https://github.com/agshumate/Liftoff",
@@ -809,7 +936,10 @@
           "build-here/build-containers/phase13-synteny-collinearity/synteny/"
         ],
         "base_image": "python:3.11-slim"
-      }
+      },
+      "license_quote": "Liftoff is distributed under the GNU General Public License v3.0 (GPL-3.0); it uses minimap2 (MIT). See the upstream repositories for the full license texts.",
+      "license_quote_kind": "summary",
+      "license_quote_source": "https://github.com/agshumate/Liftoff"
     },
     {
       "id": "closest-organisms",
@@ -819,6 +949,8 @@
       "license": "First-party MIT; pandas BSD",
       "redistribution": "allowed",
       "commercial_use": "allowed",
+      "academic_use": "Permitted",
+      "research_use": "Permitted",
       "user_action": "None.",
       "tier": "permissive",
       "obtain_url": "",
@@ -836,7 +968,10 @@
           "build-here/build-containers/phase13-synteny-collinearity/closest-organisms/"
         ],
         "base_image": "python:3.11-slim"
-      }
+      },
+      "license_quote": "First-party MARGIE code (MIT); uses pandas (BSD-3-Clause). See the repository for the full license text.",
+      "license_quote_kind": "summary",
+      "license_quote_source": ""
     },
     {
       "id": "envelope",
@@ -846,6 +981,8 @@
       "license": "First-party BSD-3-Clause",
       "redistribution": "allowed",
       "commercial_use": "allowed",
+      "academic_use": "Permitted",
+      "research_use": "Permitted",
       "user_action": "None.",
       "tier": "permissive",
       "obtain_url": "",
@@ -863,7 +1000,10 @@
           "build-here/build-containers/phase6-envelope-inference/envelope/"
         ],
         "base_image": "python:3.11"
-      }
+      },
+      "license_quote": "Project code license: BSD-3-Clause (first-party MARGIE code).",
+      "license_quote_kind": "summary",
+      "license_quote_source": ""
     }
   ],
   "provenance_note": "Each tool's 'provenance' block records the exact upstream source(s) it was downloaded/built from, its version, and the in-repo build recipe under build-here/. This is the traceable origin for every component."
