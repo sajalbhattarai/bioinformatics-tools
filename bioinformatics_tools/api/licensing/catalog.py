@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import re
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -57,6 +58,85 @@ ACK_ITEMS = [
 ]
 _REQUIRED_ACK_IDS = {item["id"] for item in ACK_ITEMS}
 
+# How the user intends to use MARGIE. Drives whether commercial_restricted tools
+# are gated. Keep ids stable — stored in each acceptance record.
+USAGE_ACADEMIC = "academic"
+USAGE_COMMERCIAL = "commercial"
+USAGE_TYPES = [
+    {"id": USAGE_ACADEMIC, "label": "Academic or non-profit research"},
+    {"id": USAGE_COMMERCIAL,
+     "label": "Commercial or other (for-profit, government contract, or any non-academic use)"},
+]
+_VALID_USAGE = {USAGE_ACADEMIC, USAGE_COMMERCIAL}
+
+# Tiers that require the user to hold their own license/permission for a tool.
+_BLOCKED_TIER = "blocked"
+_COMMERCIAL_TIER = "commercial_restricted"
+
+
+def gated_tool_ids() -> dict[str, set[str]]:
+    """Tool ids grouped by the two gated tiers ({'blocked': {...}, 'commercial_restricted': {...}})."""
+    catalog = load_catalog()
+    out: dict[str, set[str]] = {_BLOCKED_TIER: set(), _COMMERCIAL_TIER: set()}
+    for t in catalog.get("tools", []):
+        tier = t.get("tier")
+        if tier in out:
+            out[tier].add(t["id"])
+    return out
+
+
+def disabled_tool_ids(usage_type: str | None, licensed_ids: Iterable[str] | None) -> set[str]:
+    """Tool ids the user is NOT entitled to run, given their usage type and the
+    tools they have licensed themselves.
+
+    - ``blocked`` tools (Phobius, SignalP 4/6, MEROPS): disabled unless the user
+      has licensed that specific tool — this holds for everyone, academic or
+      not, because "blocked" means you must obtain your own copy.
+    - ``commercial_restricted`` tools (TMbed, TCDB, KEGG): free for academic /
+      non-profit use; for commercial use, disabled unless the user has licensed
+      that specific tool.
+    """
+    licensed = set(licensed_ids or [])
+    gated = gated_tool_ids()
+    disabled = {tid for tid in gated[_BLOCKED_TIER] if tid not in licensed}
+    if (usage_type or "").lower() == USAGE_COMMERCIAL:
+        disabled |= {tid for tid in gated[_COMMERCIAL_TIER] if tid not in licensed}
+    return disabled
+
+
+def get_entitlement(username: str) -> dict:
+    """Return {usage_type, licensed_tools} from the user's CURRENT-terms
+    acceptance (usage_type=None, licensed_tools=[] if they haven't accepted)."""
+    current = load_terms()["version"]
+    with get_db() as db:
+        row = db.execute(
+            "SELECT usage_type, licensed_tools FROM license_acceptances "
+            "WHERE username = ? AND terms_version = ? ORDER BY id DESC LIMIT 1",
+            (username, current),
+        ).fetchone()
+    if not row:
+        return {"usage_type": None, "licensed_tools": []}
+    try:
+        licensed = json.loads(row["licensed_tools"]) if row["licensed_tools"] else []
+    except (TypeError, ValueError):
+        licensed = []
+    return {"usage_type": row["usage_type"], "licensed_tools": licensed}
+
+
+def save_depot_record(username: str, record: dict, terms_text: str,
+                      timestamp: str | None = None) -> str | None:
+    """Best-effort mirror of an acceptance record to the depot records dir.
+    Returns the path, or None on any failure (never raises) — used by the CLI
+    gate, which must not fail a run just because the shared record dir is
+    unreachable."""
+    ts = timestamp or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    try:
+        return _write_record_file(
+            username=username, record=record, terms_text=terms_text, timestamp=ts,
+        )
+    except Exception:  # noqa: BLE001 — best-effort only
+        return None
+
 
 def _records_dir() -> Path:
     return Path(os.getenv("LICENSE_RECORDS_DIR", _DEFAULT_RECORDS_DIR))
@@ -92,6 +172,7 @@ def build_terms_payload() -> dict:
         "terms_sha256": terms["sha256"],
         "terms_markdown": terms["text"],
         "acknowledgments": ACK_ITEMS,
+        "usage_types": USAGE_TYPES,
         "catalog_version": catalog.get("catalog_version"),
         "gated_tools": gated,
         "tools": tools,
@@ -155,14 +236,20 @@ def record_acceptance(
     accepted_items: list[str],
     ip_address: str | None,
     user_agent: str | None,
+    usage_type: str,
+    licensed_tools: list[str] | None = None,
 ) -> dict:
     """Validate + persist an acceptance. Returns {terms_version, accepted_at, depot_record_path}.
 
-    Raises ValueError if not all required acknowledgments were accepted.
+    Raises ValueError if not all required acknowledgments were accepted, or if
+    usage_type is not one of USAGE_TYPES.
     """
     if not _REQUIRED_ACK_IDS.issubset(set(accepted_items)):
         missing = _REQUIRED_ACK_IDS - set(accepted_items)
         raise ValueError(f"All acknowledgments are required; missing: {sorted(missing)}")
+    if usage_type not in _VALID_USAGE:
+        raise ValueError(f"usage_type must be one of {sorted(_VALID_USAGE)}; got {usage_type!r}")
+    licensed_tools = sorted(set(licensed_tools or []))
 
     terms = load_terms()
     accepted_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -178,6 +265,8 @@ def record_acceptance(
         "terms_sha256": terms["sha256"],
         "catalog_version": load_catalog().get("catalog_version"),
         "accepted_acknowledgments": accepted_items,
+        "usage_type": usage_type,
+        "licensed_tools": licensed_tools,
     }
 
     # Write the exact copy to the depot records dir. If that fails we still
@@ -197,12 +286,14 @@ def record_acceptance(
         db.execute(
             """INSERT INTO license_acceptances
                (username, terms_version, terms_sha256, accepted_items,
-                ip_address, user_agent, accepted_at, depot_record_path)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                ip_address, user_agent, accepted_at, depot_record_path,
+                usage_type, licensed_tools)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 username, terms["version"], terms["sha256"],
                 json.dumps(accepted_items), ip_address, user_agent,
                 accepted_at, depot_path,
+                usage_type, json.dumps(licensed_tools),
             ),
         )
 

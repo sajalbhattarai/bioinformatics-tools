@@ -60,13 +60,21 @@ def init_db() -> None:
                 ip_address          TEXT,
                 user_agent          TEXT,
                 accepted_at         TEXT    NOT NULL,
-                depot_record_path   TEXT
+                depot_record_path   TEXT,
+                usage_type          TEXT,
+                licensed_tools      TEXT
             )
         """)
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_license_user_version
             ON license_acceptances (username, terms_version)
         """)
+        # Add newer columns to license_acceptances tables created before they
+        # existed (SQLite has no "ADD COLUMN IF NOT EXISTS").
+        _existing = {row[1] for row in conn.execute("PRAGMA table_info(license_acceptances)")}
+        for _col in ("usage_type", "licensed_tools"):
+            if _col not in _existing:
+                conn.execute(f"ALTER TABLE license_acceptances ADD COLUMN {_col} TEXT")
         conn.commit()
         LOGGER.info('BSP database ready')
     finally:

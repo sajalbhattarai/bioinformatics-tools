@@ -1,4 +1,4 @@
-<!-- terms_version: 2026-07-01 -->
+<!-- terms_version: 2026-07-31 -->
 # MARGIE Pipeline — Licensing Terms & Acknowledgment
 
 **Please accept the licensing terms before use.**
@@ -6,6 +6,11 @@
 The MARGIE pipeline orchestrates many third-party bioinformatics tools and
 databases, each governed by its own license. Some are permissive; several are
 **not**. Before you run any analysis, please read and accept the terms below.
+
+When you accept, you tell us **how you will use MARGIE** (academic / non-profit,
+or commercial) and **which license-required tools you have obtained yourself**.
+Any tool you are not entitled to use is then **automatically disabled** and cannot
+be run — so you never rely on a license you do not hold.
 
 ---
 
@@ -20,6 +25,8 @@ provider** before using them:
 - **SignalP 6.0** — register at <https://services.healthtech.dtu.dk/services/SignalP-6.0/>
 - **MEROPS** (pepunit database) — register at <https://www.ebi.ac.uk/merops/>
 
+Tools in this list that you do not mark as licensed are disabled and will not run.
+
 ## 2. Tools restricted for commercial use
 
 The following are free for academic / non-profit use but **restricted or
@@ -32,6 +39,10 @@ appropriate permission or license first:
 - **Full KEGG database** — commercial use requires a KEGG license
   (<https://www.kegg.jp/kegg/legal.html>). The public KOfam subset used by MARGIE
   is free.
+
+If you select commercial use, any tool in this list that you do not mark as
+licensed is disabled and will not run. For academic / non-profit use these tools
+are available.
 
 ## 3. Citation
 
@@ -62,11 +73,12 @@ By accepting, you confirm that:
    authors of the underlying tools, whenever this work or its outputs are used
    or published.
 
-3. **Third-party licenses obtained.** For every tool that requires a separate
-   license or permission (Phobius, SignalP 4.x, SignalP 6.0, and MEROPS; and,
-   for commercial use, TMbed/ProtT5 weights, TCDB, and the full KEGG database), I
-   have already obtained the necessary license(s) or permission(s) directly from
-   the provider.
+3. **Third-party licenses obtained.** For every license-required tool that I mark
+   as licensed when accepting these terms (from: Phobius, SignalP 4.x, SignalP 6.0,
+   MEROPS; and, for commercial use, TMbed/ProtT5 weights, TCDB, and the full KEGG
+   database), I have already obtained the necessary license(s) or permission(s)
+   directly from the provider. I understand that any such tool I do not mark as
+   licensed will be disabled and will not run.
 
 4. **Record-keeping & privacy notice.** I understand and agree that an exact copy
    of these accepted terms — together with my username, the date and time (UTC)
