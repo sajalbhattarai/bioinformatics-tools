@@ -48,6 +48,17 @@ nohup dane_wf margie sb input: <...> output_dir: <...> run_full_operon_map: true
 
 Watch it: `tail -f margie.log`  —  Stop it: `pkill -f dane_wf`
 
+## Licensing (first run)
+
+The first time you run an analysis, MARGIE shows the licensing terms and **every tool/database's license**, then asks you to accept and to tell it:
+
+- how you'll use MARGIE — **academic/non-profit** or **commercial**, and
+- which license-required tools you've obtained yourself (Phobius, SignalP 4/6, MEROPS; plus TMbed/TCDB/KEGG for commercial use).
+
+Tools you're not licensed for are **automatically disabled**. Do this once in a real terminal — a background/`nohup` first run will stop and ask you to accept interactively. Your acceptance is saved to `~/.config/bioinformatics-tools/` and archived (with the exact licenses shown) under `~/.local/share/bioinformatics-tools/licensing-records/`.
+
+On first run the backend also creates its secret keys automatically in a git-ignored `.env` — there's no manual key step.
+
 ## Notes
 
 - `margie sb` is two words. `output_dir:` is the exact folder (no timestamp added).
