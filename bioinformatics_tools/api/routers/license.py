@@ -28,6 +28,8 @@ class LicenseAccept(BaseModel):
     accepted_items: list[str]          # acknowledgment ids the user checked
     terms_version: str                 # version the user was shown (must match current)
     terms_sha256: str | None = None    # optional integrity check of the shown terms
+    usage_type: str                    # "academic" | "commercial"
+    licensed_tools: list[str] = []     # tool ids the user holds their own license for
 
 
 def _client_ip(request: Request) -> str | None:
@@ -49,12 +51,22 @@ def get_terms(current_user: dict = Depends(get_current_user)):
 
 @router.get("/status")
 def get_status(current_user: dict = Depends(get_current_user)):
-    """Whether the current user has accepted the CURRENT terms version."""
+    """Whether the current user has accepted the CURRENT terms version, plus the
+    entitlement that drives which tools the analyze page must disable."""
     terms = licensing.load_terms()
     accepted = licensing.has_accepted_current_terms(current_user["username"])
+    entitlement = licensing.get_entitlement(current_user["username"])
+    disabled = sorted(
+        licensing.disabled_tool_ids(
+            entitlement.get("usage_type"), entitlement.get("licensed_tools")
+        )
+    )
     return {
         "accepted": accepted,
         "current_terms_version": terms["version"],
+        "usage_type": entitlement.get("usage_type"),
+        "licensed_tools": entitlement.get("licensed_tools", []),
+        "disabled_tools": disabled,
     }
 
 
@@ -109,6 +121,8 @@ def accept_terms(
             accepted_items=body.accepted_items,
             ip_address=ip_address,
             user_agent=user_agent,
+            usage_type=body.usage_type,
+            licensed_tools=body.licensed_tools,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))

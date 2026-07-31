@@ -589,6 +589,18 @@ def _launch_job(
     # underscore-joined, matching the registry's cmd_identifier.
     dispatch_tokens = workflow.replace('_', ' ')
     resume_arg = f" {workflow}.resume: true" if copy_from_work_dir else ""
+    # Licensing: acceptance was verified in run_workflow (server-side). Pass it
+    # (and the user's entitlement) to the CLI so its own gate does not re-prompt
+    # this non-interactive run, and so it disables the same tools the user isn't
+    # licensed for. See workflow_tools/license_gate.py.
+    from bioinformatics_tools.api import licensing
+    _lic_ent = licensing.get_entitlement(current_user["username"])
+    _lic_csv = ",".join(_lic_ent.get("licensed_tools") or [])
+    license_env = (
+        f"MARGIE_LICENSE_ACCEPTED='{licensing.load_terms()['version']}' "
+        f"MARGIE_USAGE_TYPE='{_lic_ent.get('usage_type') or ''}' "
+        f"MARGIE_LICENSED_TOOLS='{_lic_csv}' "
+    )
     # Invokes dane_wf directly from ~/bioinformatics-tools/.venv (an editable
     # install -- code changes there are picked up instantly, no reinstall
     # needed) rather than through `uvx --from`. uvx re-resolves/caches the
@@ -598,7 +610,7 @@ def _launch_job(
     # minutes per run and still serving a stale build without --refresh.
     # The venv binary has neither problem: ~0.4s overhead, always current.
     command = (
-        f"~/bioinformatics-tools/.venv/bin/dane_wf {dispatch_tokens}"
+        f"{license_env}~/bioinformatics-tools/.venv/bin/dane_wf {dispatch_tokens}"
         f" input: {genome_path} output_dir: {output_dir}{selected_tools_arg}{full_operon_map_arg}{resume_arg}"
     )
     job_runner.submit_job(job_id, command, connection=conn)
@@ -691,6 +703,20 @@ def run_workflow(genome_data: GenomeSend, current_user: dict = Depends(get_curre
                 status_code=400,
                 detail=f"Unknown tool key(s) in selected_tools: {sorted(unknown)}. "
                        f"Available: {sorted(valid_tool_keys)}",
+            )
+        # Refuse tools the user is not licensed for (mirrors the CLI gate and the
+        # greyed-out tools in the analyze UI -- defence in depth).
+        _ent = licensing.get_entitlement(current_user["username"])
+        _disabled = licensing.disabled_tool_ids(
+            _ent.get("usage_type"), _ent.get("licensed_tools")
+        ) & valid_tool_keys
+        _blocked = set(genome_data.selected_tools) & _disabled
+        if _blocked:
+            raise HTTPException(
+                status_code=403,
+                detail=f"These tools require a license you have not recorded: {sorted(_blocked)}. "
+                       "Update your usage type / licensed tools when accepting the terms "
+                       "(Profile), or remove them from your selection.",
             )
 
     base_dir = (genome_data.output_dir or user_config.get(genome_data.workflow, {}).get('output_path') or current_user['home_dir']).rstrip('/')
