@@ -138,6 +138,26 @@ def save_depot_record(username: str, record: dict, terms_text: str,
         return None
 
 
+def _local_records_dir() -> Path:
+    base = os.getenv("XDG_DATA_HOME") or (Path.home() / ".local" / "share")
+    return Path(base) / "bioinformatics-tools" / "licensing-records"
+
+
+def save_local_record(username: str, record: dict, terms_text: str,
+                      timestamp: str | None = None) -> str | None:
+    """Best-effort per-acceptance archive under the user's own data dir, so there
+    is always a durable, timestamped local copy of each acceptance (in addition
+    to the shared/depot copy). Never raises."""
+    ts = timestamp or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    try:
+        return _write_record_file(
+            username=username, record=record, terms_text=terms_text, timestamp=ts,
+            base_dir=_local_records_dir(),
+        )
+    except Exception:  # noqa: BLE001 — best-effort only
+        return None
+
+
 def _records_dir() -> Path:
     return Path(os.getenv("LICENSE_RECORDS_DIR", _DEFAULT_RECORDS_DIR))
 
@@ -210,18 +230,19 @@ def revoke_current_acceptance(username: str) -> int:
 
 
 def _write_record_file(
-    *, username: str, record: dict, terms_text: str, timestamp: str
+    *, username: str, record: dict, terms_text: str, timestamp: str,
+    base_dir: Path | None = None,
 ) -> str:
-    """Write the exact terms copy + machine-readable record under the records dir.
+    """Write the exact terms copy + machine-readable record under a records dir.
 
-    Layout: <records_dir>/<timestamp>/<operator>/<username>/{terms.txt,record.json}
+    Layout: <base_dir>/<timestamp>/<operator>/<username>/{terms.txt,record.json}
     Returns the directory path as a string. Best-effort: raises on failure so the
     caller can decide whether to still record the DB row.
     """
     operator = _operator()
     # sanitize username for a path segment
     safe_user = re.sub(r"[^A-Za-z0-9._-]", "_", username) or "user"
-    dest = _records_dir() / timestamp / operator / safe_user
+    dest = (base_dir or _records_dir()) / timestamp / operator / safe_user
     dest.mkdir(parents=True, exist_ok=True)
     (dest / "terms.txt").write_text(terms_text, encoding="utf-8")
     (dest / "record.json").write_text(

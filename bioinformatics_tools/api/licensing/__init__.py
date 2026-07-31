@@ -17,4 +17,5 @@ from .catalog import (  # noqa: F401
     record_acceptance,
     revoke_current_acceptance,
     save_depot_record,
+    save_local_record,
 )

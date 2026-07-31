@@ -230,8 +230,14 @@ def _interactive_accept(current_version: str) -> dict:
         terms_text=terms["text"], timestamp=timestamp_dir,
     )
     record["depot_record_path"] = depot_path
+    # Durable, timestamped copy under the user's own data dir (always kept).
+    local_archive = catalog.save_local_record(
+        username=re_safe(name or os_user), record=record,
+        terms_text=terms["text"], timestamp=timestamp_dir,
+    )
+    record["local_archive_path"] = local_archive
 
-    # Local record (this is what future runs read).
+    # Local record (this is what future runs read to skip re-prompting).
     path = _config_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -239,9 +245,14 @@ def _interactive_accept(current_version: str) -> dict:
     except OSError as exc:
         raise LicenseError(f"Could not save your acceptance to {path}: {exc}") from exc
 
-    print(f"\nThank you — acceptance recorded ({path}).")
-    if depot_path is None:
-        print("  (note: could not also write the shared record copy; continuing.)")
+    print("\nThank you — acceptance recorded:")
+    print(f"  local record:   {path}")
+    if local_archive:
+        print(f"  local archive:  {local_archive}")
+    if depot_path:
+        print(f"  shared record:  {depot_path}")
+    else:
+        print("  (shared/depot copy not written here — your local copies are kept.)")
     print()
     return {
         "usage_type": usage_type,
