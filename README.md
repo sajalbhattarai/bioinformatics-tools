@@ -1,10 +1,27 @@
-<h1 align="center">MARGIE</h1>
-<p align="center"><b>M</b>ostly <b>A</b>utomated <b>R</b>apid <b>G</b>enome <b>I</b>nference <b>E</b>nvironment</p>
-<p align="center"><i>Annotates prokaryotic genomes, finds operons, and scores how sure it is about each gene.</i></p>
+<div align="center">
 
-<p align="center"><img src="docs/img/ecoli-s10-ribosomal-operon.png" width="900" alt="E. coli operon with per-gene confidence"></p>
+# MARGIE
 
----
+**Mostly Automated Rapid Genome Inference Environment**
+
+Annotates prokaryotic genomes, finds operons, and scores how confident it is about each gene.
+
+<img src="docs/img/ecoli-s10-ribosomal-operon.png" width="820" alt="E. coli operon with per-gene confidence">
+
+[![Hosted app](https://img.shields.io/badge/Hosted_app-Open-2ea44f?style=for-the-badge)](https://bsp.anvilcloud.rcac.purdue.edu/)
+[![Front-end (GUI)](https://img.shields.io/badge/Front--end-biolab--fe-1f6feb?style=for-the-badge)](https://github.com/sajalbhattarai/biolab-fe)
+[![Built with Snakemake](https://img.shields.io/badge/Built_with-Snakemake-039475?style=for-the-badge)](https://snakemake.readthedocs.io/)
+
+<a href="#install"><b>Install</b></a> &nbsp;|&nbsp;
+<a href="#configure"><b>Configure</b></a> &nbsp;|&nbsp;
+<a href="#run"><b>Run</b></a> &nbsp;|&nbsp;
+<a href="#licensing"><b>Licensing</b></a> &nbsp;|&nbsp;
+<a href="#prefer-a-web-app"><b>Web app</b></a>
+
+</div>
+
+> [!TIP]
+> Prefer clicking to typing? MARGIE also has a **web interface**. Use the hosted app at **[bsp.anvilcloud.rcac.purdue.edu](https://bsp.anvilcloud.rcac.purdue.edu/)** — nothing to install — or run your own from **[biolab-fe](https://github.com/sajalbhattarai/biolab-fe)**. This page covers the **command-line** backend.
 
 ## Install
 
@@ -48,16 +65,28 @@ nohup dane_wf margie sb input: <...> output_dir: <...> run_full_operon_map: true
 
 Watch it: `tail -f margie.log`  —  Stop it: `pkill -f dane_wf`
 
-## Licensing (first run)
+## Licensing
 
-The first time you run an analysis, MARGIE shows the licensing terms and **every tool/database's license**, then asks you to accept and to tell it:
+On the **first run**, MARGIE shows the licensing terms and **every tool/database's license**, then asks you to accept and to tell it:
 
 - how you'll use MARGIE — **academic/non-profit** or **commercial**, and
 - which license-required tools you've obtained yourself (Phobius, SignalP 4/6, MEROPS; plus TMbed/TCDB/KEGG for commercial use).
 
-Tools you're not licensed for are **automatically disabled**. Do this once in a real terminal — a background/`nohup` first run will stop and ask you to accept interactively. Your acceptance is saved to `~/.config/bioinformatics-tools/` and archived (with the exact licenses shown) under `~/.local/share/bioinformatics-tools/licensing-records/`.
+Tools you're not licensed for are **automatically disabled**.
 
-On first run the backend also creates its secret keys automatically in a git-ignored `.env` — there's no manual key step.
+> [!IMPORTANT]
+> Accept it once in a real terminal — a background/`nohup` first run will stop and ask you to accept interactively.
+
+Your acceptance is saved to `~/.config/bioinformatics-tools/` and archived (with the exact licenses shown) under `~/.local/share/bioinformatics-tools/licensing-records/`. The backend's secret keys are also created automatically in a git-ignored `.env` on first run — there is no manual key step.
+
+## Prefer a web app?
+
+The command line is one way to run MARGIE; the same pipeline is also driven by a browser front-end, **[biolab-fe](https://github.com/sajalbhattarai/biolab-fe)**.
+
+- **Just use it** — the hosted app at **[bsp.anvilcloud.rcac.purdue.edu](https://bsp.anvilcloud.rcac.purdue.edu/)**. Nothing to install; sign in and submit.
+- **Run your own** — clone `biolab-fe` and run its one-time `setup.sh`. It starts this backend on your HPC over SSH, opens a tunnel, and launches the app in your browser.
+
+Both routes drive this backend's `dane-api`, and both use the same licensing acceptance described above.
 
 ## Notes
 
