@@ -1264,6 +1264,11 @@ class WorkflowBase(ProgramBase):
         # passed via env), then disable any license-required tool the operator
         # is not entitled to run. The web path already enforced acceptance in
         # dane-api and passes the entitlement down, so this never re-prompts it.
+        # Make sure the backend secret keys exist before importing the licensing
+        # gate (it pulls in the API layer, which requires them at import time).
+        # On a fresh CLI clone this generates + persists them to .env once.
+        from bioinformatics_tools.workflow_tools.env_keys import ensure_api_keys
+        ensure_api_keys()
         from bioinformatics_tools.workflow_tools.license_gate import (
             ensure_cli_license, LicenseError,
         )
