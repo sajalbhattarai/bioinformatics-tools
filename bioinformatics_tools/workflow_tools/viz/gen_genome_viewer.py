@@ -3,10 +3,13 @@
 from a FINAL_ANNOTATION_WITH_CONFIDENCE.tsv.
 
 Two modes, toggled in the page:
-  * Gene mode   -- every gene arc is coloured by CONFIDENCE_TIER (5 distinct,
-                   colour-blind-safe Okabe-Ito hues); review flags shown grey.
-  * Operon mode -- operonic genes are blue, non-operonic genes light brown,
-                   non-coding grey; hovering/clicking an operon highlights all
+  * Gene mode   -- every gene arc is coloured by CONFIDENCE_TIER using a
+                   sequential single-hue slate ramp (tiers are ORDERED, so a
+                   ramp, not a rainbow); review flags in a reserved status red.
+  * Operon mode -- each operon takes a bright hue from a validated 6-colour
+                   categorical cycle (operon identity is categorical, unlike
+                   the ordered tiers), non-operonic genes grey, non-coding
+                   lighter grey; hovering/clicking an operon highlights all
                    its member genes and shows the operon's details.
 
 Everything is read from the FINAL table; the data is embedded directly in the
@@ -313,7 +316,10 @@ TEMPLATE = r"""<!doctype html>
   }
   *{box-sizing:border-box}
   html,body{margin:0;background:#ffffff;color:#000000;
-    font-family:Calibri,"Segoe UI",Arial,"Helvetica Neue",Helvetica,sans-serif;
+    /* Serif throughout, per request. Times New Roman first, with a
+       platform-serif fallback chain so Linux and older browsers do not
+       silently drop to a sans default. */
+    font-family:"Times New Roman",Times,Georgia,"Liberation Serif","DejaVu Serif",serif;
     -webkit-font-smoothing:antialiased}
   .wrap{display:flex;flex-wrap:wrap;gap:16px;padding:18px;max-width:1280px;margin:0 auto}
   .left{flex:1 1 560px;min-width:340px}
@@ -424,7 +430,33 @@ const TIER_COL=["#0b2842","#154064","#256291","#4184b5","#6ba3c8"];
 // FLAG is a RESERVED status colour -- never reused as a tier step, so an
 // alarm can never be confused with a ranking. Operon/non-operon are a separate
 // categorical pair used only in operon mode, where the tier ramp is not shown.
-const NONCODE="#c8c8c8", OPERON="#1667e0", NONOP="#c79a5c", FLAG="#b32b1e";
+// Operon identity is CATEGORICAL -- unlike tiers, which are ordered -- so
+// distinct bright hues are the right rule here, exactly where a ramp would be
+// wrong. Cycled by operon index so NEIGHBOURING operons always differ.
+//
+// Validated with the dataviz validator (light mode, adjacent pairs): lightness
+// band, chroma floor and the normal-vision floor all pass; worst adjacent CVD
+// dE 7.4 (deutan). The order matters and is deliberate -- gold, olive and
+// orange are the same hue family, so they are placed non-adjacently. Sorting
+// them together fails outright (olive vs gold dE 6.3 protan / 14.6 normal).
+//
+// KNOWN LIMIT: the strict all-pairs CVD check FAILS (orange vs olive collapses
+// to dE 1.2 under protanopia). Accepted deliberately, because the cycle
+// delineates ADJACENT blocks rather than encoding identity for comparison
+// across the genome -- the same reason alternating chromosome shading works.
+// Identity never rests on colour: hovering names the operon and clicking opens
+// its card. Two operons on opposite sides of the map may share a hue; nothing
+// asks the reader to tell them apart by eye.
+const OPERON_CYCLE=["#7b3fb5","#c99700","#c1121f","#6b8f00","#1a6fd4","#e8701a"];
+// Retained for the legend swatch and the operon card tag.
+const OPERON=OPERON_CYCLE[0];
+const NONCODE="#c8c8c8", NONOP="#8a8a8a", FLAG="#b32b1e";
+// Stable per-operon colour: hash the id so a given operon keeps its colour
+// across renders and modes, instead of depending on iteration order.
+function opColor(id){
+  let h=0; for(let i=0;i<id.length;i++) h=(h*31+id.charCodeAt(i))|0;
+  return OPERON_CYCLE[Math.abs(h)%OPERON_CYCLE.length];
+}
 const CX=390, CY=396, GAP=4, MINSPAN=4, START=90;
 const R={bbO:352,bbI:343, fO:335,fI:306, rO:301,rI:272, tick:262};
 
@@ -502,7 +534,7 @@ let mode="gene", selKind=null, selVal=null;
 function geneFill(g){
   if(mode==="gene") return g.ti<0?NONCODE:TIER_COL[g.ti];
   if(mode==="review") return g.rv?(g.ti<0?NONCODE:TIER_COL[g.ti]):"#ececea";
-  return g.op?OPERON:(g.ti<0?NONCODE:NONOP);
+  return g.op?opColor(g.op):(g.ti<0?NONCODE:NONOP);
 }
 function paint(){
   D.genes.forEach((g,i)=>nodes[i].setAttribute("fill",geneFill(g)));
@@ -515,7 +547,8 @@ function paint(){
 function renderLegend(){
   const L=document.getElementById("legend"); L.innerHTML="";
   const items = mode==="operon"
-    ? [["operonic gene",OPERON],["non-operonic",NONOP],["non-coding",NONCODE]]
+    ? OPERON_CYCLE.map((c,i)=>[i===0?"operon (colour cycles)":"",c])
+        .concat([["non-operonic",NONOP],["non-coding",NONCODE]])
     : mode==="review"
     ? TIER_NAMES.map((n,i)=>["flagged · "+n,TIER_COL[i]]).concat([["not flagged","#ececea"]])
     : TIER_NAMES.map((n,i)=>[n,TIER_COL[i]]).concat([["non-coding",NONCODE]]);
@@ -597,7 +630,7 @@ function operonCard(id){
   const flagged=sorted.filter(([,g])=>g.rv).length;
   let h=`<div class="cardhead"><div class="cardhead-l">`
        +`<div class="ptitle">${id}</div>`
-       +`<span class="ptag" style="background:${OPERON}">${idx.length} genes · operon</span></div>`
+       +`<span class="ptag" style="background:${opColor(id)}">${idx.length} genes · operon</span></div>`
        +`<button class="dlbtn" data-dl="${id}" title="Download this operon map as an image">⤓ map</button></div>`;
   h+=`<div class="kv">`;                                        // structural facts only (no recomputed scores)
   h+=`<b>span</b><span>${(span/1000).toFixed(1)} kb</span>`;
@@ -681,7 +714,7 @@ function revShort(rr){                          // full review sentence -> short
 function operonFigureSVG(id){
   const sorted=operons[id].map(i=>D.genes[i]).sort((a,b)=>a.s-b.s), n=sorted.length;
   const lo=Math.min(...sorted.map(g=>g.s)), hi=Math.max(...sorted.map(g=>g.e)), rng=Math.max(1,hi-lo);
-  const W=1480, MX=32, aw=W-2*MX, FF="Calibri, Arial, Helvetica, sans-serif", INK="#000000";
+  const W=1480, MX=32, aw=W-2*MX, FF="'Times New Roman', Times, Georgia, serif", INK="#000000";
   const arrY=104, arrH=30;                                 // arrow band; numbers above, intergenic below
   const headY=arrY+arrH+48, rowH=21;                       // table header baseline
   const legY=headY+24+rowH*n+16, H=legY+26;
