@@ -919,6 +919,70 @@ def get_job_status(job_id: str, current_user: dict = Depends(get_current_user)):
 
 
 @router.get("/jobs")
+
+def _reconcile_running(conn, main_db: str, rows: list[dict]) -> None:
+    """Correct rows that claim to be running but are not.
+
+    Workflow runs are detached (setsid + nohup) so they survive the GUI closing.
+    The cost is that nothing writes a terminal status if the driver dies without
+    reaching its exit sentinel -- a killed or wedged run then reads as "running"
+    on the history page forever. One such row sat at "Submitting via SSH" after
+    its driver was stopped.
+
+    A run is considered alive if ANY of these hold:
+      * its .rc sentinel is absent AND a driver process for it exists, or
+      * it has SLURM jobs still queued/running.
+    If the sentinel exists, the run finished and its exit code decides the
+    status. If neither, it is interrupted.
+
+    Deliberately read-mostly: only rows already marked running are touched, so a
+    healthy run is never disturbed. Failures here are logged and ignored -- a
+    history listing must not break because reconciliation could not run.
+    """
+    pending = [r for r in rows if (r.get("status") or "").lower() == "running"]
+    if not pending:
+        return
+    try:
+        ssh = conn.connect()
+        for row in pending:
+            jid = row.get("job_id") or row.get("id")
+            if not jid:
+                continue
+            probe = (
+                f'rc=$(cat $HOME/.local/share/bsp/jobs/{jid}.rc 2>/dev/null); '
+                f'drv=$(pgrep -u $USER -f {jid} 2>/dev/null | wc -l); '
+                f'slurm=$(squeue -u $USER -h -o %j 2>/dev/null | grep -c {jid}); '
+                f'echo "${{rc:--}}|$drv|$slurm"'
+            )
+            _in, out, _err = ssh.exec_command(probe)
+            reply = (out.read().decode() or "").strip().splitlines()
+            if not reply:
+                continue
+            rc, drv, slurm = (reply[-1].split("|") + ["-", "0", "0"])[:3]
+            try:
+                drv_n, slurm_n = int(drv), int(slurm)
+            except ValueError:
+                continue
+
+            if rc != "-":                      # finished: the sentinel decides
+                ok = rc.strip() == "0"
+                status, phase = ("completed", "Done") if ok else ("failed", f"Exited {rc.strip()}")
+            elif drv_n > 0 or slurm_n > 0:     # genuinely still going
+                continue
+            else:                              # no sentinel, no driver, no jobs
+                status, phase = "cancelled", "Interrupted (driver stopped)"
+
+            LOGGER.info("reconciled job %s: running -> %s", jid, status)
+            row["status"], row["phase"] = status, phase
+            try:
+                job_history_client.record_job_updated(
+                    conn, main_db, jid, status=status, phase=phase)
+            except Exception as exc:
+                LOGGER.warning("could not persist reconciled status for %s: %s", jid, exc)
+    except Exception as exc:
+        LOGGER.warning("job reconciliation skipped: %s", exc)
+
+
 def list_jobs(
     workflow: str | None = None,
     page: int = Query(1, ge=1),
@@ -944,6 +1008,8 @@ def list_jobs(
     rows, total_jobs = job_history_client.list_jobs_and_count(
         conn, main_db, workflow=workflow, limit=page_size, offset=offset,
     )
+    # Verify anything claiming to be running before reporting it as such.
+    _reconcile_running(conn, main_db, rows)
     total_pages = max((total_jobs + page_size - 1) // page_size, 1)
 
     return {
