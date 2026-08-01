@@ -377,6 +377,19 @@ REPORT_FIGURES_ORGANISM_DIR = f"{GENOME_PREFIX}scoring/figures"
 REPORT_FIGURES_ORGANISM_TOKEN = f"{GENOME_PREFIX}scoring/report_figures.tkn"
 REPORT_FIGURES_GLOBAL_DIR = f"{_OUTPUT_ROOT}/scoring/figures/global"
 REPORT_FIGURES_GLOBAL_TOKEN = f"{_OUTPUT_ROOT}/scoring/figures/report_figures_global.tkn"
+
+# Interactive genome/operon viewer: a single self-contained HTML file per
+# organism (no server, no external assets) built from this organism's FINAL
+# table + consolidated matrix. Written at the organism TOP LEVEL, not under
+# scoring/, so it survives reorganize_outputs.py's sweep and is the obvious
+# thing to click in the per-organism folder. reorganize_outputs.py must list
+# GENOME_VIEWER_NAME in its keep-set or it gets swept into per-tool-phased-
+# output/ with everything else.
+VIZ_SCRIPTS_DIR = os.path.join(WORKFLOW_DIR, "viz")
+GENOME_VIEWER_NAME = "FINAL_GENOME_VIEWER.html"
+GENOME_VIEWER_HTML = f"{GENOME_PREFIX}{GENOME_VIEWER_NAME}"
+GENOME_VIEWER_CIRCULAR_PNG = f"{GENOME_PREFIX}scoring/figures/{{genome}}_circular.png"
+GENOME_VIEWER_TOKEN = f"{GENOME_PREFIX}scoring/genome_viewer.tkn"
 # Optional, heavier companion to the report figures: the FULL per-organism operon
 # atlas (EVERY multi-gene operon, all sizes, paginated) under
 # <genome>/scoring/figures/complete-organism-operon-diagrams/. OFF by default
@@ -649,6 +662,11 @@ def _phase9_12_targets_for_genome(genome, include_llm=True):
         # this genome's scoring/completion.
         if rc_bool('run_report_figures', True, config=config):
             targets.append(REPORT_FIGURES_ORGANISM_TOKEN.format(genome=genome))
+        # Interactive genome/operon viewer for this organism (default on).
+        # Same contract as report figures: downstream of SCORING_TOKEN, shell
+        # never fails, so it can never block this genome.
+        if rc_bool('run_genome_viewer', True, config=config):
+            targets.append(GENOME_VIEWER_TOKEN.format(genome=genome))
         # Optional full-genome operon atlas (every operon, all sizes). Heavy
         # (~2-3 min/genome), so OFF by default; the analysis-page checkbox sets
         # run_full_operon_map. Downstream of SCORING_TOKEN, shell never fails.
@@ -1308,6 +1326,53 @@ rule run_report_figures_one_genome:
             --figures-dir "{params.outdir}" \
             || echo "[report_figures] organism verify reported issues (non-fatal)"
         echo "report figures generated for {wildcards.genome}" > {output.tkn}
+        """
+
+
+rule run_genome_viewer_one_genome:
+    """Independent, downstream-only: the interactive per-organism genome/operon
+    viewer -- ONE self-contained HTML file (embedded JSON, no server, no
+    external assets) plus the static circular map PNG. This is what the GUI
+    links to from the per-organism folder.
+
+    Built the moment THIS organism finishes scoring, not at the end of the
+    batch, so a 20-genome run surfaces each map as it lands instead of all of
+    them at the end.
+
+    Same guarantees as run_report_figures_one_genome: depends only on
+    SCORING_TOKEN, writes only its own two files + token, and the shell
+    swallows any error so it can NEVER fail or block the genome.
+
+    --consolidated is passed EXPLICITLY. At this point in the run the FINAL
+    table is still in scoring/ and consolidation/ is a sibling of it, which is
+    not where the generator's post-reorganize default looks; without this the
+    lookup would miss silently and emit a viewer with an empty evidence trail.
+    Gate: run_genome_viewer (default true)."""
+    input:
+        scoring_tkn=SCORING_TOKEN,
+        final_with_confidence=SCORING_FINAL_ANNOTATION_WITH_CONFIDENCE,
+        merged=CONSOLIDATION_MERGED
+    output:
+        tkn=GENOME_VIEWER_TOKEN
+    params:
+        scripts=VIZ_SCRIPTS_DIR,
+        html=GENOME_VIEWER_HTML,
+        png=GENOME_VIEWER_CIRCULAR_PNG
+    threads: 1
+    resources:
+        mem_mb=rc('genome_viewer.mem_mb', 8000, config=config),
+        runtime=rc('genome_viewer.runtime', 30, config=config)
+    shell:
+        """
+        echo "=== MARGIE_SB: GENOME VIEWER ({wildcards.genome}) ==="
+        {LOADER_PYTHON} {params.scripts}/gen_genome_viewer.py \
+            "{input.final_with_confidence}" "{params.html}" \
+            --consolidated "{input.merged}" \
+            || echo "[genome_viewer] interactive viewer failed (non-fatal)"
+        {LOADER_PYTHON} {params.scripts}/make_circular_genome.py \
+            "{input.final_with_confidence}" "{params.png}" \
+            || echo "[genome_viewer] circular map failed (non-fatal)"
+        echo "genome viewer generated for {wildcards.genome}" > {output.tkn}
         """
 
 

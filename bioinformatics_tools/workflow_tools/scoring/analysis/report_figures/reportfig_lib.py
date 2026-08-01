@@ -489,6 +489,34 @@ _CONF_FINAL = "scoring/scored-labeled-genes-confidence-final.tsv"
 _LABELED = "labeling/labeled-genes.tsv"
 _NOT_IN_OPERON = "NOT_IN_AN_OPERON"
 
+# reorganize_outputs.py moves scoring/ and labeling/ wholesale into
+# per-tool-phased-output/. It used to run only once, after this global report,
+# so these paths could be assumed pre-reorganize. It now runs per-organism as
+# each genome finishes, which means by the time the run-level report executes
+# some organisms are reorganized and others are not -- possibly within the same
+# run. Resolve both layouts rather than assuming either.
+_PTP = "per-tool-phased-output"
+
+
+def _resolve_organism_file(base, rel):
+    """Locate `rel` under an organism dir in either layout. Returns a Path, or
+    None if absent from both."""
+    base = Path(base)
+    for cand in (base / rel, base / _PTP / rel):
+        if cand.is_file():
+            return cand
+    return None
+
+
+def _require_organism_file(base, rel):
+    p = _resolve_organism_file(base, rel)
+    if p is None:
+        raise FileNotFoundError(
+            f"{rel} not found for {Path(base).name} in either layout "
+            f"({rel} or {_PTP}/{rel})"
+        )
+    return p
+
 
 def is_operon(oid) -> bool:
     """True only for a real operon id. Real operons all start with 'operon_';
@@ -511,10 +539,14 @@ def parse_contig(gene_id: str) -> str:
 def discover_organisms(run_root: Path) -> list[str]:
     """Organism stems under the run that have a confidence-final scoring file."""
     run_root = Path(run_root)
-    out = []
+    out = set()
+    # pre-reorganize:  <organism>/scoring/...
     for p in sorted(run_root.glob("*/" + _CONF_FINAL)):
-        out.append(p.parents[1].name)
-    return out
+        out.add(p.parents[1].name)
+    # post-reorganize: <organism>/per-tool-phased-output/scoring/...
+    for p in sorted(run_root.glob(f"*/{_PTP}/" + _CONF_FINAL)):
+        out.add(p.parents[2].name)
+    return sorted(out)
 
 
 def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
@@ -530,12 +562,12 @@ def load_organism_genes(run_root: Path, organism: str) -> pd.DataFrame:
     Adds `clean_desc`, `uninformative`, `in_operon`, `contig`."""
     run_root = Path(run_root)
     base = run_root / organism
-    conf = pd.read_csv(base / _CONF_FINAL, sep="\t", dtype=str,
+    conf = pd.read_csv(_require_organism_file(base, _CONF_FINAL), sep="\t", dtype=str,
                        keep_default_na=False, engine="python")
     conf = _coerce_numeric(conf)
 
     coords_cols = ["feature_id", "gene_id", "gene_start", "gene_end", "RAST_strand"]
-    lab = pd.read_csv(base / _LABELED, sep="\t", dtype=str,
+    lab = pd.read_csv(_require_organism_file(base, _LABELED), sep="\t", dtype=str,
                       keep_default_na=False, engine="python",
                       usecols=lambda c: c in coords_cols)
     for c in ("gene_start", "gene_end"):
@@ -771,9 +803,14 @@ def organism_source_lines(run_root, organism: str, coords: bool = False,
                           operon_db=None) -> list[str]:
     """Footer source list for a per-organism figure."""
     run_root = Path(run_root)
-    lines = [rel_or_host(run_root / organism / _CONF_FINAL, run_root)]
+    # Report the path actually read, so provenance stays truthful whichever
+    # layout this organism is currently in.
+    _base = run_root / organism
+    lines = [rel_or_host(_resolve_organism_file(_base, _CONF_FINAL)
+                         or _base / _CONF_FINAL, run_root)]
     if coords:
-        lines.append(rel_or_host(run_root / organism / _LABELED, run_root))
+        lines.append(rel_or_host(_resolve_organism_file(_base, _LABELED)
+                                 or _base / _LABELED, run_root))
     if operon_db is not None:
         lines.append(rel_or_host(operon_db, run_root))
     return lines
@@ -973,11 +1010,13 @@ def write_sources_manifest(outdir: Path, run_root: Path, organisms: list[str],
 
     for org in organisms:
         base = run_root / org
-        add("input: scored genes", base / _CONF_FINAL,
+        add("input: scored genes",
+            _resolve_organism_file(base, _CONF_FINAL) or base / _CONF_FINAL,
             f"[{org}] final per-gene confidence table (C1-C4, preliminary, "
             "operon-adjusted, final score, tier) with operon_id and member "
             "counts -- the values shown in the plots")
-        add("input: gene coordinates", base / _LABELED,
+        add("input: gene coordinates",
+            _resolve_organism_file(base, _LABELED) or base / _LABELED,
             f"[{org}] gene genomic coordinates (start/end/strand) and product "
             "descriptors, joined in for the gene-arrow maps and locations")
     add("database: operon recurrence", operon_db,

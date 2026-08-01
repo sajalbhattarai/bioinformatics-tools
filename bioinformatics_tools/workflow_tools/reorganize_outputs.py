@@ -33,6 +33,10 @@ from pathlib import Path
 
 FINAL_TSV = "FINAL_ANNOTATION_WITH_CONFIDENCE.tsv"
 FINAL_XLSX = "FINAL_ANNOTATION_WITH_CONFIDENCE.xlsx"
+# Written at the organism top level by rule run_genome_viewer_one_genome. Must
+# be in the keep-set below or the sweep buries it in per-tool-phased-output/,
+# which is exactly where the GUI does not look for it.
+GENOME_VIEWER = "FINAL_GENOME_VIEWER.html"
 PTP = "per-tool-phased-output"
 # run-level (not per-organism) folders that must never be treated as an organism
 _RUN_LEVEL = {"scoring", "sqlite", "ani", "aai", "closest", "mauve",
@@ -94,7 +98,7 @@ def reorganize_one(org_dir, figures_dirname: str = "diagrams",
                 result["actions"].append(f"promote {name}")
 
         # 4. everything else -> per-tool-phased-output/
-        keep = {figures_dirname, PTP, FINAL_TSV, FINAL_XLSX}
+        keep = {figures_dirname, PTP, FINAL_TSV, FINAL_XLSX, GENOME_VIEWER}
         ptp.mkdir(exist_ok=True)
         for entry in list(org.iterdir()):
             if entry.name in keep:
