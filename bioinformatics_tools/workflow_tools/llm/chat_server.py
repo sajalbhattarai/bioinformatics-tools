@@ -80,12 +80,8 @@ def load_model(model_path: str, dtype: str) -> None:
     log(f"loaded on {dev} in {time.time() - t0:.0f}s")
 
 
-def generate(system: str, prompt: str, max_tokens: int) -> str:
-    import torch
-
-    # Llama 3.1 instruct chat template. Using the tokenizer's own template
-    # rather than hand-rolling the special tokens keeps this correct if the
-    # fused model ships a different one.
+def _build_inputs(system: str, prompt: str):
+    """Tokenised chat-template inputs, shared by the batch and streaming paths."""
     messages = [{"role": "system", "content": system},
                 {"role": "user", "content": prompt}]
     try:
@@ -93,8 +89,43 @@ def generate(system: str, prompt: str, max_tokens: int) -> str:
             messages, tokenize=False, add_generation_prompt=True)
     except Exception:
         text = f"{system}\n\n{prompt}\n\n"
+    return TOKENIZER(text, return_tensors="pt").to(MODEL.device)
 
-    inputs = TOKENIZER(text, return_tensors="pt").to(MODEL.device)
+
+def generate_stream(system: str, prompt: str, max_tokens: int):
+    """Yield text as it is produced.
+
+    Total time is unchanged, but the first words appear in well under a second
+    instead of after the whole answer. Generation runs in a worker thread
+    because .generate() blocks; TextIteratorStreamer is the handoff.
+    """
+    import torch
+    from transformers import TextIteratorStreamer
+
+    inputs = _build_inputs(system, prompt)
+    streamer = TextIteratorStreamer(TOKENIZER, skip_prompt=True,
+                                    skip_special_tokens=True)
+    kwargs = dict(**inputs, max_new_tokens=max_tokens, do_sample=False,
+                  pad_token_id=TOKENIZER.pad_token_id, streamer=streamer)
+
+    # The lock is held for the whole generation, same as the batch path: one set
+    # of weights, and concurrent generate() calls would interleave KV state.
+    def run():
+        with _GEN_LOCK, torch.no_grad():
+            MODEL.generate(**kwargs)
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    for piece in streamer:
+        if piece:
+            yield piece
+    t.join()
+
+
+def generate(system: str, prompt: str, max_tokens: int) -> str:
+    import torch
+
+    inputs = _build_inputs(system, prompt)
     with _GEN_LOCK, torch.no_grad():
         out = MODEL.generate(
             **inputs,
@@ -157,16 +188,43 @@ class Handler(BaseHTTPRequestHandler):
         if not prompt:
             self._send(400, {"error": "prompt is required"})
             return
+        system = body.get("system") or ""
+        max_tokens = int(body.get("max_tokens") or 600)
+
+        if not body.get("stream"):
+            try:
+                self._send(200, {"text": generate(system, prompt, max_tokens)})
+            except Exception as exc:
+                log(f"generation failed: {type(exc).__name__}: {exc}")
+                self._send(500, {"error": f"{type(exc).__name__}: {exc}"})
+            return
+
+        # Streaming: chunked transfer, plain UTF-8 text. Headers must go out
+        # before the first token or the client waits for the whole body anyway,
+        # which would defeat the point.
         try:
-            text = generate(
-                body.get("system") or "",
-                prompt,
-                int(body.get("max_tokens") or 600),
-            )
-            self._send(200, {"text": text})
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            for piece in generate_stream(system, prompt, max_tokens):
+                data = piece.encode("utf-8")
+                self.wfile.write(b"%X\r\n" % len(data) + data + b"\r\n")
+                self.wfile.flush()
+            self.wfile.write(b"0\r\n\r\n")
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            # Reader navigated away mid-answer. Not an error worth a traceback.
+            log("client disconnected during stream")
         except Exception as exc:
-            log(f"generation failed: {type(exc).__name__}: {exc}")
-            self._send(500, {"error": f"{type(exc).__name__}: {exc}"})
+            log(f"stream failed: {type(exc).__name__}: {exc}")
+            # Headers are already sent, so the only signal left is the body.
+            try:
+                msg = f"\n[stream error: {type(exc).__name__}: {exc}]".encode()
+                self.wfile.write(b"%X\r\n" % len(msg) + msg + b"\r\n0\r\n\r\n")
+            except Exception:
+                pass
 
     def log_message(self, fmt, *args):
         log(fmt % args)

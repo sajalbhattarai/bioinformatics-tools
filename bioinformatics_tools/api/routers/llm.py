@@ -31,6 +31,7 @@ import urllib.request
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from bioinformatics_tools.api.auth import get_current_user
@@ -140,6 +141,7 @@ class ChatRequest(BaseModel):
     question: str
     gene_id: str | None = None    # optional: narrows context to one gene
     max_tokens: int = 1000
+    stream: bool = False
 
 
 def _endpoint() -> dict:
@@ -568,19 +570,55 @@ def chat(body: ChatRequest, current_user: dict = Depends(get_current_user)):
               "inferred under Interpretation so it cannot be mistaken for a "
               "pipeline output.")
 
-    try:
-        req = urllib.request.Request(
-            f"{ep['url']}/chat",
-            data=json.dumps({"system": SYSTEM_PROMPT, "prompt": prompt,
-                             "max_tokens": body.max_tokens}).encode(),
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=180) as r:
-            answer = json.loads(r.read()).get("text", "")
-    except urllib.error.URLError as exc:
-        raise HTTPException(status_code=503,
-                            detail=f"Chat backend unreachable: {exc}. It may have hit walltime.")
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Chat failed: {exc}")
+    payload = json.dumps({"system": SYSTEM_PROMPT, "prompt": prompt,
+                          "max_tokens": body.max_tokens,
+                          "stream": bool(body.stream)}).encode()
+    req = urllib.request.Request(f"{ep['url']}/chat", data=payload,
+                                 headers={"Content-Type": "application/json"})
 
-    return {"answer": answer, "context_summary": summary, "model": ep["model"]}
+    if not body.stream:
+        try:
+            with urllib.request.urlopen(req, timeout=300) as r:
+                answer = json.loads(r.read()).get("text", "")
+        except urllib.error.URLError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Chat backend unreachable: {exc}. It may have hit walltime.")
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Chat failed: {exc}")
+        return {"answer": answer, "context_summary": summary, "model": ep["model"]}
+
+    # Streaming. The connection is opened here rather than inside the generator
+    # so an unreachable backend still becomes a clean 503 -- once StreamingResponse
+    # has begun, the status is already sent and errors can only go in the body.
+    try:
+        upstream = urllib.request.urlopen(req, timeout=300)
+    except urllib.error.URLError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Chat backend unreachable: {exc}. It may have hit walltime.")
+
+    def relay():
+        try:
+            while True:
+                chunk = upstream.read(64)
+                if not chunk:
+                    break
+                yield chunk
+        except Exception as exc:
+            LOGGER.warning("stream relay ended: %s", exc)
+            yield f"\n[stream interrupted: {exc}]".encode()
+        finally:
+            upstream.close()
+
+    return StreamingResponse(
+        relay(), media_type="text/plain; charset=utf-8",
+        headers={
+            # The summary cannot go in the body -- that is the answer text --
+            # so it rides along as a header the client reads before streaming.
+            "X-Context-Summary": json.dumps(summary),
+            "X-Model": ep["model"],
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
