@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from bioinformatics_tools.api.database import init_db
-from bioinformatics_tools.api.routers import auth, dane, fasta, license, ssh, workflows
+from bioinformatics_tools.api.routers import auth, dane, fasta, license, llm, ssh, workflows
 
 # Configure logging
 logging.basicConfig(
@@ -60,6 +60,7 @@ app.include_router(dane.router)
 app.include_router(ssh.router)
 app.include_router(workflows.router)
 app.include_router(license.router)
+app.include_router(llm.router)
 
 # Root endpoint
 @app.get("/")
