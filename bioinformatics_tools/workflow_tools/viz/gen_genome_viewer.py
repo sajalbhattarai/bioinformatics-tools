@@ -315,9 +315,9 @@ TEMPLATE = r"""<!doctype html>
   html,body{margin:0;background:#ffffff;color:#000000;
     font-family:Calibri,"Segoe UI",Arial,"Helvetica Neue",Helvetica,sans-serif;
     -webkit-font-smoothing:antialiased}
-  .wrap{display:flex;flex-wrap:wrap;gap:16px;padding:18px;max-width:1280px;margin:0 auto}
-  .left{flex:1 1 560px;min-width:340px}
-  .right{flex:1 1 360px;min-width:300px;max-width:440px}
+  .wrap{display:flex;flex-wrap:wrap;gap:22px;padding:16px 20px;max-width:1500px;margin:0 auto}
+  .left{flex:1 1 640px;min-width:340px}
+  .right{flex:1 1 380px;min-width:300px;max-width:460px}
   h1{font-size:19px;margin:0 0 2px;overflow-wrap:anywhere;word-break:break-word}
   h1 em{font-style:italic}
   .sub{color:var(--muted);font-size:14px;margin-bottom:12px}
@@ -332,7 +332,13 @@ TEMPLATE = r"""<!doctype html>
   .sel{stroke:#111;stroke-width:2;paint-order:stroke}
   .dim{opacity:.16}
   .hi{stroke:#111;stroke-width:1.1}
-  .legend{display:flex;flex-wrap:wrap;gap:8px 16px;margin-top:10px;font-size:13.5px}
+  .plate{position:relative}
+  .zreset{position:absolute;top:6px;right:6px;z-index:2;font-family:inherit;font-size:12px;
+          padding:4px 10px;border:1px solid var(--line);border-radius:7px;background:#fff;
+          color:var(--ink);cursor:pointer}
+  .zreset:disabled{opacity:0;pointer-events:none}
+  .zhint{font-size:11.5px;color:var(--muted);text-align:right;margin-top:-2px}
+  .legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:8px;font-size:12.5px}
   .legend span{display:inline-flex;align-items:center;gap:6px;color:var(--ink)}
   .sw{width:14px;height:14px;border-radius:3px;display:inline-block;border:1px solid rgba(0,0,0,.12)}
   .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-height:280px}
@@ -394,7 +400,7 @@ TEMPLATE = r"""<!doctype html>
       <label><input type="checkbox" id="showFlags"> show review flags (grey)</label>
       <span id="hint"></span>
     </div>
-    <div class="plate"><svg id="map" viewBox="0 0 780 780" aria-label="circular genome map"></svg></div>
+    <div class="plate"><button id="zreset" class="zreset" type="button" title="Reset zoom (or double-click the map)" disabled>Reset view</button><svg id="map" viewBox="0 0 780 780" aria-label="circular genome map, scroll to zoom and drag to pan"></svg><div class="zhint">scroll to zoom · drag to pan · double-click to reset</div></div>
     <div class="legend" id="legend"></div>
     <div class="foot">Every value is read verbatim from FINAL_ANNOTATION_WITH_CONFIDENCE.tsv. Click a gene or operon for details.</div>
   </div>
@@ -780,6 +786,78 @@ document.getElementById("mReview").onclick=()=>setMode("review");
 document.getElementById("showFlags").onchange=paint;
 
 // ---- init ----
+
+// ---- pan / zoom on the circular map -------------------------------------
+// The map is dense at genome scale: 4,600 arcs in a 780px circle means single
+// genes are sub-pixel. Zoom is what makes individual operons readable, so it
+// drives the viewBox rather than a CSS transform -- vectors stay crisp at any
+// magnification and hit-testing keeps working, which a scaled bitmap would lose.
+(function(){
+  const svg=document.getElementById("map");
+  if(!svg) return;
+  const BASE={x:0,y:0,w:780,h:780};
+  let vb={...BASE};
+  const MIN_W=780/40, MAX_W=780;      // 40x in, never zoom out past the full map
+
+  function apply(){ svg.setAttribute("viewBox",`${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+    const btn=document.getElementById("zreset");
+    if(btn) btn.disabled = (vb.w>=MAX_W-0.5 && Math.abs(vb.x)<0.5 && Math.abs(vb.y)<0.5);
+  }
+  // Client px -> current viewBox units.
+  function toSvg(ev){ const r=svg.getBoundingClientRect();
+    return {x:vb.x+(ev.clientX-r.left)/r.width*vb.w, y:vb.y+(ev.clientY-r.top)/r.height*vb.h}; }
+
+  svg.addEventListener("wheel",(e)=>{
+    e.preventDefault();
+    const p=toSvg(e);
+    const k=Math.exp(e.deltaY*0.0015);                 // smooth, direction-preserving
+    let w=Math.min(MAX_W,Math.max(MIN_W,vb.w*k));
+    const s=w/vb.w;
+    // Keep the point under the cursor fixed -- zooming to centre instead makes
+    // it impossible to reach a specific operon.
+    vb={x:p.x-(p.x-vb.x)*s, y:p.y-(p.y-vb.y)*s, w:w, h:vb.h*s};
+    clamp(); apply();
+  },{passive:false});
+
+  let drag=null;
+  svg.addEventListener("pointerdown",(e)=>{
+    if(e.button!==0) return;
+    drag={x:e.clientX,y:e.clientY,vx:vb.x,vy:vb.y,moved:false};
+    svg.setPointerCapture(e.pointerId);
+  });
+  svg.addEventListener("pointermove",(e)=>{
+    if(!drag) return;
+    const r=svg.getBoundingClientRect();
+    const dx=(e.clientX-drag.x)/r.width*vb.w, dy=(e.clientY-drag.y)/r.height*vb.h;
+    if(Math.abs(e.clientX-drag.x)+Math.abs(e.clientY-drag.y)>3) drag.moved=true;
+    vb.x=drag.vx-dx; vb.y=drag.vy-dy; clamp(); apply();
+  });
+  function endDrag(e){
+    if(!drag) return;
+    // A drag must not also register as a click on whatever arc is underneath.
+    if(drag.moved){ svg.style.pointerEvents="none"; setTimeout(()=>svg.style.pointerEvents="",0); }
+    drag=null;
+    try{ svg.releasePointerCapture(e.pointerId); }catch(_){}
+  }
+  svg.addEventListener("pointerup",endDrag);
+  svg.addEventListener("pointercancel",endDrag);
+  svg.addEventListener("dblclick",(e)=>{ e.preventDefault(); vb={...BASE}; apply(); });
+
+  // Never let the map be dragged entirely off screen.
+  function clamp(){
+    const pad=vb.w*0.5;
+    vb.x=Math.min(Math.max(vb.x,-pad),BASE.w-vb.w+pad);
+    vb.y=Math.min(Math.max(vb.y,-pad),BASE.h-vb.h+pad);
+  }
+
+  const btn=document.getElementById("zreset");
+  if(btn) btn.addEventListener("click",()=>{ vb={...BASE}; apply(); });
+  svg.style.cursor="grab";
+  svg.addEventListener("pointerdown",()=>svg.style.cursor="grabbing");
+  window.addEventListener("pointerup",()=>svg.style.cursor="grab");
+  apply();
+})();
+
 document.getElementById("org").textContent=D.short;   // genome identifier / filename, verbatim
 document.getElementById("sub").textContent=
   "confidence genome viewer  ·  "+(D.totLen/1e6).toFixed(2)+" Mb  ·  "
