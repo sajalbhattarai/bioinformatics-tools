@@ -153,6 +153,11 @@ class ChatRequest(BaseModel):
     # Capped server-side -- an unbounded transcript would undo the prompt
     # trimming and slow every answer down again.
     history: list[dict] = []
+    # The gene the previous answer was about. Sent back by the client so a
+    # follow-up ("tell me about the gene", "what does its operon say?") stays on
+    # the same subject. Guessing it from the transcript is unreliable: the
+    # concatenated history matches many genes and the top hit is arbitrary.
+    subject_gene_id: str | None = None
 
 
 def _endpoint() -> dict:
@@ -241,12 +246,31 @@ def _schema_block(rows: list[dict]) -> str:
             f"{len(rows)} rows, {len(names)} columns:\n" + "\n".join(names))
 
 
+# Words that must never drive retrieval. Two groups:
+#   * ordinary question words
+#   * SCHEMA vocabulary -- "operon" appears in every operonic gene's
+#     UniOP_OPERON_id, "descriptor"/"tier"/"confidence" name columns. Matching on
+#     these selects an essentially arbitrary gene, which is exactly how "what
+#     does operon say about this gene?" landed on an unrelated formate
+#     dehydrogenase instead of the gene under discussion.
 _STOPWORDS = {
     "what", "which", "does", "have", "this", "that", "gene", "genes", "genome",
     "about", "there", "any", "can", "you", "tell", "give", "more", "into",
     "details", "detail", "look", "the", "and", "for", "with", "from", "its",
     "it", "is", "are", "has", "how", "many", "much", "please", "called",
+    "then", "okay", "also", "same", "see", "mean", "say", "says", "know",
+    # schema / domain vocabulary
+    "operon", "operons", "operonic", "descriptor", "descriptors", "tier",
+    "tiers", "confidence", "score", "scores", "review", "reviewed", "flag",
+    "flagged", "product", "products", "coding", "non", "protein", "proteins",
+    "annotation", "annotated", "evidence", "database", "databases", "tool",
+    "tools", "hit", "hits", "value", "values", "column", "columns", "final",
 }
+# A token this short can substring-match almost anything -- a typo like "abot"
+# matched an unrelated descriptor and made the code believe it had resolved the
+# gene, which suppressed the conversation fallback entirely. Retrieval only
+# trusts tokens long enough to be distinctive.
+_MIN_TOKEN = 5
 
 
 def _search_genes(rows: list[dict], question: str, limit: int = 6) -> list[dict]:
@@ -257,7 +281,8 @@ def _search_genes(rows: list[dict], question: str, limit: int = 6) -> list[dict]
     the exact failure this is here to remove.
     """
     q = question.lower()
-    words = {w for w in re.findall(r"[A-Za-z0-9_.\-]{3,}", q) if w not in _STOPWORDS}
+    words = {w for w in re.findall(r"[A-Za-z0-9_.\-]+", q)
+             if len(w) >= _MIN_TOKEN and w not in _STOPWORDS}
 
     # Any handle should reach the same record, so coordinates count as a handle
     # too: "the gene at 1,234,500" or "genes between 10000 and 20000". Commas
@@ -280,7 +305,9 @@ def _search_genes(rows: list[dict], question: str, limit: int = 6) -> list[dict]
             _col(r, "UniOP_OPERON_id"), _col(r, "RAST_feature_id"),
             _col(r, "EC_EVIDENCE_STATUS"),
         ))).lower()
-        hits = sum(1 for w in words if w in hay) if hay else 0
+        # Weight by token length: "glycosyl_hydrolase_malt_phosph" is far
+        # stronger evidence than a 5-letter fragment.
+        hits = sum(len(w) for w in words if w in hay) if hay else 0
 
         # Positional match: a coordinate falling inside the gene is a strong
         # signal, so it outranks a loose word match.
@@ -289,7 +316,7 @@ def _search_genes(rows: list[dict], question: str, limit: int = 6) -> list[dict]
                 s, e = int(_col(r, "RAST_start")), int(_col(r, "RAST_end"))
                 lo, hi = min(s, e), max(s, e)
                 if any(lo <= c <= hi for c in coords):
-                    hits += 5
+                    hits += 40   # a coordinate inside the gene is decisive
             except (ValueError, TypeError):
                 pass
 
@@ -547,7 +574,15 @@ def chat(body: ChatRequest, current_user: dict = Depends(get_current_user)):
         # no gene, so searching the question alone finds nothing and the answer
         # silently falls back to genome aggregates -- which is how the earlier
         # wrong-gene answers happened. Retry against what the user asked before.
+        if not matched and body.subject_gene_id:
+            # Most reliable: the client tells us what the last answer was about.
+            keep = [r for r in rows if _col(r, "gene_id") == body.subject_gene_id]
+            if keep:
+                matched = keep
+                LOGGER.info("follow-up stayed on subject gene %s", body.subject_gene_id)
         if not matched and prior_user:
+            # Fallback for a client that does not track the subject, or a first
+            # follow-up after a page reload.
             matched = _search_genes(rows, prior_user)
             if matched:
                 LOGGER.info("resolved follow-up via prior turns -> %s",
@@ -587,6 +622,8 @@ def chat(body: ChatRequest, current_user: dict = Depends(get_current_user)):
                 for r in others:
                     context += f"\n{_render_brief(r)}\n"
             summary["matched_genes"] = [_col(r, "gene_id") for r in matched]
+            # The client echoes this back as subject_gene_id on the next turn.
+            summary["subject_gene_id"] = _col(primary, "gene_id")
         else:
             context += ("\n\nNo gene in this genome matched the wording of the "
                         "question, so no per-gene record is included. Only the "
