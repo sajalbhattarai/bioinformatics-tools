@@ -5,7 +5,11 @@ Usage:
     Development: uvicorn bioinformatics_tools.api.main:app --reload
     Production: dane-api (after installing with pip install .[api])
 """
+import json
 import logging
+import os
+import socket
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -48,9 +52,60 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Where this API records the node and pid it is running on. $HOME is shared
+# across login nodes but /tmp is not, so this must live under $HOME for the
+# launcher on any node -- or on the user's laptop over SSH -- to find it.
+#
+# Why it exists: an abandoned dane-api holds port 8000 on whichever login node
+# it happens to be on, and ssh to the cluster address round-robins, so the next
+# launch usually lands somewhere else and never sees it. Processes were found
+# still holding 8000 twenty-six days after their session ended. Sweeping a
+# hardcoded list of login node names would be both fragile and cluster-specific;
+# recording the location is exact and portable.
+API_ADVERT = Path(
+    os.getenv('BSP_API_ADVERT',
+              os.path.expanduser('~/.local/share/bsp/api-endpoint.json'))
+)
+
+
+def _write_api_advert() -> None:
+    try:
+        API_ADVERT.parent.mkdir(parents=True, exist_ok=True)
+        tmp = API_ADVERT.with_suffix(API_ADVERT.suffix + '.tmp')
+        tmp.write_text(json.dumps({
+            'host': socket.getfqdn(),
+            'pid': os.getpid(),
+            'started': time.time(),
+        }) + '\n')
+        tmp.replace(API_ADVERT)          # atomic: a reader never sees a partial file
+        LOGGER.info('API advert written: %s (%s pid %s)',
+                    API_ADVERT, socket.getfqdn(), os.getpid())
+    except Exception as exc:
+        # Never block startup over bookkeeping.
+        LOGGER.warning('Could not write API advert: %s', exc)
+
+
+def _remove_api_advert() -> None:
+    """Only remove it if it is still ours -- a newer server may have replaced it,
+    and deleting that entry would hide a live process from the next launcher."""
+    try:
+        if API_ADVERT.is_file():
+            if json.loads(API_ADVERT.read_text()).get('pid') == os.getpid():
+                API_ADVERT.unlink()
+                LOGGER.info('API advert removed')
+    except Exception:
+        pass
+
+
 @app.on_event('startup')
 def startup_event():
     init_db()
+    _write_api_advert()
+
+
+@app.on_event('shutdown')
+def shutdown_event():
+    _remove_api_advert()
 
 
 # Include routers
