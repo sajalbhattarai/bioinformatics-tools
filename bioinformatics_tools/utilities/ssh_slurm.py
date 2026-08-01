@@ -9,6 +9,7 @@ with make_user_connection() for every call.
 '''
 import logging
 import socket
+import time
 import re
 import shlex
 
@@ -92,8 +93,37 @@ def submit_ssh_job(
     chan = t_out.channel
     chan.settimeout(poll)
 
+    # Completion is detected by stat-ing the sentinel over ONE long-lived SFTP
+    # session. The previous version called exec_command() once per poll to `cat`
+    # it -- a new SSH session every second, never closed. sshd's MaxSessions is
+    # 10 by default, so the transport refused new sessions within ~10s, the loop
+    # died, and the generator returned __DETACHED__. job_runner read that as
+    # "stopped watching" and broke out, so streaming ended seconds into every
+    # run: no logs stored, phase frozen at its first value, and no SLURM jobs
+    # ever recorded. Runs before this change stored ~2MB of log; after, zero.
+    sftp = None
+    try:
+        sftp = ssh.open_sftp()
+    except Exception as exc:
+        LOGGER.warning('Could not open SFTP for completion checks: %s', exc)
+
+    def _finished():
+        """Exit code if the run has finished, else None."""
+        if sftp is None:
+            return None
+        try:
+            with sftp.open(rcf, 'r') as fh:
+                txt = fh.read().decode('utf-8', 'replace').strip()
+            return txt or None
+        except IOError:
+            return None                       # not there yet
+        except Exception:
+            return None
+
     exit_code = None
     buf = ''
+    last_check = 0.0
+    CHECK_EVERY = 5.0                         # the sentinel is not urgent
     try:
         while True:
             try:
@@ -103,20 +133,23 @@ def submit_ssh_job(
                 buf += data.decode('utf-8', 'replace')
                 while '\n' in buf:
                     line, buf = buf.split('\n', 1)
-                    LOGGER.info('[remote] %s', line.rstrip())
+                    LOGGER.debug('[remote] %s', line.rstrip())
                     yield line.rstrip()
+                continue                       # more may be waiting; drain first
             except socket.timeout:
                 pass
             except EOFError:
                 break
 
-            # Finished? The sentinel is the only reliable signal -- tail -F
-            # never ends on its own.
-            c_in, c_out, c_err = ssh.exec_command(f'cat {rcf} 2>/dev/null')
-            got = (c_out.read().decode() or '').strip()
+            now = time.time()
+            if now - last_check < CHECK_EVERY:
+                continue
+            last_check = now
+            got = _finished()
             if got:
                 # Drain whatever the tail has not delivered yet.
                 try:
+                    chan.settimeout(1.0)
                     while True:
                         data = chan.recv(65536)
                         if not data:
@@ -133,10 +166,12 @@ def submit_ssh_job(
                     exit_code = 1
                 break
     finally:
-        try:
-            chan.close()
-        except Exception:
-            pass
+        for closer in (chan, sftp):
+            try:
+                if closer is not None:
+                    closer.close()
+            except Exception:
+                pass
 
     if exit_code is None:
         # The tail ended without a sentinel: the run is still going, we just
