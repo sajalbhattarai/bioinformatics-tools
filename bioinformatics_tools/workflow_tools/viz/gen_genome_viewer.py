@@ -741,7 +741,15 @@ function operonFigureSVG(id){
     let x0=sx(g.s), x1=sx(g.e); if(x1-x0<7) x1=x0+7;
     if(prevEnd!=null && x0<prevEnd+2){ const w=x1-x0; x0=prevEnd+2; x1=x0+w; }
     prevEnd=x1; ax.push([x0,x1]);
-    const hd=Math.min(12,(x1-x0)*0.5), c=g.ti<0?NONCODE:TIER_COL[g.ti], yt=arrY,yb=arrY+arrH,ym=arrY+arrH/2;
+    // Arrows are coloured by POSITION IN THE OPERON, not by tier. Tier is a
+    // sequential ramp, so every member of one operon fell in the same hue
+    // family and the figure read as monochrome. Identity is unambiguous here
+    // because each arrow is numbered and the table below repeats the number,
+    // so colour is free to do a different job. Tier is still shown -- as the
+    // swatch and named column in that table.
+    const hd=Math.min(12,(x1-x0)*0.5),
+          c=g.ti<0?NONCODE:OPERON_CYCLE[k%OPERON_CYCLE.length],
+          yt=arrY,yb=arrY+arrH,ym=arrY+arrH/2;
     const pts=g.st>0?`${x0.toFixed(1)},${yt} ${(x1-hd).toFixed(1)},${yt} ${x1.toFixed(1)},${ym} ${(x1-hd).toFixed(1)},${yb} ${x0.toFixed(1)},${yb}`
                     :`${x1.toFixed(1)},${yt} ${(x0+hd).toFixed(1)},${yt} ${x0.toFixed(1)},${ym} ${(x0+hd).toFixed(1)},${yb} ${x1.toFixed(1)},${yb}`;
     s+=`<polygon points="${pts}" fill="${c}" stroke="${g.rv?'#c0143c':'#000000'}" stroke-width="${g.rv?1.8:0.7}"/>`;
@@ -753,7 +761,10 @@ function operonFigureSVG(id){
   const CX={loc:432, c1:710,c2:770,c3:903,c4:965,fin:1090,tier:1180,rev:W-MX};
   s+=`<line x1="${MX}" y1="${headY+7}" x2="${W-MX}" y2="${headY+7}" stroke="#000000" stroke-width="0.8"/>`;
   s+=T(MX,headY,'#',11.5,700);
-  s+=T(MX+40,headY,'gene product',11.5,700);
+  // Two swatch columns precede the product name: arrow colour, then tier.
+  s+=T(MX+14,headY,'map',9.5,700);
+  s+=T(MX+28,headY,'tier',9.5,700);
+  s+=T(MX+48,headY,'gene product',11.5,700);
   s+=T(CX.loc,headY,'location (bp)',11.5,700);
   s+=T(CX.c1,headY,'C1',11.5,700,'end');
   s+=T(CX.c2,headY,'C2',11.5,700,'end');
@@ -763,10 +774,17 @@ function operonFigureSVG(id){
   s+=T(CX.tier,headY,'tier',11.5,700,'end');
   s+=T(CX.rev,headY,'review',11.5,700,'end');
   sorted.forEach((g,k)=>{
-    const y=headY+24+rowH*k, c=g.ti<0?NONCODE:TIER_COL[g.ti], tn=g.ti<0?'non-coding':TIER_NAMES[g.ti];
+    // Two swatches per row: the arrow's own colour (identity, matches the map
+    // above) and the tier colour (confidence). Showing only one of them would
+    // make the table disagree with the figure.
+    const y=headY+24+rowH*k,
+          c=g.ti<0?NONCODE:OPERON_CYCLE[k%OPERON_CYCLE.length],
+          ct=g.ti<0?NONCODE:TIER_COL[g.ti],
+          tn=g.ti<0?'non-coding':TIER_NAMES[g.ti];
     s+=T(MX,y,String(k+1),11);
     s+=`<rect x="${MX+16}" y="${y-9}" width="11" height="11" fill="${c}" stroke="#000000" stroke-width="0.5"/>`;
-    s+=T(MX+40,y,(g.nm||'(unnamed)').slice(0,56),12);
+    s+=`<rect x="${MX+30}" y="${y-9}" width="11" height="11" fill="${ct}" stroke="#000000" stroke-width="0.5"/>`;
+    s+=T(MX+48,y,(g.nm||'(unnamed)').slice(0,54),12);
     s+=T(CX.loc,y,`${g.s.toLocaleString()}–${g.e.toLocaleString()} ${g.st>0?'+':'−'}`,11);
     s+=T(CX.c1,y,dec(g.c1),12,null,'end');
     s+=T(CX.c2,y,dec(g.c2),12,null,'end');
