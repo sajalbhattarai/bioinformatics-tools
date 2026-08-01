@@ -27,7 +27,7 @@ def get_genomes(
     stdin, stdout, stderr = ssh.exec_command(f'ls -lah {location}')
     output = stdout.read().decode()
     error = stderr.read().decode()
-    ssh.close()
+    pass  # pooled client: closing it would defeat SSHConnection's pool
 
     if error:
         LOGGER.warning('Error listing genomes: %s', error)
@@ -148,7 +148,7 @@ def submit_ssh_job(
         LOGGER.info('Remote execution completed with exit code: %d', exit_code)
         yield f'__EXIT_CODE__:{exit_code}'
 
-    ssh.close()
+    pass  # pooled client: closing it would defeat SSHConnection's pool
 
 
 def submit_slurm_job(
@@ -193,7 +193,7 @@ source /etc/profile
         stderr_content = 'None'
 
     LOGGER.info('submit_slurm_job stdout: %s, stderr: %s', job_id, stderr_content)
-    ssh.close()
+    pass  # pooled client: closing it would defeat SSHConnection's pool
 
     # Extract just the job number (sbatch returns "Submitted batch job 12345")
     if "Submitted batch job" in job_id:
@@ -222,14 +222,14 @@ def check_slurm_job_status(
         job_name = parts[2] if len(parts) > 2 else "0:00"
         account = parts[3] if len(parts) > 3 else "0:00"
         limit = parts[4] if len(parts) > 4 else "0:00"
-        ssh.close()
+        pass  # pooled client: closing it would defeat SSHConnection's pool
         return {"state": state, "elapsed_time": elapsed, "job_name": job_name, "account": account, "time limit": limit, "exists": True}
 
     # Job not in queue, check sacct for completed/failed jobs
     stdin, stdout, stderr = ssh.exec_command(f'sacct -j {job_id} --format=JobName,State,Elapsed --noheader | head -1')
     sacct_output = stdout.read().decode().strip()
 
-    ssh.close()
+    pass  # pooled client: closing it would defeat SSHConnection's pool
 
     if sacct_output:
         parts = sacct_output.split()
@@ -288,7 +288,7 @@ def check_multiple_slurm_jobs(
                     if jid in missing and jid not in results:
                         results[jid] = {"state": parts[1], "time": parts[2]}
 
-    ssh.close()
+    pass  # pooled client: closing it would defeat SSHConnection's pool
     return results
 
 
@@ -308,7 +308,7 @@ def get_job_genome(log_path: str, connection: SSHConnection) -> str:
         f"grep -m1 'wildcards:' {shlex.quote(log_path)} 2>/dev/null"
     )
     line = stdout.read().decode().strip()
-    ssh.close()
+    pass  # pooled client: closing it would defeat SSHConnection's pool
     match = re.search(r'\bgenome=([^\s,]+)', line)
     return match.group(1) if match else ""
 
@@ -337,7 +337,7 @@ def find_active_jobs_in_workdir(
         f'squeue -u {username} --format="%i|%T|%Z|%M" --noheader'
     )
     output = stdout.read().decode().strip()
-    ssh.close()
+    pass  # pooled client: closing it would defeat SSHConnection's pool
 
     target = work_dir.rstrip('/')
     matches = []
@@ -380,7 +380,7 @@ def enrich_slurm_jobs_from_logs(
         _, stdout, _ = ssh.exec_command(cmd)
         output = stdout.read().decode().strip()
     finally:
-        ssh.close()
+        pass  # pooled client: closing it would defeat SSHConnection's pool
 
     log_info: dict[str, tuple[str, str]] = {}
     for line in output.splitlines():
@@ -424,7 +424,7 @@ def read_latest_snakemake_log(
     except Exception:
         return ""
     finally:
-        ssh.close()
+        pass  # pooled client: closing it would defeat SSHConnection's pool
 
 
 def cancel_slurm_jobs(
@@ -456,7 +456,7 @@ def cancel_slurm_jobs(
     else:
         LOGGER.info('Successfully cancelled %d SLURM job(s)', len(job_ids))
 
-    ssh.close()
+    pass  # pooled client: closing it would defeat SSHConnection's pool
 
 
 def kill_remote_process(
@@ -486,4 +486,4 @@ def kill_remote_process(
         LOGGER.debug('pkill stderr: %s', error)
 
     LOGGER.info('Sent kill signal to processes matching: %s', process_pattern)
-    ssh.close()
+    pass  # pooled client: closing it would defeat SSHConnection's pool

@@ -40,7 +40,7 @@ def list_remote_dir(
             'size': attr.st_size,
         })
     sftp.close()
-    ssh.close()
+    pass  # pooled client: closing it would defeat SSHConnection's pool
     return entries
 
 
@@ -70,7 +70,7 @@ def stream_remote_file(
         finally:
             f.close()
             sftp.close()
-            ssh.close()
+            pass  # pooled client: closing it would defeat SSHConnection's pool
 
     return _chunks()
 
@@ -94,7 +94,7 @@ def read_remote_yaml(
         return {}
     finally:
         sftp.close()
-        ssh.close()
+        pass  # pooled client: closing it would defeat SSHConnection's pool
 
 
 def check_remote_file(
@@ -116,7 +116,7 @@ def check_remote_file(
         raise FileNotFoundError(f'File not found on cluster: {path}')
     finally:
         sftp.close()
-        ssh.close()
+        pass  # pooled client: closing it would defeat SSHConnection's pool
 
 
 def stat_remote_file(path: str, connection: SSHConnection) -> tuple[float, int]:
@@ -137,7 +137,7 @@ def stat_remote_file(path: str, connection: SSHConnection) -> tuple[float, int]:
         raise FileNotFoundError(f'File not found on cluster: {path}')
     finally:
         sftp.close()
-        ssh.close()
+        pass  # pooled client: closing it would defeat SSHConnection's pool
     return (attr.st_mtime, attr.st_size)
 
 
@@ -155,7 +155,7 @@ def check_remote_path_kind(path: str, connection: SSHConnection) -> str:
         raise FileNotFoundError(f'Path not found on cluster: {path}')
     finally:
         sftp.close()
-        ssh.close()
+        pass  # pooled client: closing it would defeat SSHConnection's pool
     return 'directory' if stat.S_ISDIR(attr.st_mode) else 'file'
 
 
@@ -180,7 +180,7 @@ def write_remote_yaml(
     with sftp.open(remote_path, 'w') as f:
         f.write(content)
     sftp.close()
-    ssh.close()
+    pass  # pooled client: closing it would defeat SSHConnection's pool
     LOGGER.info('Wrote remote config to %s', remote_path)
 
 
@@ -224,7 +224,7 @@ def copy_remote_directory(
             err = stderr.read().decode('utf-8', errors='replace')
             raise RuntimeError(f'rsync failed (exit {exit_code}) copying {src_path} to {dest_path}: {err}')
     finally:
-        ssh.close()
+        pass  # pooled client: closing it would defeat SSHConnection's pool
 
 
 def _build_path_rewrite_script(directory: str, old_path: str, new_path: str) -> str:
@@ -305,7 +305,7 @@ def rewrite_path_references(
             return 0
         return int(out) if out.isdigit() else 0
     finally:
-        ssh.close()
+        pass  # pooled client: closing it would defeat SSHConnection's pool
 
 
 def read_remote_file_page(
@@ -360,7 +360,7 @@ def read_remote_file_page(
         if err:
             LOGGER.warning('read_remote_file_page stderr for %s: %s', remote_path, err)
     finally:
-        ssh.close()
+        pass  # pooled client: closing it would defeat SSHConnection's pool
 
     sections = output.split(f'{_PAGE_SENTINEL}\n')
     if known_total_lines is None:
