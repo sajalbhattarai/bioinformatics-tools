@@ -315,9 +315,9 @@ TEMPLATE = r"""<!doctype html>
   html,body{margin:0;background:#ffffff;color:#000000;
     font-family:Calibri,"Segoe UI",Arial,"Helvetica Neue",Helvetica,sans-serif;
     -webkit-font-smoothing:antialiased}
-  .wrap{display:flex;flex-wrap:wrap;gap:22px;padding:16px 20px;max-width:1500px;margin:0 auto}
-  .left{flex:1 1 640px;min-width:340px}
-  .right{flex:1 1 380px;min-width:300px;max-width:460px}
+  .wrap{display:flex;flex-wrap:wrap;gap:16px;padding:18px;max-width:1280px;margin:0 auto}
+  .left{flex:1 1 560px;min-width:340px}
+  .right{flex:1 1 360px;min-width:300px;max-width:440px}
   h1{font-size:19px;margin:0 0 2px;overflow-wrap:anywhere;word-break:break-word}
   h1 em{font-style:italic}
   .sub{color:var(--muted);font-size:14px;margin-bottom:12px}
@@ -333,12 +333,16 @@ TEMPLATE = r"""<!doctype html>
   .dim{opacity:.16}
   .hi{stroke:#111;stroke-width:1.1}
   .plate{position:relative}
-  .zreset{position:absolute;top:6px;right:6px;z-index:2;font-family:inherit;font-size:12px;
-          padding:4px 10px;border:1px solid var(--line);border-radius:7px;background:#fff;
-          color:var(--ink);cursor:pointer}
-  .zreset:disabled{opacity:0;pointer-events:none}
+  .zoombar{position:absolute;top:6px;right:6px;z-index:2;display:flex;gap:4px;align-items:center}
+  .zbtn{font-family:inherit;font-size:15px;line-height:1;width:26px;height:26px;
+        border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink);
+        cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center}
+  .zbtn:hover{background:#f4f4f4}
+  .zreset{font-family:inherit;font-size:11.5px;padding:4px 8px;border:1px solid var(--line);
+          border-radius:6px;background:#fff;color:var(--ink);cursor:pointer}
+  .zreset:disabled{opacity:.35;cursor:default}
   .zhint{font-size:11.5px;color:var(--muted);text-align:right;margin-top:-2px}
-  .legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:8px;font-size:12.5px}
+  .legend{display:flex;flex-wrap:wrap;gap:8px 16px;margin-top:10px;font-size:13.5px}
   .legend span{display:inline-flex;align-items:center;gap:6px;color:var(--ink)}
   .sw{width:14px;height:14px;border-radius:3px;display:inline-block;border:1px solid rgba(0,0,0,.12)}
   .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-height:280px}
@@ -400,7 +404,7 @@ TEMPLATE = r"""<!doctype html>
       <label><input type="checkbox" id="showFlags"> show review flags (grey)</label>
       <span id="hint"></span>
     </div>
-    <div class="plate"><button id="zreset" class="zreset" type="button" title="Reset zoom (or double-click the map)" disabled>Reset view</button><svg id="map" viewBox="0 0 780 780" aria-label="circular genome map, scroll to zoom and drag to pan"></svg><div class="zhint">scroll to zoom · drag to pan · double-click to reset</div></div>
+    <div class="plate"><div class="zoombar"><button id="zout" class="zbtn" type="button" title="Zoom out" aria-label="Zoom out">−</button><button id="zin" class="zbtn" type="button" title="Zoom in" aria-label="Zoom in">+</button><button id="zreset" class="zreset" type="button" title="Reset zoom (or double-click the map)" disabled>Reset</button></div><svg id="map" viewBox="0 0 780 780" aria-label="circular genome map, scroll to zoom and drag to pan"></svg><div class="zhint">+ / − or scroll to zoom · drag to pan · double-click to reset</div></div>
     <div class="legend" id="legend"></div>
     <div class="foot">Every value is read verbatim from FINAL_ANNOTATION_WITH_CONFIDENCE.tsv. Click a gene or operon for details.</div>
   </div>
@@ -820,24 +824,43 @@ document.getElementById("showFlags").onchange=paint;
   },{passive:false});
 
   let drag=null;
+  // Capture is deferred until the pointer has actually MOVED. setPointerCapture
+  // retargets every subsequent pointer event -- including the click -- to the
+  // element holding capture, so capturing on pointerdown meant clicks never
+  // reached the individual arcs and the detail panel stopped opening entirely.
+  // A plain click must behave exactly as it did before pan existed.
+  const DRAG_PX = 4;
   svg.addEventListener("pointerdown",(e)=>{
     if(e.button!==0) return;
-    drag={x:e.clientX,y:e.clientY,vx:vb.x,vy:vb.y,moved:false};
-    svg.setPointerCapture(e.pointerId);
+    drag={x:e.clientX,y:e.clientY,vx:vb.x,vy:vb.y,moved:false,id:e.pointerId,cap:false};
   });
   svg.addEventListener("pointermove",(e)=>{
-    if(!drag) return;
+    if(!drag || e.pointerId!==drag.id) return;
+    if(!drag.moved){
+      if(Math.abs(e.clientX-drag.x)+Math.abs(e.clientY-drag.y) <= DRAG_PX) return;
+      drag.moved=true;
+      // Only now does this become a pan; take capture so the drag survives the
+      // pointer leaving the element.
+      try{ svg.setPointerCapture(drag.id); drag.cap=true; }catch(_){}
+      svg.style.cursor="grabbing";
+    }
     const r=svg.getBoundingClientRect();
     const dx=(e.clientX-drag.x)/r.width*vb.w, dy=(e.clientY-drag.y)/r.height*vb.h;
-    if(Math.abs(e.clientX-drag.x)+Math.abs(e.clientY-drag.y)>3) drag.moved=true;
     vb.x=drag.vx-dx; vb.y=drag.vy-dy; clamp(); apply();
   });
   function endDrag(e){
     if(!drag) return;
-    // A drag must not also register as a click on whatever arc is underneath.
-    if(drag.moved){ svg.style.pointerEvents="none"; setTimeout(()=>svg.style.pointerEvents="",0); }
+    const wasDrag=drag.moved, cap=drag.cap, id=drag.id;
     drag=null;
-    try{ svg.releasePointerCapture(e.pointerId); }catch(_){}
+    svg.style.cursor="grab";
+    if(cap){ try{ svg.releasePointerCapture(id); }catch(_){} }
+    // Suppress only the click that closes a real drag, so panning across the
+    // map does not also select a gene. A click that never moved is untouched.
+    if(wasDrag){
+      const eat=(ev)=>{ ev.stopPropagation(); ev.preventDefault(); };
+      svg.addEventListener("click", eat, {capture:true, once:true});
+      setTimeout(()=>svg.removeEventListener("click", eat, {capture:true}), 350);
+    }
   }
   svg.addEventListener("pointerup",endDrag);
   svg.addEventListener("pointercancel",endDrag);
@@ -850,11 +873,20 @@ document.getElementById("showFlags").onchange=paint;
     vb.y=Math.min(Math.max(vb.y,-pad),BASE.h-vb.h+pad);
   }
 
+  // Buttons zoom about the centre of what is currently shown, so repeated
+  // clicks stay on whatever the user has already panned to.
+  function zoomBy(k){
+    const cx=vb.x+vb.w/2, cy=vb.y+vb.h/2;
+    const w=Math.min(MAX_W,Math.max(MIN_W,vb.w*k)), s=w/vb.w;
+    vb={x:cx-vb.w*s/2, y:cy-vb.h*s/2, w:w, h:vb.h*s};
+    clamp(); apply();
+  }
+  const zin=document.getElementById("zin"), zout=document.getElementById("zout");
+  if(zin) zin.addEventListener("click",()=>zoomBy(1/1.4));
+  if(zout) zout.addEventListener("click",()=>zoomBy(1.4));
   const btn=document.getElementById("zreset");
   if(btn) btn.addEventListener("click",()=>{ vb={...BASE}; apply(); });
   svg.style.cursor="grab";
-  svg.addEventListener("pointerdown",()=>svg.style.cursor="grabbing");
-  window.addEventListener("pointerup",()=>svg.style.cursor="grab");
   apply();
 })();
 
