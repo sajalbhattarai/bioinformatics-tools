@@ -227,19 +227,37 @@ def _search_genes(rows: list[dict], question: str, limit: int = 6) -> list[dict]
     asked about a named gene it invents a per-gene answer from an aggregate --
     the exact failure this is here to remove.
     """
-    words = {w for w in re.findall(r"[A-Za-z0-9_.\-]{3,}", question.lower())
-             if w not in _STOPWORDS}
-    if not words:
-        return []
+    q = question.lower()
+    words = {w for w in re.findall(r"[A-Za-z0-9_.\-]{3,}", q) if w not in _STOPWORDS}
+
+    # Any handle should reach the same record, so coordinates count as a handle
+    # too: "the gene at 1,234,500" or "genes between 10000 and 20000". Commas
+    # are stripped first -- people write positions with thousands separators.
+    coords = [int(n) for n in re.findall(r"\d{3,}", q.replace(",", ""))]
+
     scored = []
     for r in rows:
+        # Every textual handle the row carries: id, label, operon, feature id,
+        # EC numbers, locus tag. Matching on one of these must land the same
+        # row as matching on any other.
         hay = " ".join(filter(None, (
             _col(r, "gene_id"), _col(r, "canonical_label"),
-            _col(r, "UniOP_OPERON_id"),
+            _col(r, "UniOP_OPERON_id"), _col(r, "feature_id"),
+            _col(r, "locus_tag"), _col(r, "EC_number"), _col(r, "gene_symbol"),
         ))).lower()
-        if not hay:
-            continue
-        hits = sum(1 for w in words if w in hay)
+        hits = sum(1 for w in words if w in hay) if hay else 0
+
+        # Positional match: a coordinate falling inside the gene is a strong
+        # signal, so it outranks a loose word match.
+        if coords:
+            try:
+                s, e = int(_col(r, "RAST_start")), int(_col(r, "RAST_end"))
+                lo, hi = min(s, e), max(s, e)
+                if any(lo <= c <= hi for c in coords):
+                    hits += 5
+            except (ValueError, TypeError):
+                pass
+
         if hits:
             scored.append((hits, r))
     scored.sort(key=lambda x: -x[0])
