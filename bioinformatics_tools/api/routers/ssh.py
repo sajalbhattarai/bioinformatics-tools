@@ -939,10 +939,16 @@ def _reconcile_running(conn, main_db: str, rows: list[dict]) -> None:
     healthy run is never disturbed. Failures here are logged and ignored -- a
     history listing must not break because reconciliation could not run.
     """
-    pending = [r for r in rows if (r.get("status") or "").lower() == "running"]
-    if not pending:
-        return
+    # EVERYTHING here is inside the try. This line was outside it, so an
+    # unexpected row shape raised straight out of the function and 500'd
+    # list_jobs -- which presented as an empty history page, i.e. reconciliation
+    # destroyed the very listing it was meant to correct. A best-effort helper
+    # must never be able to fail its caller.
     try:
+        pending = [r for r in rows
+                   if isinstance(r, dict) and (r.get("status") or "").lower() == "running"]
+        if not pending:
+            return
         ssh = conn.connect()
         for row in pending:
             jid = row.get("job_id") or row.get("id")
