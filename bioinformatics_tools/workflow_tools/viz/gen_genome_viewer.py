@@ -431,23 +431,29 @@ const TIER_COL=["#0b2842","#154064","#256291","#4184b5","#6ba3c8"];
 // alarm can never be confused with a ranking. Operon/non-operon are a separate
 // categorical pair used only in operon mode, where the tier ramp is not shown.
 // Operon identity is CATEGORICAL -- unlike tiers, which are ordered -- so
-// distinct bright hues are the right rule here, exactly where a ramp would be
-// wrong. Cycled by operon index so NEIGHBOURING operons always differ.
+// distinct hues are the right rule here, exactly where a ramp would be wrong.
+// Cycled by a hash of the operon id, so an operon keeps its colour across
+// renders and modes instead of depending on iteration order.
 //
-// Validated with the dataviz validator (light mode, adjacent pairs): lightness
-// band, chroma floor and the normal-vision floor all pass; worst adjacent CVD
-// dE 7.4 (deutan). The order matters and is deliberate -- gold, olive and
-// orange are the same hue family, so they are placed non-adjacently. Sorting
-// them together fails outright (olive vs gold dE 6.3 protan / 14.6 normal).
+// This is Okabe-Ito, the canonical colour-vision-deficiency-safe qualitative
+// set. It is the only 6-hue palette tried that passes the STRICT ALL-PAIRS CVD
+// check, not merely adjacent pairs: worst all-pairs dE 7.6 (deutan), 8.5
+// (tritan), and the normal-vision floor passes at 15.6.
 //
-// KNOWN LIMIT: the strict all-pairs CVD check FAILS (orange vs olive collapses
-// to dE 1.2 under protanopia). Accepted deliberately, because the cycle
-// delineates ADJACENT blocks rather than encoding identity for comparison
-// across the genome -- the same reason alternating chromosome shading works.
-// Identity never rests on colour: hovering names the operon and clicking opens
-// its card. Two operons on opposite sides of the map may share a hue; nothing
-// asks the reader to tell them apart by eye.
-const OPERON_CYCLE=["#7b3fb5","#c99700","#c1121f","#6b8f00","#1a6fd4","#e8701a"];
+// Why not a brighter, more saturated set: CVD is not a light-sensitivity
+// condition. In protan/deutan vision the L/M cone pigments are missing or
+// shifted, so specific HUES collapse together no matter how bright they are.
+// Raising saturation while keeping lightness similar is the classic failure --
+// the previous bright cycle put orange and olive at dE 1.2 under protanopia,
+// i.e. indistinguishable. Okabe-Ito instead spreads the hues along the
+// blue-yellow axis (preserved in almost all CVD) and separates them in
+// lightness, which is what actually survives.
+//
+// Adding a 7th colour breaks it -- both yellow #F0E442 and black were tried and
+// fail all-pairs. Six is the ceiling for this palette; the cycle repeats past
+// that, which is fine because it delineates neighbouring operons rather than
+// encoding identity (hover names the operon, click opens its card).
+const OPERON_CYCLE=["#0072B2","#E69F00","#009E73","#CC79A7","#56B4E9","#D55E00"];
 // Retained for the legend swatch and the operon card tag.
 const OPERON=OPERON_CYCLE[0];
 const NONCODE="#c8c8c8", NONOP="#8a8a8a", FLAG="#b32b1e";
