@@ -117,7 +117,19 @@ def run_ssh_task(job_id: str, command: str, connection: SSHConnection):
     last_genome = ""  # Most recently seen "wildcards: genome=..." value
 
     try:
-        for line in ssh_slurm.submit_ssh_job(cmd=command, connection=connection):
+        # job_id names the detached run's log/sentinel files, so a reconnect
+        # can find and replay them.
+        detached = False
+        for line in ssh_slurm.submit_ssh_job(cmd=command, connection=connection,
+                                             job_id=job_id):
+            # We stopped watching, but the run did NOT stop. Leave the job in
+            # its current state -- marking it complete or failed here would be a
+            # lie, and would hide a run that is still producing results.
+            if line == "__DETACHED__":
+                detached = True
+                LOGGER.info("Stopped streaming job %s; it continues on the cluster", job_id)
+                break
+
             # Detect exit code metadata from submit_ssh_job
             if line.startswith("__EXIT_CODE__:"):
                 try:
@@ -201,8 +213,18 @@ def run_ssh_task(job_id: str, command: str, connection: SSHConnection):
             if "snakemake" in line.lower():
                 job_store.update(job_id, phase="Running Snakemake")
 
+        # Detached means we stopped WATCHING, not that the run stopped. exit_code
+        # is still its initial 0 here, so falling through would finalize a live
+        # run as "completed" -- reporting success for work that has not happened.
+        if detached:
+            job_store.append_log(
+                job_id,
+                "\n\n=== Stopped streaming output. The run continues on the "
+                "cluster; reopen this job to reattach. ===")
+            job_store.update(job_id, phase="Running (detached)")
+            LOGGER.info("Job %s left running detached", job_id)
         # Check exit code and mark as failed if non-zero
-        if exit_code != 0:
+        elif exit_code != 0:
             job_store.append_log(job_id, f"\n\n=== Command exited with code {exit_code} ===")
             job_store.finalize(job_id, status="failed", phase="Failed")
             LOGGER.error("Job %s failed with exit code %d", job_id, exit_code)

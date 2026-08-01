@@ -8,6 +8,7 @@ All functions are API-layer only. Pass a per-user SSHConnection built
 with make_user_connection() for every call.
 '''
 import logging
+import socket
 import re
 import shlex
 
@@ -38,28 +39,114 @@ def get_genomes(
 def submit_ssh_job(
     cmd,
     connection: SSHConnection,
+    job_id: str | None = None,
+    poll: float = 1.0,
 ):
-    '''Generator that streams remote output line-by-line via SSH.
-    Yields each output line as it arrives, then a final __EXIT_CODE__: metadata line.
+    '''Run a workflow command on the login node, DETACHED, and stream its log.
+
+    Yields each output line as it arrives, then a final __EXIT_CODE__: line.
+    The contract is unchanged; how the process is hosted is not.
+
+    Previously this did exec_command(..., get_pty=True) and read the channel
+    directly, which tied the run's lifetime to the SSH session. Because
+    margie.sh traps EXIT and kills the remote dane-api, quitting the GUI closed
+    that session, tore down the PTY, and SIGHUP'd dane_wf -- the Snakemake
+    driver. Already-submitted SLURM jobs kept running, but nothing further was
+    ever submitted, so a run silently stalled half-finished whenever the user
+    closed their laptop. A genome annotation takes hours; that is not a
+    reasonable thing to require.
+
+    Now the command is started with setsid + nohup, writing to a log file, and
+    its exit status to a sentinel. Streaming is a SEPARATE concern: we tail the
+    log. Losing the tail (closed GUI, dropped VPN) loses only the live output --
+    the run continues, and reattaching later replays the log from the top.
     '''
     ssh = connection.connect()
-    LOGGER.info('Connected!')
 
-    wrapped_cmd = f'export PATH=$HOME/.local/bin:$PATH && {cmd} 2>&1'  #TODO: I really don't like this, but points to uv/uvx
+    tag = job_id or 'run'
+    safe = re.sub(r'[^A-Za-z0-9_.-]', '_', str(tag))
+    base = f'$HOME/.local/share/bsp/jobs/{safe}'
+    log, rcf, pidf = f'{base}.log', f'{base}.rc', f'{base}.pid'
 
-    # ---------------------- Meat and potatoes of execution ---------------------- #
-    stdin, stdout, stderr = ssh.exec_command(wrapped_cmd, get_pty=True)
+    # setsid detaches from the session so no SIGHUP reaches it; nohup covers the
+    # gap before setsid takes effect. The exit code is written by the same shell
+    # that runs the command, so it is recorded even though nobody is attached.
+    launch = (
+        f'mkdir -p $HOME/.local/share/bsp/jobs && '
+        f'rm -f {rcf} && '
+        f'export PATH=$HOME/.local/bin:$PATH && '
+        f"nohup setsid bash -c '{{ {cmd} ; }} > {log} 2>&1; echo $? > {rcf}' "
+        f'>/dev/null 2>&1 & echo $!'
+    )
+    _in, _out, _err = ssh.exec_command(launch)
+    pid = (_out.read().decode() or '').strip().splitlines()
+    pid = pid[-1] if pid else ''
+    _out.channel.recv_exit_status()
+    ssh.exec_command(f'echo {pid} > {pidf}')
+    LOGGER.info('Detached run started (pid %s), log %s', pid, log)
 
-    for line in iter(stdout.readline, ''):
-        LOGGER.info('[remote] %s', line.rstrip())
-        yield line.rstrip()
+    # Tail from the beginning so a reattach replays everything already written.
+    # -F rather than -f: the log may not exist for a moment after launch.
+    tail_cmd = f'tail -n +1 -F {log} 2>/dev/null'
+    t_in, t_out, t_err = ssh.exec_command(tail_cmd)
+    chan = t_out.channel
+    chan.settimeout(poll)
 
-    # Capture exit code from the channel
-    exit_code = stdout.channel.recv_exit_status()
-    LOGGER.info('Remote execution completed with exit code: %d', exit_code)
+    exit_code = None
+    buf = ''
+    try:
+        while True:
+            try:
+                data = chan.recv(65536)
+                if not data:
+                    raise EOFError
+                buf += data.decode('utf-8', 'replace')
+                while '\n' in buf:
+                    line, buf = buf.split('\n', 1)
+                    LOGGER.info('[remote] %s', line.rstrip())
+                    yield line.rstrip()
+            except socket.timeout:
+                pass
+            except EOFError:
+                break
 
-    # Yield exit code as metadata line
-    yield f'__EXIT_CODE__:{exit_code}'
+            # Finished? The sentinel is the only reliable signal -- tail -F
+            # never ends on its own.
+            c_in, c_out, c_err = ssh.exec_command(f'cat {rcf} 2>/dev/null')
+            got = (c_out.read().decode() or '').strip()
+            if got:
+                # Drain whatever the tail has not delivered yet.
+                try:
+                    while True:
+                        data = chan.recv(65536)
+                        if not data:
+                            break
+                        buf += data.decode('utf-8', 'replace')
+                except Exception:
+                    pass
+                for line in buf.split('\n'):
+                    if line.strip():
+                        yield line.rstrip()
+                try:
+                    exit_code = int(got.split()[0])
+                except (ValueError, IndexError):
+                    exit_code = 1
+                break
+    finally:
+        try:
+            chan.close()
+        except Exception:
+            pass
+
+    if exit_code is None:
+        # The tail ended without a sentinel: the run is still going, we just
+        # stopped watching. Do NOT report an exit code -- that would mark a
+        # live run as finished.
+        LOGGER.info('Detached from run %s; it continues in the background', safe)
+        yield '__DETACHED__'
+    else:
+        LOGGER.info('Remote execution completed with exit code: %d', exit_code)
+        yield f'__EXIT_CODE__:{exit_code}'
 
     ssh.close()
 
