@@ -25,6 +25,7 @@ import io
 import json
 import logging
 import os
+import re
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -89,8 +90,37 @@ which one you are quoting.
   * NEEDS_REVIEW means the pipeline wants human attention. It does NOT mean the \
 annotation is wrong.
 
-STYLE: lead with the answer, keep it short, quote exact values. If the evidence \
-is mixed, show both sides rather than averaging them into false confidence."""
+WHAT YOU ARE LOOKING AT:
+  You are given (a) the COLUMN SCHEMA of this run's FINAL_ANNOTATION_WITH_
+CONFIDENCE.tsv -- what each field means -- (b) genome-level aggregates, and \
+(c) the FULL RECORDS of any genes relevant to the question, when the question \
+names one. Study the records before answering. Aggregates describe the WHOLE \
+GENOME and say nothing about any individual gene: never read a genome total as \
+a statement about one gene. If a gene's record is not present, you do not know \
+that gene's tier, score or review status -- say so and ask for the gene name.
+
+ANSWER FORMAT -- every answer uses these headings, and omits any that do not apply:
+
+  **Answer** — the direct answer, first, in one or two sentences.
+
+  **From the evidence** — each supporting fact with the field or tool it came \
+from, e.g. "CONFIDENCE_TIER = high", "NEEDS_REVIEW? = yes". Only things \
+literally present in the records.
+
+  **Interpretation** — anything you inferred, reasoned about, or drew on \
+general biological knowledge to say. State plainly that it is interpretation, \
+not a pipeline output. If you used no interpretation at all, omit this heading \
+entirely rather than writing "none".
+
+  **Not in the evidence** — what the records cannot answer, named specifically.
+
+This separation is the point: the reader must be able to tell, at a glance, \
+which sentences are the pipeline's findings and which are your reading of them. \
+Never blend the two.
+
+LENGTH: as long as the question genuinely needs, up to the token budget. A \
+one-line question gets a few lines. Do not pad, do not restate the question, \
+do not list facts that were not asked for."""
 
 
 class ChatRequest(BaseModel):
@@ -98,7 +128,7 @@ class ChatRequest(BaseModel):
     organism: str                 # organism folder name inside the run
     question: str
     gene_id: str | None = None    # optional: narrows context to one gene
-    max_tokens: int = 600
+    max_tokens: int = 5000
 
 
 def _endpoint() -> dict:
@@ -143,6 +173,92 @@ def _col(row: dict, name: str) -> str:
         if k and k.split(":")[-1].strip() == name:
             return (v or "").strip()
     return ""
+
+
+# Fields worth naming explicitly. The model cannot reason about a table whose
+# columns it has never been told the meaning of -- without this it treats every
+# header as opaque and falls back on genome totals.
+_SCHEMA_HELP = {
+    "gene_id": "gene identifier, <accession>_<start><strand><len>",
+    "organism_name": "genome this gene belongs to",
+    "canonical_label": "the annotation the pipeline settled on",
+    "RAST_start": "start coordinate on its replicon",
+    "RAST_end": "end coordinate",
+    "RAST_strand": "+ or -",
+    "CONFIDENCE_TIER": "highest | high | medium | fair | low | NOT_APPLICABLE_NON_CODING",
+    "CONFIDENCE_TIER_hybrid": "same scale, operon-context-adjusted variant",
+    "NEEDS_REVIEW?": "yes/no — pipeline wants a human to look",
+    "IS_IN_OPERON?": "yes/no",
+    "UniOP_OPERON_id": "operon identifier, or a NOT_* sentinel",
+    "C1_score_tool_coverage": "fraction of tools returning an informative hit",
+    "C2_score_operon_probability": "geometric mean of operon-member probabilities",
+    "C3_score_operon_context": "operon/neighbourhood coherence",
+    "C4_score_ec_agreement": "agreement among EC numbers",
+    "confidence_score": "final combined confidence, 0-1",
+}
+
+
+def _schema_block(rows: list[dict]) -> str:
+    """Tell the model what this run's FINAL table actually contains."""
+    if not rows:
+        return ""
+    names = []
+    for k in rows[0].keys():
+        if not k:
+            continue
+        bare = k.split(":")[-1].strip()
+        names.append(f"  {bare}" + (f" — {_SCHEMA_HELP[bare]}" if bare in _SCHEMA_HELP else ""))
+    return ("FINAL_ANNOTATION_WITH_CONFIDENCE.tsv — one row per gene, "
+            f"{len(rows)} rows, {len(names)} columns:\n" + "\n".join(names))
+
+
+_STOPWORDS = {
+    "what", "which", "does", "have", "this", "that", "gene", "genes", "genome",
+    "about", "there", "any", "can", "you", "tell", "give", "more", "into",
+    "details", "detail", "look", "the", "and", "for", "with", "from", "its",
+    "it", "is", "are", "has", "how", "many", "much", "please", "called",
+}
+
+
+def _search_genes(rows: list[dict], question: str, limit: int = 6) -> list[dict]:
+    """Rows whose label/id matches meaningful words in the question.
+
+    Without this the model is handed genome totals and nothing else, and when
+    asked about a named gene it invents a per-gene answer from an aggregate --
+    the exact failure this is here to remove.
+    """
+    words = {w for w in re.findall(r"[A-Za-z0-9_.\-]{3,}", question.lower())
+             if w not in _STOPWORDS}
+    if not words:
+        return []
+    scored = []
+    for r in rows:
+        hay = " ".join(filter(None, (
+            _col(r, "gene_id"), _col(r, "canonical_label"),
+            _col(r, "UniOP_OPERON_id"),
+        ))).lower()
+        if not hay:
+            continue
+        hits = sum(1 for w in words if w in hay)
+        if hits:
+            scored.append((hits, r))
+    scored.sort(key=lambda x: -x[0])
+    return [r for _, r in scored[:limit]]
+
+
+def _render_gene(r: dict) -> str:
+    out = []
+    for k, v in r.items():
+        if not k:
+            continue
+        v = (v or "").strip()
+        if not v:
+            continue
+        bare = k.split(":")[-1].strip()
+        if bare == "RAST_na_sequence":
+            v = f"<{len(v)} nt, omitted>"
+        out.append(f"    {bare}: {v}")
+    return "\n".join(out)
 
 
 def _genome_context(rows: list[dict], organism: str) -> tuple[str, dict]:
@@ -332,15 +448,36 @@ def chat(body: ChatRequest, current_user: dict = Depends(get_current_user)):
 
     ep = _endpoint()
     rows = _read_final(body.job_id, body.organism, current_user)
+
     if body.gene_id:
         context, summary = _gene_context(rows, body.gene_id, body.organism)
+        matched = []
     else:
         context, summary = _genome_context(rows, body.organism)
+        # Pull in the full record of any gene the question names. Aggregates
+        # alone caused the model to answer per-gene questions from genome
+        # totals ("the gene is not flagged" from a count of 1212 flagged).
+        matched = _search_genes(rows, question)
+        if matched:
+            context += ("\n\nGENES MATCHING THIS QUESTION — full records, "
+                        "one block each:\n")
+            for r in matched:
+                context += (f"\n  [{_col(r, 'gene_id') or '?'}] "
+                            f"{_col(r, 'canonical_label')}\n{_render_gene(r)}\n")
+            summary["matched_genes"] = [_col(r, "gene_id") for r in matched]
+        else:
+            context += ("\n\nNo gene in this genome matched the wording of the "
+                        "question, so no per-gene record is included. Only the "
+                        "genome-level aggregates above are available.")
+
+    context = _schema_block(rows) + "\n\n" + context
 
     prompt = (f"{context}\n\n"
               f"----\nQUESTION: {question}\n\n"
-              "Answer only from the records above, citing the field or tool name "
-              "for each claim. If they do not contain the answer, say so.")
+              "Study the records above, then answer using the required headings. "
+              "Cite the field or tool behind every fact, and keep anything you "
+              "inferred under Interpretation so it cannot be mistaken for a "
+              "pipeline output.")
 
     try:
         req = urllib.request.Request(
