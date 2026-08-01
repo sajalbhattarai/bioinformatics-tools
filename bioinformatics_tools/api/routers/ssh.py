@@ -348,15 +348,53 @@ def health_check():
 
 @router.get("/status")
 def ssh_status(current_user: dict = Depends(get_current_user)):
-    """Check whether the BSP server can reach the user's cluster via SSH."""
+    """Check whether the BSP server can reach the user's cluster via SSH.
+
+    Returns 200 either way -- the UI polls this and a red banner is a better
+    answer than a failed request. But it now reports WHY, and whether the user
+    can do anything about it. Previously every failure collapsed to
+    {"connected": false} with the reason visible only in the server log, so an
+    undecryptable stored key was indistinguishable from an unreachable cluster.
+    That cost real debugging time: the backend knew exactly what was wrong and
+    said so in its log while the UI just showed "no connection".
+    """
     try:
         conn = _build_connection(current_user)
         ssh = conn.connect()
-        ssh.close()
+        # Do NOT close it: the client is pooled and shared across requests.
         return {"connected": True, "host": current_user["cluster_host"]}
+    except HTTPException as exc:
+        # _build_connection -> decrypt_private_key raises this when the stored
+        # key cannot be decrypted, which happens when BSP_ENCRYPTION_KEY has been
+        # regenerated since the account was created. Fernet is authenticated
+        # encryption, so the key material is unrecoverable -- re-registering is
+        # the only fix, and the user needs telling that plainly.
+        detail = str(getattr(exc, "detail", exc))
+        undecryptable = "decrypt" in detail.lower()
+        LOGGER.warning("SSH status check failed for user %s: %s",
+                       current_user["username"], detail)
+        return {
+            "connected": False,
+            "host": current_user["cluster_host"],
+            "reason": "key_undecryptable" if undecryptable else "error",
+            "detail": (
+                "Your stored SSH key cannot be decrypted, because the server's "
+                "encryption key changed after this account was created. The key "
+                "cannot be recovered — please register a new account to continue."
+                if undecryptable else detail
+            ),
+            "action": "re-register" if undecryptable else None,
+        }
     except Exception as exc:
-        LOGGER.warning("SSH status check failed for user %s: %s", current_user["username"], exc)
-        return {"connected": False, "host": current_user["cluster_host"]}
+        LOGGER.warning("SSH status check failed for user %s: %s",
+                       current_user["username"], exc)
+        return {
+            "connected": False,
+            "host": current_user["cluster_host"],
+            "reason": "unreachable",
+            "detail": f"Could not reach {current_user['cluster_host']}: {exc}",
+            "action": None,
+        }
 
 
 @router.get("/config")
