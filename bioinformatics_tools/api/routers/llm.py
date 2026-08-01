@@ -81,6 +81,15 @@ given; do not re-derive them.
   * "Different function" is not "contradiction". Uninformative or hypothetical \
 hits carry no signal either way -- say so rather than reading them as negative.
 
+OPERONS: when members of an operon are supplied, you may reason about what the \
+unit does -- read the members' product descriptors, order and strands together. \
+That reasoning is INTERPRETATION and belongs under that heading. The members, \
+their products, their coordinates and the operon id are evidence and belong \
+under From the evidence. Keep the two apart: "these five members are named as \
+flagellar basal-body components (evidence)" is a different kind of statement \
+from "so this operon likely encodes a flagellar assembly module \
+(interpretation)".
+
 VOCABULARY:
   * Tiers, most to least confident: highest, high, medium, fair, low. \
 NOT_APPLICABLE_NON_CODING marks non-coding features.
@@ -181,7 +190,12 @@ def _col(row: dict, name: str) -> str:
 _SCHEMA_HELP = {
     "gene_id": "gene identifier, <accession>_<start><strand><len>",
     "organism_name": "genome this gene belongs to",
-    "canonical_label": "the annotation the pipeline settled on",
+    "best_consensus_product_descriptor": "the product name the pipeline settled on",
+    "best_consensus_product_descriptor_source": "which database that name came from",
+    "BEST_PRODUCT_DESCRIPTOR(copied_here_for_convenience)": "same descriptor, duplicated for convenience",
+    "RAST_feature_id": "RAST feature identifier",
+    "FEATURE_TYPE": "CDS, RNA, etc.",
+    "EC_EVIDENCE_STATUS": "state of EC-number evidence for this gene",
     "RAST_start": "start coordinate on its replicon",
     "RAST_end": "end coordinate",
     "RAST_strand": "+ or -",
@@ -193,7 +207,7 @@ _SCHEMA_HELP = {
     "C1_score_tool_coverage": "fraction of tools returning an informative hit",
     "C2_score_operon_probability": "geometric mean of operon-member probabilities",
     "C3_score_operon_context": "operon/neighbourhood coherence",
-    "C4_score_ec_agreement": "agreement among EC numbers",
+    "C4_score_EC_conflict": "EC-number conflict component",
     "confidence_score": "final combined confidence, 0-1",
 }
 
@@ -241,9 +255,15 @@ def _search_genes(rows: list[dict], question: str, limit: int = 6) -> list[dict]
         # EC numbers, locus tag. Matching on one of these must land the same
         # row as matching on any other.
         hay = " ".join(filter(None, (
-            _col(r, "gene_id"), _col(r, "canonical_label"),
-            _col(r, "UniOP_OPERON_id"), _col(r, "feature_id"),
-            _col(r, "locus_tag"), _col(r, "EC_number"), _col(r, "gene_symbol"),
+            _col(r, "gene_id"),
+            # The product name really is best_consensus_product_descriptor --
+            # there is no canonical_label column in this table. Column-AW is
+            # the same value copied for convenience; both are matched so either
+            # spelling of the question lands the row.
+            _col(r, "best_consensus_product_descriptor"),
+            _col(r, "BEST_PRODUCT_DESCRIPTOR(copied_here_for_convenience)"),
+            _col(r, "UniOP_OPERON_id"), _col(r, "RAST_feature_id"),
+            _col(r, "EC_EVIDENCE_STATUS"),
         ))).lower()
         hits = sum(1 for w in words if w in hay) if hay else 0
 
@@ -476,12 +496,26 @@ def chat(body: ChatRequest, current_user: dict = Depends(get_current_user)):
         # alone caused the model to answer per-gene questions from genome
         # totals ("the gene is not flagged" from a count of 1212 flagged).
         matched = _search_genes(rows, question)
+        # An operon can only be interpreted from its MEMBERS -- their products,
+        # order and strands are the whole signal. If a matched gene sits in an
+        # operon, pull in its siblings so the model reasons about the unit
+        # rather than one gene in isolation.
+        if matched:
+            member_of = {_col(r, "UniOP_OPERON_id") for r in matched}
+            member_of = {o for o in member_of if o.startswith("operon_")}
+            if member_of:
+                have = {id(r) for r in matched}
+                siblings = [r for r in rows
+                            if _col(r, "UniOP_OPERON_id") in member_of
+                            and id(r) not in have]
+                # Cap: a large operon would otherwise crowd out the question.
+                matched = matched + siblings[:24]
         if matched:
             context += ("\n\nGENES MATCHING THIS QUESTION — full records, "
                         "one block each:\n")
             for r in matched:
                 context += (f"\n  [{_col(r, 'gene_id') or '?'}] "
-                            f"{_col(r, 'canonical_label')}\n{_render_gene(r)}\n")
+                            f"{_col(r, 'best_consensus_product_descriptor')}\n{_render_gene(r)}\n")
             summary["matched_genes"] = [_col(r, "gene_id") for r in matched]
         else:
             context += ("\n\nNo gene in this genome matched the wording of the "
