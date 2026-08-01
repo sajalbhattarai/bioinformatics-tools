@@ -278,6 +278,36 @@ def start_chat(current_user: dict = Depends(get_current_user)):
                       "(usually 1–3 minutes, longer if the GPU queue is busy)."}
 
 
+@router.post("/stop")
+def stop_chat(current_user: dict = Depends(get_current_user)):
+    """End interactive mode — called when the map page is closed.
+
+    Asks the server to exit (which frees the GPU and removes its advert). This
+    is the fast path only: it never arrives if the browser crashed, the laptop
+    slept, or the network dropped, so chat_server also exits on its own idle
+    timeout. Never rely on this alone to release a GPU.
+    """
+    if not ADVERT_PATH.is_file():
+        return {"stopped": False, "detail": "chat was not running"}
+    try:
+        adv = json.loads(ADVERT_PATH.read_text())
+        req = urllib.request.Request(
+            f"http://{adv['host']}:{adv['port']}/shutdown", data=b"{}",
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10):
+            pass
+        LOGGER.info("chat server on %s asked to stop", adv.get("host"))
+        return {"stopped": True}
+    except Exception as exc:
+        # Unreachable means it is already gone; clear the stale advert so the
+        # UI stops pointing at a dead endpoint.
+        try:
+            ADVERT_PATH.unlink()
+        except Exception:
+            pass
+        return {"stopped": True, "detail": f"endpoint already gone ({exc}); advert cleared"}
+
+
 @router.get("/status")
 def chat_status(current_user: dict = Depends(get_current_user)):
     """Whether the chat backend is reachable — lets the UI show an honest state."""

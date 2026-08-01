@@ -45,6 +45,11 @@ from pathlib import Path
 MODEL = None
 TOKENIZER = None
 MODEL_NAME = ""
+# Last time anyone touched this server. The page sends a stop on exit, but that
+# never arrives if the browser crashes, the laptop sleeps, or the VPN drops --
+# exactly the cases where a GPU would otherwise sit idle until walltime. This
+# is the backstop that makes those cases self-correcting.
+LAST_SEEN = time.time()
 # Generation is serialised: one set of weights, and concurrent .generate() calls
 # on the same model would contend for the GPU and can interleave KV cache state.
 _GEN_LOCK = threading.Lock()
@@ -114,15 +119,34 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):  # noqa: N802
-        if self.path.rstrip("/") == "/health":
-            self._send(200, {"ok": MODEL is not None, "model": MODEL_NAME})
+        global LAST_SEEN
+        p = self.path.rstrip("/")
+        if p == "/health":
+            # A health poll counts as activity: while the page is open it polls,
+            # so the idle clock only advances once nobody is watching.
+            LAST_SEEN = time.time()
+            self._send(200, {"ok": MODEL is not None, "model": MODEL_NAME,
+                             "idle_s": 0})
+        elif p == "/idle":
+            self._send(200, {"idle_s": round(time.time() - LAST_SEEN)})
         else:
             self._send(404, {"error": "not found"})
 
     def do_POST(self):  # noqa: N802
-        if self.path.rstrip("/") != "/chat":
+        global LAST_SEEN
+        p = self.path.rstrip("/")
+        if p == "/shutdown":
+            # Fast path: the page was closed. Ack first, then stop — otherwise
+            # the caller (often a sendBeacon during unload) sees a dropped
+            # connection and cannot tell success from failure.
+            self._send(200, {"stopping": True})
+            log("shutdown requested — exiting")
+            threading.Thread(target=self.server.shutdown, daemon=True).start()
+            return
+        if p != "/chat":
             self._send(404, {"error": "not found"})
             return
+        LAST_SEEN = time.time()
         try:
             n = int(self.headers.get("Content-Length") or 0)
             body = json.loads(self.rfile.read(n) or b"{}")
@@ -168,6 +192,9 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=0, help="0 = pick a free port")
     ap.add_argument("--dtype", default="bfloat16",
                     choices=["bfloat16", "float16", "float32"])
+    ap.add_argument("--idle-timeout", type=int, default=1800,
+                    help="exit after this many seconds with no /chat or /health "
+                         "(0 disables). Releases the GPU when the page is gone.")
     args = ap.parse_args()
 
     if not Path(args.model).is_dir():
@@ -181,7 +208,19 @@ def main() -> None:
     adv = Path(args.advertise)
     advertise(adv, host, port, args.model)
 
-    log("ready — POST /chat, GET /health")
+    if args.idle_timeout > 0:
+        def watchdog():
+            while True:
+                time.sleep(30)
+                idle = time.time() - LAST_SEEN
+                if idle >= args.idle_timeout:
+                    log(f"idle {idle:.0f}s >= {args.idle_timeout}s — releasing the GPU")
+                    srv.shutdown()
+                    return
+        threading.Thread(target=watchdog, daemon=True).start()
+        log(f"idle timeout: {args.idle_timeout}s")
+
+    log("ready — POST /chat, POST /shutdown, GET /health")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
