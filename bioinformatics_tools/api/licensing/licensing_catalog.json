@@ -23,6 +23,7 @@
       "user_action": "Register and download Phobius yourself from the provider; obtain a commercial license for any commercial use.",
       "tier": "blocked",
       "obtain_url": "https://phobius.sbc.su.se/",
+      "license_url": "https://phobius.sbc.su.se/data.html",
       "allowed": [
         "Academic / non-profit research use of a copy you obtained yourself"
       ],
@@ -755,6 +756,7 @@
       "user_action": "None.",
       "tier": "permissive",
       "obtain_url": "https://www.ncbi.nlm.nih.gov/genome/annotation_prok/",
+      "license_url": "https://www.ncbi.nlm.nih.gov/home/about/policies/",
       "allowed": [
         "Academic and commercial use"
       ],
