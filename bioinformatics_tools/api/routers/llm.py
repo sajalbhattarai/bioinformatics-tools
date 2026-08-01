@@ -102,6 +102,13 @@ which one you are quoting.
   * NEEDS_REVIEW means the pipeline wants human attention. It does NOT mean the \
 annotation is wrong.
 
+CONVERSATION: earlier turns may be supplied so that references like "it" or \
+"that gene" resolve. They are context for understanding the question ONLY. \
+Never cite the conversation as evidence, and never treat something you said \
+earlier as established fact -- if a claim matters, it must come from the \
+records supplied now. If a follow-up refers to a gene whose record is not in \
+this turn's records, say so rather than answering from memory of the last turn.
+
 WHAT YOU ARE LOOKING AT:
   You are given (a) the COLUMN SCHEMA of this run's FINAL_ANNOTATION_WITH_
 CONFIDENCE.tsv -- what each field means -- (b) genome-level aggregates, and \
@@ -142,6 +149,10 @@ class ChatRequest(BaseModel):
     gene_id: str | None = None    # optional: narrows context to one gene
     max_tokens: int = 1000
     stream: bool = False
+    # Recent turns, oldest first: [{"role": "you"|"margie", "text": ...}].
+    # Capped server-side -- an unbounded transcript would undo the prompt
+    # trimming and slow every answer down again.
+    history: list[dict] = []
 
 
 def _endpoint() -> dict:
@@ -512,6 +523,17 @@ def chat(body: ChatRequest, current_user: dict = Depends(get_current_user)):
     ep = _endpoint()
     rows = _read_final(body.job_id, body.organism, current_user)
 
+    # Keep the last few turns, truncated. Enough for "it"/"that gene" to resolve,
+    # not enough to reintroduce the prompt bloat just removed.
+    hist = [h for h in (body.history or [])
+            if isinstance(h, dict) and (h.get("text") or "").strip()][-6:]
+    hist_text = "\n".join(
+        f"{'USER' if h.get('role') == 'you' else 'YOU'}: {(h.get('text') or '')[:800]}"
+        for h in hist)
+    # What the user has said, for resolving references in the current question.
+    prior_user = " ".join((h.get("text") or "") for h in hist
+                          if h.get("role") == "you")
+
     if body.gene_id:
         context, summary = _gene_context(rows, body.gene_id, body.organism)
         matched = []
@@ -521,6 +543,15 @@ def chat(body: ChatRequest, current_user: dict = Depends(get_current_user)):
         # alone caused the model to answer per-gene questions from genome
         # totals ("the gene is not flagged" from a count of 1212 flagged).
         matched = _search_genes(rows, question)
+        # A follow-up ("look more into it", "what about its neighbours") names
+        # no gene, so searching the question alone finds nothing and the answer
+        # silently falls back to genome aggregates -- which is how the earlier
+        # wrong-gene answers happened. Retry against what the user asked before.
+        if not matched and prior_user:
+            matched = _search_genes(rows, prior_user)
+            if matched:
+                LOGGER.info("resolved follow-up via prior turns -> %s",
+                            _col(matched[0], "gene_id"))
         # An operon can only be interpreted from its MEMBERS -- their products,
         # order and strands are the whole signal. If a matched gene sits in an
         # operon, pull in its siblings so the model reasons about the unit
@@ -563,7 +594,11 @@ def chat(body: ChatRequest, current_user: dict = Depends(get_current_user)):
 
     context = _schema_block(rows) + "\n\n" + context
 
-    prompt = (f"{context}\n\n"
+    convo = (f"\n\n----\nCONVERSATION SO FAR (context for resolving references "
+             f"like \"it\" or \"that gene\"; NOT evidence -- never cite it as a "
+             f"pipeline finding):\n{hist_text}\n" if hist_text else "")
+
+    prompt = (f"{context}{convo}\n\n"
               f"----\nQUESTION: {question}\n\n"
               "Study the records above, then answer using the required headings. "
               "Cite the field or tool behind every fact, and keep anything you "
