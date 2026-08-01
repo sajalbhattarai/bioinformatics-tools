@@ -286,6 +286,22 @@ def _search_genes(rows: list[dict], question: str, limit: int = 6) -> list[dict]
     return [r for _, r in scored[:limit]]
 
 
+# Context-only records exist so the model can tell "that is a different gene".
+# They do not need 49 columns each to do that job -- rendering them in full was
+# 62k of a 65k-character prompt, i.e. the entire latency problem.
+_BRIEF_FIELDS = ("gene_id", "best_consensus_product_descriptor", "CONFIDENCE_TIER",
+                 "NEEDS_REVIEW?", "UniOP_OPERON_id", "RAST_start", "RAST_end")
+
+
+def _render_brief(r: dict) -> str:
+    bits = []
+    for f in _BRIEF_FIELDS:
+        v = _col(r, f)
+        if v:
+            bits.append(f"{f}={v}")
+    return "    " + "; ".join(bits)
+
+
 def _render_gene(r: dict) -> str:
     out = []
     for k, v in r.items():
@@ -297,6 +313,11 @@ def _render_gene(r: dict) -> str:
         bare = k.split(":")[-1].strip()
         if bare == "RAST_na_sequence":
             v = f"<{len(v)} nt, omitted>"
+        elif len(v) > 600:
+            # Audit trails and reasoning strings run to thousands of characters.
+            # Keep the head -- that is where the substance is -- and say it was cut
+            # so the model does not treat the tail as absent.
+            v = v[:600] + f" …[truncated, {len(v)} chars total]"
         out.append(f"    {bare}: {v}")
     return "\n".join(out)
 
@@ -531,9 +552,7 @@ def chat(body: ChatRequest, current_user: dict = Depends(get_current_user)):
                     "GENES. Never report their values as the subject gene's, and "
                     "name the gene explicitly whenever you mention one:\n")
                 for r in others:
-                    context += (f"\n  [{_col(r, 'gene_id') or '?'}] "
-                                f"{_col(r, 'best_consensus_product_descriptor')}\n"
-                                f"{_render_gene(r)}\n")
+                    context += f"\n{_render_brief(r)}\n"
             summary["matched_genes"] = [_col(r, "gene_id") for r in matched]
         else:
             context += ("\n\nNo gene in this genome matched the wording of the "
