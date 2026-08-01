@@ -70,9 +70,11 @@ not substitute plausible biology.
   * Cite the source of each claim inline -- the column name or the tool name.
 
 SCOPING RULES (these are real error modes, not hypotheticals):
-  * The gene asked about is the CANDIDATE. Evidence listed for other genes or \
-operon members belongs to THEM. Never attribute a neighbour's EC number, hit or \
-description to the candidate.
+  * The gene asked about is the CANDIDATE, and it is the one under "THE GENE \
+THIS QUESTION IS ABOUT". Everything under "OTHER RECORDS" is a DIFFERENT GENE. \
+Never report another gene's descriptor, scores, operon or EC as the candidate's \
+-- if you mention one, name it. Answering about the wrong gene is the single \
+worst failure here: it is confident, detailed, and completely wrong.
   * EC specificity differences are NOT conflicts. 2.7.1.2 vs 2.7.1.- is the same \
 enzyme at different resolution. Only different reaction classes (2.7.1.2 vs \
 1.1.1.27) are genuine conflicts.
@@ -137,7 +139,7 @@ class ChatRequest(BaseModel):
     organism: str                 # organism folder name inside the run
     question: str
     gene_id: str | None = None    # optional: narrows context to one gene
-    max_tokens: int = 5000
+    max_tokens: int = 1000
 
 
 def _endpoint() -> dict:
@@ -511,11 +513,27 @@ def chat(body: ChatRequest, current_user: dict = Depends(get_current_user)):
                 # Cap: a large operon would otherwise crowd out the question.
                 matched = matched + siblings[:24]
         if matched:
-            context += ("\n\nGENES MATCHING THIS QUESTION — full records, "
-                        "one block each:\n")
-            for r in matched:
-                context += (f"\n  [{_col(r, 'gene_id') or '?'}] "
-                            f"{_col(r, 'best_consensus_product_descriptor')}\n{_render_gene(r)}\n")
+            # The first match is the best-scoring one. Label it as THE subject
+            # and everything else as background, or the model blends several
+            # genes into a single answer -- observed in use: asked about DNA
+            # helicase RecQ, it described a pilus assembly protein from another
+            # operon, complete with that gene's scores.
+            primary, others = matched[0], matched[1:]
+            context += (
+                "\n\nTHE GENE THIS QUESTION IS ABOUT — answer about THIS record "
+                "and no other:\n"
+                f"\n  [{_col(primary, 'gene_id') or '?'}] "
+                f"{_col(primary, 'best_consensus_product_descriptor')}\n"
+                f"{_render_gene(primary)}\n")
+            if others:
+                context += (
+                    "\n\nOTHER RECORDS, for context only. These are DIFFERENT "
+                    "GENES. Never report their values as the subject gene's, and "
+                    "name the gene explicitly whenever you mention one:\n")
+                for r in others:
+                    context += (f"\n  [{_col(r, 'gene_id') or '?'}] "
+                                f"{_col(r, 'best_consensus_product_descriptor')}\n"
+                                f"{_render_gene(r)}\n")
             summary["matched_genes"] = [_col(r, "gene_id") for r in matched]
         else:
             context += ("\n\nNo gene in this genome matched the wording of the "
