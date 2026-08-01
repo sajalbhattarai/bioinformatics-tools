@@ -192,7 +192,14 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=0, help="0 = pick a free port")
     ap.add_argument("--dtype", default="bfloat16",
                     choices=["bfloat16", "float16", "float32"])
-    ap.add_argument("--idle-timeout", type=int, default=1800,
+    # 5 minutes, not 30. The panel polls /health every 60s while it is open, so
+    # silence for five minutes means nobody is watching -- and that signal is
+    # reliable in a way page-exit events are not. pagehide does NOT fire on
+    # SvelteKit client-side navigation, so "user clicked back" never reached the
+    # stop endpoint and a GPU sat held until the old 30-minute timeout. This is
+    # the mechanism that actually frees the GPU; the stop endpoint is only a
+    # fast path for when it happens to work.
+    ap.add_argument("--idle-timeout", type=int, default=300,
                     help="exit after this many seconds with no /chat or /health "
                          "(0 disables). Releases the GPU when the page is gone.")
     args = ap.parse_args()
@@ -211,7 +218,7 @@ def main() -> None:
     if args.idle_timeout > 0:
         def watchdog():
             while True:
-                time.sleep(30)
+                time.sleep(15)
                 idle = time.time() - LAST_SEEN
                 if idle >= args.idle_timeout:
                     log(f"idle {idle:.0f}s >= {args.idle_timeout}s — releasing the GPU")
