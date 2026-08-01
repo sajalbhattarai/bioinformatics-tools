@@ -918,8 +918,6 @@ def get_job_status(job_id: str, current_user: dict = Depends(get_current_user)):
     return result
 
 
-@router.get("/jobs")
-
 def _reconcile_running(conn, main_db: str, rows: list[dict]) -> None:
     """Correct rows that claim to be running but are not.
 
@@ -989,6 +987,7 @@ def _reconcile_running(conn, main_db: str, rows: list[dict]) -> None:
         LOGGER.warning("job reconciliation skipped: %s", exc)
 
 
+@router.get("/jobs")
 def list_jobs(
     workflow: str | None = None,
     page: int = Query(1, ge=1),
