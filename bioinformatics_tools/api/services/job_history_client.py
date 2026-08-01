@@ -35,7 +35,7 @@ def _run(connection: SSHConnection, action: str, payload: dict):
         LOGGER.warning("job_history %s failed: %s", action, exc)
         return None
     finally:
-        ssh.close()
+        pass  # pooled client: closing it would break concurrent requests (see SSHConnection pool)
 
 
 def record_job_created(connection: SSHConnection, db_path: str, job_id: str, workflow: str,

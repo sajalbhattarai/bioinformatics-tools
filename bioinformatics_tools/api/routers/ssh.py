@@ -479,7 +479,7 @@ def test_path_writable(path_data: dict, current_user: dict = Depends(get_current
         output = stdout.read().decode().strip()
 
         if "DIR_OK" not in output:
-            ssh.close()
+            pass  # pooled client: closing it would break concurrent requests (see SSHConnection pool)
             return {
                 "writable": False,
                 "error": f"Cannot create directory: {test_dir}",
@@ -491,7 +491,7 @@ def test_path_writable(path_data: dict, current_user: dict = Depends(get_current
         _, stdout, stderr = ssh.exec_command(f'touch "{test_file}" 2>&1 && rm -f "{test_file}" 2>&1 && echo "WRITE_OK"')
         output = stdout.read().decode().strip()
 
-        ssh.close()
+        pass  # pooled client: closing it would break concurrent requests (see SSHConnection pool)
 
         if "WRITE_OK" in output:
             return {"writable": True}

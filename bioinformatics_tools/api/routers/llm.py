@@ -487,7 +487,7 @@ def start_chat(current_user: dict = Depends(get_current_user)):
             raise HTTPException(status_code=500,
                                 detail=f"sbatch failed: {stderr or job or 'no job id'}")
     finally:
-        ssh.close()
+        pass  # pooled client: closing it would break concurrent requests (see SSHConnection pool)
 
     LOGGER.info("chat server submitted as job %s (model %s)", job, model)
     return {"started": True, "job_id": job, "model": model,

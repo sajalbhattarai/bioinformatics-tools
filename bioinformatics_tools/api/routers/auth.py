@@ -76,7 +76,7 @@ def register(body: UserRegister):
         ssh = conn.connect()
         _, stdout, _ = ssh.exec_command('echo $HOME')
         home_dir = stdout.read().decode().strip()
-        ssh.close()
+        pass  # pooled client: closing it would break concurrent requests (see SSHConnection pool)
         if not home_dir:
             raise ValueError('Remote returned empty $HOME')
     except Exception as exc:
@@ -216,7 +216,7 @@ def update_credentials(body: UpdateClusterCredentials, current_user: dict = Depe
         ssh = conn.connect()
         _, stdout, _ = ssh.exec_command('echo $HOME')
         home_dir = stdout.read().decode().strip()
-        ssh.close()
+        pass  # pooled client: closing it would break concurrent requests (see SSHConnection pool)
         if not home_dir:
             raise ValueError('Remote returned empty $HOME')
     except Exception as exc:

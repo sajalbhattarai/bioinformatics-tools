@@ -116,7 +116,21 @@ class SSHConnection:
             if hit:
                 client, created = hit
                 transport = client.get_transport()
-                if transport is not None and transport.is_active() and now - created < _POOL_TTL:
+                # is_active() is necessary but not sufficient: a pooled client is
+                # shared across FastAPI's threadpool, so another request can close
+                # it between this check and the caller's exec_command -- which
+                # surfaces as "'NoneType' object has no attribute 'open_session'"
+                # because paramiko sets _transport = None on close. Nothing should
+                # close a pooled client (all such calls were removed), and this
+                # check is the second line of defence: anything not verifiably
+                # usable is discarded and replaced rather than handed out.
+                usable = False
+                if transport is not None and now - created < _POOL_TTL:
+                    try:
+                        usable = transport.is_active() and transport.is_authenticated()
+                    except Exception:
+                        usable = False
+                if usable:
                     LOGGER.debug('Reusing pooled SSH connection to %s', self.host)
                     return client
                 # Dead or expired: bin it and fall through to reconnect, so a
