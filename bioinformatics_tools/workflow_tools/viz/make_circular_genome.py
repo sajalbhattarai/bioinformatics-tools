@@ -40,16 +40,36 @@ csv.field_size_limit(10 ** 8)
 # confidence tier -> colour. Okabe-Ito (colour-vision-deficiency safe): the five
 # tiers are DISTINCT hues, not a green->red ramp (which collapses under
 # deuteranopia). Validated worst-all-pairs CVD deltaE = 16 (target >= 12).
+# Confidence tiers are ORDERED (highest > high > medium > fair > low), so they
+# get a sequential single-hue ramp, not a categorical rainbow. The previous
+# green/blue/yellow/orange/red set failed every ordinal check: lightness was
+# non-monotone (L 0.678, 0.679, 0.877, 0.765, 0.670 -- it went up then back
+# down), highest and high differed in lightness by 0.001 so they were identical
+# in grayscale, the yellow sat at 1.41:1 on white, and the hue spread was 141
+# degrees. Rank encoded as hue reads as five unrelated categories.
+#
+# This ramp is validated (dataviz validate_palette.js --ordinal, light mode):
+# monotone lightness, every adjacent gap >= 0.06, 10 degree hue spread, light
+# end 2.66:1 against the surface. Darker = higher confidence, so a well
+# annotated genome reads solid and a poor one washes out.
+#
+# Keep this in sync with TIER_COL in gen_genome_viewer.py.
 TIER = [
-    ("highest", "#00b37e"),   # bright green
-    ("high", "#2f9bff"),      # bright blue
-    ("medium", "#ffd21a"),    # bright yellow
-    ("fair", "#ff9500"),      # bright orange
-    ("low", "#ff4d2e"),       # bright red
+    ("highest", "#0b2842"),   # darkest
+    ("high", "#154064"),
+    ("medium", "#256291"),
+    ("fair", "#4184b5"),
+    ("low", "#6ba3c8"),       # lightest
     ("NOT_APPLICABLE_NON_CODING", "#c8c8c8"),
 ]
 TCOL = dict(TIER)
-REVIEW_COL = "#666666"        # review-flag ticks: grey (distinct from every tier hue)
+# Review flags are a RESERVED STATUS colour, never a tier step -- an alarm must
+# not be confusable with a ranking. Grey worked against the old rainbow only by
+# being the one unsaturated thing on the figure; against a single-hue blue ramp
+# it reads as just another neutral and the flags stop announcing themselves.
+# This red shares no hue with the ramp, so flagged regions are unmistakable.
+# Matches FLAG in gen_genome_viewer.py.
+REVIEW_COL = "#b32b1e"
 GAP_DEG = 4.0                 # angular gap between replicons/contigs (the "unknown" wedge)
 MIN_SPAN_DEG = 4.0            # floor so a tiny plasmid/contig is still visible
 START_DEG = 90.0             # 12 o'clock origin, genome runs clockwise

@@ -308,7 +308,7 @@ TEMPLATE = r"""<!doctype html>
     --surface:#ffffff; --ink:#000000; --muted:#000000; --line:#cfcfcf; --panel:#ffffff;
     --btn:#ffffff; --btn-ink:#000000; --shadow:none;
     /* bright confidence-tier palette */
-    --t0:#00b37e; --t1:#2f9bff; --t2:#ffd21a; --t3:#ff9500; --t4:#ff4d2e; --tn:#c8c8c8;
+    --t0:#0b2842; --t1:#154064; --t2:#256291; --t3:#4184b5; --t4:#6ba3c8; --tn:#c8c8c8;
     --operon:#1667e0; --nonop:#c79a5c; --flag:#666666;
   }
   *{box-sizing:border-box}
@@ -406,8 +406,15 @@ TEMPLATE = r"""<!doctype html>
 <script>
 const D = /*__DATA__*/;
 const TIER_NAMES=["highest","high","medium","fair","low"];
-const TIER_COL=["#00b37e","#2f9bff","#ffd21a","#ff9500","#ff4d2e"];   // bright tiers
-const NONCODE="#c8c8c8", OPERON="#1667e0", NONOP="#c79a5c", FLAG="#666666";
+// Ordered tiers -> sequential single-hue ramp, darkest = highest confidence.
+// Validated ordinal (monotone L, gaps >= 0.06, 10 deg hue spread, light end
+// 2.66:1 on white). The old rainbow failed all four ordinal checks and was
+// indistinguishable in grayscale. Keep in sync with TIER in make_circular_genome.py.
+const TIER_COL=["#0b2842","#154064","#256291","#4184b5","#6ba3c8"];
+// FLAG is a RESERVED status colour -- never reused as a tier step, so an
+// alarm can never be confused with a ranking. Operon/non-operon are a separate
+// categorical pair used only in operon mode, where the tier ramp is not shown.
+const NONCODE="#c8c8c8", OPERON="#1667e0", NONOP="#c79a5c", FLAG="#b32b1e";
 const CX=390, CY=396, GAP=4, MINSPAN=4, START=90;
 const R={bbO:352,bbI:343, fO:335,fI:306, rO:301,rI:272, tick:262};
 
