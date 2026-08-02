@@ -101,14 +101,40 @@ class SSHConnection:
         self.pkey = pkey               # in-memory key object (API usage)
         self.key_filename = key_filename   # file path (CLI fallback)
 
-    def connect(self) -> paramiko.SSHClient:
-        """Return a live SSH connection, reusing a pooled one when possible."""
+    def _handshake(self) -> paramiko.SSHClient:
+        """Build and authenticate a brand-new client. No pool involvement."""
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        connect_kwargs: dict = {'username': self.username}
+        if self.pkey:
+            connect_kwargs['pkey'] = self.pkey
+        elif self.key_filename:
+            connect_kwargs['key_filename'] = self.key_filename
+        # If neither is set, paramiko falls back to the system SSH agent (CLI default)
+        ssh.connect(self.host, **connect_kwargs)
+        LOGGER.debug('Connected to %s as %s', self.host, self.username)
+        return ssh
+
+    def connect(self, pooled: bool = True) -> paramiko.SSHClient:
+        """Return a live SSH connection, reusing a pooled one when possible.
+
+        pooled=False returns a client of the caller's own, never entered into
+        the pool and never handed to anyone else. Use it for anything that
+        holds its client for longer than a single request -- see
+        ssh_slurm.submit_ssh_job, which keeps one for the hours a workflow run
+        lasts. A pooled client is the wrong tool there: it is shared with every
+        concurrent status poll and file listing, so its session budget and its
+        lifetime are not the holder's to rely on.
+        """
         if not self.host or not self.username:
             raise ValueError(
                 'SSHConnection requires host and username. '
                 'Use make_user_connection() in API context, or set host/username '
                 'from the user config for CLI usage.'
             )
+        if not pooled:
+            return self._handshake()
+
         key = _pool_key(self.host, self.username, self.pkey, self.key_filename)
         now = time.time()
         with _POOL_LOCK:
@@ -124,33 +150,40 @@ class SSHConnection:
                 # close a pooled client (all such calls were removed), and this
                 # check is the second line of defence: anything not verifiably
                 # usable is discarded and replaced rather than handed out.
-                usable = False
-                if transport is not None and now - created < _POOL_TTL:
+                alive = False
+                if transport is not None:
                     try:
-                        usable = transport.is_active() and transport.is_authenticated()
+                        alive = transport.is_active() and transport.is_authenticated()
                     except Exception:
-                        usable = False
-                if usable:
+                        alive = False
+                if alive and now - created < _POOL_TTL:
                     LOGGER.debug('Reusing pooled SSH connection to %s', self.host)
                     return client
                 # Dead or expired: bin it and fall through to reconnect, so a
                 # dropped connection heals silently instead of erroring.
+                #
+                # Evicting must NOT close a client that is still alive. This
+                # line used to close unconditionally, and the TTL branch is
+                # reached on a perfectly healthy connection -- one that a
+                # workflow run had been handed and was still streaming from.
+                # Closing it set paramiko's _transport = None underneath that
+                # run, whose next exec_command then died with "'NoneType'
+                # object has no attribute 'open_session'". job_runner recorded
+                # that as the ANALYSIS failing, ~4 minutes into a run that was
+                # in fact still submitting SLURM jobs on the cluster, and the
+                # job page showed a failed job with no SLURM jobs and a
+                # one-line log. Dropping the reference is enough: a holder
+                # keeps its client alive, and paramiko closes it on GC once
+                # nobody holds it. Only an already-dead transport is closed
+                # here, where there is nothing left to tear down.
                 _POOL.pop(key, None)
-                try:
-                    client.close()
-                except Exception:
-                    pass
+                if not alive:
+                    try:
+                        client.close()
+                    except Exception:
+                        pass
 
-        ssh = paramiko.SSHClient()
-        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        connect_kwargs: dict = {'username': self.username}
-        if self.pkey:
-            connect_kwargs['pkey'] = self.pkey
-        elif self.key_filename:
-            connect_kwargs['key_filename'] = self.key_filename
-        # If neither is set, paramiko falls back to the system SSH agent (CLI default)
-        ssh.connect(self.host, **connect_kwargs)
-        LOGGER.debug('Connected to %s as %s', self.host, self.username)
+        ssh = self._handshake()
         with _POOL_LOCK:
             _POOL[key] = (ssh, time.time())
         return ssh

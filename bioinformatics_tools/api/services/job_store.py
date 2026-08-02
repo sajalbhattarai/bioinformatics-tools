@@ -17,15 +17,35 @@ raises -- see job_history_client.py's module docstring.
 """
 import datetime
 import logging
+import time
 
 from bioinformatics_tools.api.services import job_history_client
 
 LOGGER = logging.getLogger(__name__)
 
-# Fields worth round-tripping to the persistent history table; everything
-# else (logs, sub_jobs, slurm_jobs, containers, report, steps_done/total,
-# progress) is live-session-only detail.
+# Fields worth round-tripping to the persistent history table on every
+# update(); everything else (logs, sub_jobs, report, steps_done/total,
+# progress) is live-session-only detail. slurm_jobs/containers are neither:
+# see checkpoint() below.
 _PERSISTED_FIELDS = ("status", "phase", "work_dir")
+
+# How often a run's SLURM/container provenance is written to history while it
+# is still going.
+#
+# It used to be written once, by finalize(). That made provenance depend on the
+# API surviving to the end of the run, and it does not always: when the SSH log
+# stream drops ("'NoneType' object has no attribute 'open_session'"), the job
+# was finalized four minutes into a run whose in-memory list was still empty,
+# so an empty list is what got snapshotted -- and the SLURM Jobs table read
+# empty forever afterwards, for a run that went on to submit 458 jobs and whose
+# log recorded every one of them. Three consecutive runs lost their provenance
+# that way.
+#
+# Every history write is an SSH round-trip, so per-log-line persistence really
+# would be too expensive -- but per-30-seconds is not. That is a fraction of
+# what the SLURM status checker beside it already spends on its own 15s cycle,
+# and it caps the loss at the last half-minute instead of everything.
+_CHECKPOINT_MIN_INTERVAL = 30.0
 
 
 class JobStore:
@@ -37,6 +57,10 @@ class JobStore:
         # job dict's fields straight into a JSON response, and an
         # SSHConnection object isn't JSON-serializable. Keyed by job_id.
         self._persistence: dict[str, tuple[str, object]] = {}
+        # When each job's provenance was last written to history, so
+        # checkpoint() can throttle. Same reason as above for living outside
+        # self._jobs: it is bookkeeping, not part of the API response.
+        self._last_checkpoint: dict[str, float] = {}
 
     def create(self, job_id: str, genome_path: str, user_id: int | None = None,
                workflow: str | None = None, output_dir: str | None = None,
@@ -88,6 +112,15 @@ class JobStore:
 
         return job
 
+    def attach_persistence(self, job_id: str, db_path: str, connection) -> None:
+        """Route this job's later status/phase/work_dir changes to history
+        WITHOUT recording a creation, for a job whose history row already
+        exists. Used when reattaching to a run after a dane-api restart:
+        create() would insert a duplicate row for a job that has been in the
+        table since it was first launched."""
+        if job_id in self._jobs and db_path and connection is not None:
+            self._persistence[job_id] = (db_path, connection)
+
     def get(self, job_id: str) -> dict | None:
         """Get a job by ID, or None if not found."""
         return self._jobs.get(job_id)
@@ -118,6 +151,48 @@ class JobStore:
             except Exception as exc:
                 LOGGER.warning("Could not persist update for job %s: %s", job_id, exc)
 
+    def checkpoint(self, job_id: str, force: bool = False) -> bool:
+        """Write this job's SLURM jobs and containers to history mid-run.
+
+        Returns True if a write happened. Throttled to one write per
+        _CHECKPOINT_MIN_INTERVAL seconds unless force=True, because each one
+        costs an SSH round-trip.
+
+        This exists so provenance no longer depends on the run reaching
+        finalize(). A dropped log stream, a killed API, a crash -- all used to
+        take the whole SLURM Jobs table with them, and the job page then showed
+        an empty table permanently, because the history row it falls back to
+        had never been given anything to show.
+
+        Never raises: a job whose provenance cannot be written is still a job
+        that is running fine, and this is called from the log-parsing hot path.
+        """
+        job = self._jobs.get(job_id)
+        if job is None or job_id not in self._persistence:
+            return False
+
+        now = time.monotonic()
+        if not force and now - self._last_checkpoint.get(job_id, 0.0) < _CHECKPOINT_MIN_INTERVAL:
+            return False
+
+        # Stamped BEFORE the write, not after: a slow or hanging SSH round-trip
+        # would otherwise leave the previous stamp in place and let the next
+        # caller straight through, stacking up round-trips on a link that is
+        # already struggling.
+        self._last_checkpoint[job_id] = now
+
+        db_path, connection = self._persistence[job_id]
+        try:
+            job_history_client.record_job_updated(
+                connection, db_path, job_id,
+                slurm_jobs=job.get("slurm_jobs", []),
+                containers=job.get("containers", []),
+            )
+            return True
+        except Exception as exc:
+            LOGGER.warning("Could not checkpoint provenance for job %s: %s", job_id, exc)
+            return False
+
     def finalize(self, job_id: str, status: str, phase: str) -> None:
         """Mark a job done (completed/failed) and persist a final snapshot
         of its logs/slurm_jobs/containers alongside the status/phase change.
@@ -127,15 +202,18 @@ class JobStore:
         whatever streaming-session detail has accumulated so far, not an
         incremental delta, so update()'s job.get(k) != v change-detection
         would never fire for them (the in-memory value and the value being
-        "set" are the same object). This is the one point where
-        streaming-only session detail (logs/slurm_jobs/containers, never
-        persisted incrementally -- that would mean an SSH round-trip per
-        log line) gets a chance to survive a dane-api restart and be visible
-        again when a job is later resumed from history.
+        "set" are the same object).
 
-        A job that dies without ever reaching this method (e.g. dane-api
-        itself crashes mid-run) gets no final snapshot, same limitation
-        status/phase already have today -- not a new gap this introduces.
+        This is no longer the ONLY point where slurm_jobs/containers reach
+        history -- checkpoint() writes them as they are discovered, so a run
+        that never gets here still leaves its provenance behind. What is still
+        unique to finalize() is `logs`, which stays end-of-run only: it is the
+        whole log, rewritten in full on every write, and sending megabytes over
+        SSH every half-minute is exactly the cost checkpoint() is shaped to
+        avoid. A job that dies mid-run therefore keeps its SLURM jobs and
+        containers, and loses only the log -- which is still on the cluster
+        under ~/.local/share/bsp/jobs/<job_id>.log, and is what the reattach
+        path replays.
         """
         job = self._jobs.get(job_id)
         if job is None:
@@ -167,21 +245,46 @@ class JobStore:
         not sent to the frontend table) is read later by
         _slurm_status_checker to backfill genome once that job's own log
         file exists -- see ssh_slurm.get_job_genome's docstring."""
-        if job_id in self._jobs:
-            self._jobs[job_id]["slurm_jobs"].append({
-                "job_id": slurm_id,
-                "rule": rule,
-                "status": "SUBMITTED",
-                "time": "00:00:00",
-                "genome": genome,
-                "source": source,
-                "log_path": log_path,
-            })
+        if job_id not in self._jobs:
+            return
+        rows = self._jobs[job_id]["slurm_jobs"]
+        # Ignore a job already registered. A SLURM job id is unique per
+        # submission, so seeing one twice never means two jobs -- and the
+        # workflow's log emits every line twice (two handlers on the
+        # workflow_tools logger, one timestamp-prefixed and one not), so every
+        # submission and every cache hit was parsed twice: the SLURM Jobs table
+        # listed a run's 759 jobs as 1518, each organism appearing under each
+        # rule twice over. Deduping here rather than at the parser covers every
+        # route into the table, and stays correct once the double logging is
+        # itself fixed.
+        #
+        # Cache hits share the "—" placeholder id (nothing was submitted), so
+        # for those it is the rule+genome pair that identifies the row.
+        if slurm_id and slurm_id != "—":
+            if any(r["job_id"] == slurm_id for r in rows):
+                return
+        elif any(r["job_id"] == slurm_id and r["rule"] == rule and r.get("genome") == genome
+                 for r in rows):
+            return
+        rows.append({
+            "job_id": slurm_id,
+            "rule": rule,
+            "status": "SUBMITTED",
+            "time": "00:00:00",
+            "genome": genome,
+            "source": source,
+            "log_path": log_path,
+        })
+        # Only reached when the row is genuinely new (every early return above
+        # is a duplicate), so this is at most one throttled call per real
+        # submission -- and the throttle makes it far fewer than that.
+        self.checkpoint(job_id)
 
     def add_container(self, job_id: str, container_info: dict):
         """Register a container discovered from log parsing."""
         if job_id in self._jobs:
             self._jobs[job_id]["containers"].append(container_info)
+            self.checkpoint(job_id)
 
     def get_slurm_jobs(self, job_id: str) -> list[dict]:
         """Get the slurm_jobs list for a job."""

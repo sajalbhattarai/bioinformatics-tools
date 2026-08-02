@@ -37,13 +37,97 @@ def get_genomes(
     return files
 
 
+RUN_FILE_DIR = '.local/share/bsp/jobs'
+
+
+def run_file_stem(job_id: str | None) -> str:
+    """The sanitized stem naming a run's .log/.rc/.pid on the cluster.
+
+    Shared so a reattach looks for exactly the files the launch wrote --
+    see submit_ssh_job and the API's job_status reattach path.
+    """
+    return re.sub(r'[^A-Za-z0-9_.-]', '_', str(job_id or 'run'))
+
+
+# A live run's log is never quiet for this long: snakemake logs a status-check
+# cycle roughly every 30s for as long as it has jobs in flight.
+RUN_STALE_AFTER = 900.0
+
+
+def probe_run(job_id: str, connection: SSHConnection) -> dict:
+    """One SSH round-trip answering: is this detached run's log worth tailing?
+
+    Returns {"has_log": bool, "exit_code": str|None, "log_idle": float}, where
+    log_idle is seconds since the log was last written.
+
+    Liveness is read off the LOG, not the process table. The obvious probe --
+    pgrep for the job_id, which is in the driver's command line -- cannot work:
+    the job_id is also in this probe's own command line (the log path it stats),
+    so the probe matches itself and every run, however long dead, reads as
+    alive. The `ps | grep [f]oo` bracket trick does not save it either, because
+    the unbracketed copy in the log path is right there in the same command.
+    Log mtime answers the question being asked anyway -- "will `tail -F` ever
+    produce anything?" -- rather than a proxy for it.
+
+    Anything unparseable reads as "nothing there", the safe answer: callers use
+    this to decide whether to start tailing, and `tail -F` on a file that will
+    never grow never returns.
+    """
+    base = f'$HOME/{RUN_FILE_DIR}/{run_file_stem(job_id)}'
+    probe = (
+        f'now=$(date +%s); '
+        f'mt=$(stat -c %Y {base}.log 2>/dev/null || echo 0); '
+        f'sz=$(stat -c %s {base}.log 2>/dev/null || echo 0); '
+        f'rc=$(cat {base}.rc 2>/dev/null); '
+        f'echo "$sz|${{rc:--}}|$((now - mt))"'
+    )
+    ssh = connection.connect()
+    stdin, stdout, stderr = ssh.exec_command(probe)
+    lines = [ln for ln in stdout.read().decode().strip().splitlines() if ln.strip()]
+    parts = lines[-1].split('|') if lines else []
+    if len(parts) != 3:
+        LOGGER.warning('Unreadable run probe for %s: %r', job_id, lines)
+        return {"has_log": False, "exit_code": None, "log_idle": float('inf')}
+    size, rc, idle = (p.strip() for p in parts)
+    try:
+        idle_s = float(idle)
+    except ValueError:
+        idle_s = float('inf')
+    return {
+        "has_log": size.isdigit() and int(size) > 0,
+        "exit_code": None if rc in ('-', '') else rc,
+        "log_idle": idle_s,
+    }
+
+
+def is_replayable(probe: dict) -> bool:
+    """Whether a probe_run() result means `tail -F` will terminate or deliver.
+
+    True in exactly two cases: the run finished (sentinel present, so the
+    replay ends at it and recovers the real exit code), or its log is still
+    being written (so the replay catches up and then follows it live).
+    """
+    if not probe.get("has_log"):
+        return False
+    return probe.get("exit_code") is not None or probe.get("log_idle", float('inf')) < RUN_STALE_AFTER
+
+
 def submit_ssh_job(
     cmd,
     connection: SSHConnection,
     job_id: str | None = None,
     poll: float = 1.0,
+    reattach: bool = False,
 ):
     '''Run a workflow command on the login node, DETACHED, and stream its log.
+
+    reattach=True skips the launch entirely and only streams: the run is
+    already going, started by an earlier (now dead) dane-api, and its log and
+    exit sentinel are still on disk under the same job_id. cmd is ignored in
+    that mode. The tail has always started at line 1 precisely so this would
+    replay everything the lost session saw -- until now nothing called it, so a
+    dane-api restart meant a live run's job page went permanently blank: no
+    logs, no SLURM jobs, phase frozen wherever it was when the API died.
 
     Yields each output line as it arrives, then a final __EXIT_CODE__: line.
     The contract is unchanged; how the process is hosted is not.
@@ -62,36 +146,64 @@ def submit_ssh_job(
     log. Losing the tail (closed GUI, dropped VPN) loses only the live output --
     the run continues, and reattaching later replays the log from the top.
     '''
-    ssh = connection.connect()
+    # pooled=False: this client is held for the ENTIRE run -- hours -- while the
+    # pooled one is shared with every status poll and file listing the GUI makes
+    # in the meantime, and is evicted on a 600s TTL. A run must not depend on
+    # either. See SSHConnection.connect's docstring.
+    ssh = connection.connect(pooled=False)
 
-    tag = job_id or 'run'
-    safe = re.sub(r'[^A-Za-z0-9_.-]', '_', str(tag))
+    safe = run_file_stem(job_id)
     base = f'$HOME/.local/share/bsp/jobs/{safe}'
     log, rcf, pidf = f'{base}.log', f'{base}.rc', f'{base}.pid'
 
-    # setsid detaches from the session so no SIGHUP reaches it; nohup covers the
-    # gap before setsid takes effect. The exit code is written by the same shell
-    # that runs the command, so it is recorded even though nobody is attached.
-    launch = (
-        f'mkdir -p $HOME/.local/share/bsp/jobs && '
-        f'rm -f {rcf} && '
-        f'export PATH=$HOME/.local/bin:$PATH && '
-        f"nohup setsid bash -c '{{ {cmd} ; }} > {log} 2>&1; echo $? > {rcf}' "
-        f'>/dev/null 2>&1 & echo $!'
-    )
-    _in, _out, _err = ssh.exec_command(launch)
-    pid = (_out.read().decode() or '').strip().splitlines()
-    pid = pid[-1] if pid else ''
-    _out.channel.recv_exit_status()
-    ssh.exec_command(f'echo {pid} > {pidf}')
-    LOGGER.info('Detached run started (pid %s), log %s', pid, log)
+    try:
+        if reattach:
+            LOGGER.info('Reattaching to run %s, replaying log %s', safe, log)
+        else:
+            # setsid detaches from the session so no SIGHUP reaches it; nohup
+            # covers the gap before setsid takes effect. The exit code is
+            # written by the same shell that runs the command, so it is
+            # recorded even though nobody is attached.
+            #
+            # The pid is recorded by the launching shell itself. It used to be a
+            # SECOND exec_command issued from here, which bought nothing and
+            # added a failure point squarely between "the run has started" and
+            # "we are watching it": when that call was the one that failed, the
+            # workflow was already running on the cluster but the caller saw
+            # only an exception.
+            launch = (
+                f'mkdir -p $HOME/.local/share/bsp/jobs && '
+                f'rm -f {rcf} && '
+                f'export PATH=$HOME/.local/bin:$PATH && '
+                f"nohup setsid bash -c '{{ {cmd} ; }} > {log} 2>&1; echo $? > {rcf}' "
+                f'>/dev/null 2>&1 & echo $! | tee {pidf}'
+            )
+            _in, _out, _err = ssh.exec_command(launch)
+            pid = (_out.read().decode() or '').strip().splitlines()
+            pid = pid[-1] if pid else ''
+            _out.channel.recv_exit_status()
+            LOGGER.info('Detached run started (pid %s), log %s', pid, log)
 
-    # Tail from the beginning so a reattach replays everything already written.
-    # -F rather than -f: the log may not exist for a moment after launch.
-    tail_cmd = f'tail -n +1 -F {log} 2>/dev/null'
-    t_in, t_out, t_err = ssh.exec_command(tail_cmd)
-    chan = t_out.channel
-    chan.settimeout(poll)
+        # From here on the workflow IS running on the cluster. Everything after
+        # this point only decides how well we can watch it, so the caller is
+        # told now -- see job_runner.run_ssh_task, which uses this to tell "the
+        # run never started" (a real failure) apart from "we lost sight of a run
+        # that is still going" (not a failure at all).
+        yield '__LAUNCHED__'
+
+        # Tail from the beginning so a reattach replays everything already
+        # written. -F rather than -f: the log may not exist for a moment after
+        # launch.
+        tail_cmd = f'tail -n +1 -F {log} 2>/dev/null'
+        t_in, t_out, t_err = ssh.exec_command(tail_cmd)
+        chan = t_out.channel
+        chan.settimeout(poll)
+    except BaseException:
+        try:
+            ssh.close()
+        except Exception:
+            pass
+        raise
 
     # Completion is detected by stat-ing the sentinel over ONE long-lived SFTP
     # session. The previous version called exec_command() once per poll to `cat`
@@ -166,7 +278,11 @@ def submit_ssh_job(
                     exit_code = 1
                 break
     finally:
-        for closer in (chan, sftp):
+        # ssh is closed here too, unlike everywhere else in this module: this
+        # client is not the pool's (connect(pooled=False) above), so nothing
+        # else can be using it and leaving it open would leak one connection
+        # per run.
+        for closer in (chan, sftp, ssh):
             try:
                 if closer is not None:
                     closer.close()
@@ -182,8 +298,6 @@ def submit_ssh_job(
     else:
         LOGGER.info('Remote execution completed with exit code: %d', exit_code)
         yield f'__EXIT_CODE__:{exit_code}'
-
-    pass  # pooled client: closing it would defeat SSHConnection's pool
 
 
 def submit_slurm_job(

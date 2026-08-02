@@ -11,6 +11,7 @@ SSHConnection for each request.
 import io
 import logging
 import re
+import threading
 import uuid
 from datetime import datetime
 
@@ -840,6 +841,79 @@ def _load_job_for_action(job_id: str, current_user: dict, conn) -> dict:
 
 _TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 _POTENTIALLY_STALE_STATUSES = {"pending", "running", "snakemake"}
+# States that mean "this job still occupies the cluster". COMPLETING belongs
+# here: a job tearing down is emphatically not finished, and leaving it out
+# made a workflow read as dead whenever a poll happened to land while its
+# whole current batch was in that state -- which for short rules is most of
+# the time. CONFIGURING/COMPLETED_* are the other transient squeue states.
+_ACTIVE_SLURM_STATES = ("RUNNING", "PENDING", "COMPLETING", "CONFIGURING",
+                        "RESIZING", "SUSPENDED", "REQUEUED")
+
+# Guards the rehydrate-and-reattach below: the job page polls every 10s and
+# FastAPI runs sync endpoints in a threadpool, so without this two overlapping
+# polls both see an empty job_store and both start a watcher on the same run.
+_REATTACH_LOCK = threading.Lock()
+
+
+def _try_reattach(job_id: str, row: dict, conn, main_db: str | None,
+                  current_user: dict) -> dict | None:
+    """Take a still-running job back over after a dane-api restart.
+
+    A workflow run is detached (setsid + nohup), so it survives the API that
+    started it. Its in-memory job_store entry does not. Everything needed to
+    resume watching is still on the cluster -- the log under
+    ~/.local/share/bsp/jobs/<job_id>.log and the .rc exit sentinel beside it --
+    and the tail has always replayed from line 1, so re-reading it re-derives
+    every SLURM job, container and progress line the dead session had parsed.
+
+    Returns the rehydrated live job dict, or None if this run cannot or should
+    not be reattached (already finished, or another thread got there first).
+    """
+    # Checked BEFORE claiming the job, because `tail -F` on a log that will
+    # never grow never returns, and would park one of the runner's four
+    # workers for the lifetime of the process.
+    #
+    # Replay is right in exactly two cases: the run is still going (its log is
+    # still being written), or it finished while the API was down (exit
+    # sentinel present) -- in which case the replay recovers the whole run AND
+    # its real exit code, instead of leaving a finished job stuck at "running"
+    # forever. A run with neither was interrupted; the squeue path below
+    # reports that instead. See ssh_slurm.is_replayable.
+    try:
+        probe = ssh_slurm.probe_run(job_id, connection=conn)
+    except Exception as exc:
+        LOGGER.warning("Could not probe job %s for reattach: %s", job_id, exc)
+        return None
+    if not ssh_slurm.is_replayable(probe):
+        LOGGER.info("Job %s is not replayable (%s); not reattaching", job_id, probe)
+        return None
+
+    with _REATTACH_LOCK:
+        if job_store.exists(job_id):
+            return job_store.get(job_id)          # another poll won the race
+
+        job_store.create(
+            job_id, row.get("genome_path") or "", user_id=current_user["user_id"],
+            workflow=row.get("workflow"), output_dir=row.get("work_dir"),
+            selected_tools=row.get("selected_tools"),
+            relaunched_from=row.get("relaunched_from"),
+        )
+        # create() would re-INSERT a history row that already exists, so
+        # persistence is attached afterwards instead: subsequent status/phase
+        # changes still reach the user's history, no duplicate row is written.
+        job_store.attach_persistence(job_id, main_db, conn)
+        # Carry the row's own status/phase over. create() starts every job at
+        # "pending", and this one is not pending -- it has been running since
+        # before the restart. Without this the first poll after a restart
+        # would report a live job as pending, and the front-end would drop the
+        # Emergency Stop button for it.
+        job_store.update(job_id, work_dir=row.get("work_dir"),
+                         status=row.get("status") or "running",
+                         phase=row.get("phase") or "Reattaching to running job")
+
+    LOGGER.info("Reattaching to job %s after an API restart", job_id)
+    job_runner.submit_job(job_id, command="", connection=conn, reattach=True)
+    return job_store.get(job_id)
 
 
 @router.get("/job_status/{job_id}")
@@ -872,6 +946,17 @@ def get_job_status(job_id: str, current_user: dict = Depends(get_current_user)):
     if row is None:
         raise HTTPException(status_code=404, detail="Job not found")
 
+    # A non-terminal row means this run was still going when dane-api lost
+    # track of it. Take it back over rather than settling for a squeue
+    # snapshot: replaying its log restores the logs, SLURM jobs, containers
+    # and progress the dead session had parsed, and from here on it updates
+    # live again. The squeue path below stays as the fallback for runs with
+    # no replayable log.
+    if row["status"] not in _TERMINAL_STATUSES:
+        live = _try_reattach(job_id, row, conn, main_db, current_user)
+        if live is not None:
+            return {**live, "cluster_host": current_user["cluster_host"]}
+
     result = {**_job_from_history_row(row), "cluster_host": current_user["cluster_host"]}
 
     if row["status"] not in _TERMINAL_STATUSES and row.get("work_dir"):
@@ -882,7 +967,7 @@ def get_job_status(job_id: str, current_user: dict = Depends(get_current_user)):
         except Exception as exc:
             LOGGER.warning("SLURM reconciliation check failed for job %s: %s", job_id, exc)
             matches = []
-        active_matches = [m for m in matches if m["state"] in ("RUNNING", "PENDING")]
+        active_matches = [m for m in matches if m["state"] in _ACTIVE_SLURM_STATES]
         still_active = bool(active_matches)
         result["still_active"] = still_active
         if still_active:

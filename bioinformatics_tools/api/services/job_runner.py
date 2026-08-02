@@ -41,6 +41,23 @@ executor = ThreadPoolExecutor(max_workers=4)
 SLURM_SUBMIT_RE = re.compile(r'SLURM jobid (\d+) \(log: (.*?)\)\.?$')
 RULE_NAME_FROM_LOG_PATH_RE = re.compile(r'/slurm_logs/(?:rule_(\w+)|group_([^_]+)_\w+)/')
 SLURM_SUBMIT_FALLBACK_RE = re.compile(r'SLURM jobid (\d+)')
+# The organism is already IN the submission line we just parsed. Snakemake
+# names each job's log
+#   .../slurm_logs/rule_run_scoring/<genome>/<slurm_id>.log
+# so the directory between the rule and the log file is the genome wildcard.
+#
+# This is the cheapest source there is -- no SSH, no waiting for a remote file
+# to exist -- and it was being ignored in favour of two that are neither.
+# WILDCARDS_GENOME_RE below needs a "wildcards:" line that a real run's log
+# does not actually contain (checked against a 27,500-line run: 612 SLURM
+# submissions, zero "wildcards:" lines -- Snakemake's --verbose job block does
+# not survive into this log), and get_job_genome greps the job's own remote log,
+# which races that file being cleaned up when the job finishes quickly.
+#
+# The trailing [^/]+ is what keeps batch rules honest: quast_batch and friends
+# have no genome wildcard, so their path is .../rule_x/<slurm_id>.log with
+# nothing in between, no match, and an empty genome -- which is correct.
+GENOME_FROM_LOG_PATH_RE = re.compile(r'/slurm_logs/[^/]+/([^/]+)/[^/]+$')
 STEPS_PROGRESS_RE = re.compile(r'(\d+) of (\d+) steps \((\d+)%\) done')
 CACHE_HIT_RE = re.compile(r'Cache HIT for (\w+) \(genome=([^)]+)\)')
 # Genome attribution: build_executable() now passes --verbose, so Snakemake
@@ -88,12 +105,26 @@ def _slurm_status_checker(job_id: str, connection: SSHConnection):
         # batch rules with no genome wildcard.
         for sj in slurm_jobs:
             if not sj.get("genome") and sj.get("log_path"):
+                # Read it out of the path first: free, instant, and it cannot
+                # race the remote log's cleanup the way the grep below can.
+                path_match = GENOME_FROM_LOG_PATH_RE.search(sj["log_path"])
+                if path_match:
+                    sj["genome"] = path_match.group(1)
+                    continue
                 try:
                     genome = ssh_slurm.get_job_genome(sj["log_path"], connection=connection)
                     if genome:
                         sj["genome"] = genome
                 except Exception as e:
                     LOGGER.warning("Genome backfill failed for job %s: %s", sj["job_id"], e)
+
+        # Make this cycle's work durable. The rows above are mutated in place,
+        # so without this a job could be persisted as SUBMITTED and stay that
+        # way in history even though the checker had watched it reach
+        # COMPLETED. Throttled inside checkpoint(); already holding an SSH
+        # connection here, so it is the cheapest place to do it.
+        job_store.checkpoint(job_id)
+
         # Wait 15 seconds between checks
         for _ in range(15):
             if job_store.get_status(job_id) != "running":
@@ -101,9 +132,19 @@ def _slurm_status_checker(job_id: str, connection: SSHConnection):
             time.sleep(1)
 
 
-def run_ssh_task(job_id: str, command: str, connection: SSHConnection):
-    """Generic SSH task runner with log parsing, SLURM tracking, and progress parsing."""
-    job_store.update(job_id, status="running", phase="Submitting via SSH", logs="")
+def run_ssh_task(job_id: str, command: str, connection: SSHConnection,
+                 reattach: bool = False):
+    """Generic SSH task runner with log parsing, SLURM tracking, and progress parsing.
+
+    reattach=True picks up a run that is already going -- one started by an
+    earlier dane-api that has since been restarted. Nothing is launched; the
+    existing log is replayed from line 1, so every SLURM job, container and
+    progress line the dead session saw is re-derived and the job page fills
+    back in. logs is reset first precisely because the replay is complete: not
+    resetting would double every line already recorded.
+    """
+    job_store.update(job_id, status="running", logs="",
+                     phase="Reattaching to running job" if reattach else "Submitting via SSH")
 
     # Start SLURM status checker daemon thread (passes the same connection through)
     checker = threading.Thread(
@@ -120,8 +161,16 @@ def run_ssh_task(job_id: str, command: str, connection: SSHConnection):
         # job_id names the detached run's log/sentinel files, so a reconnect
         # can find and replay them.
         detached = False
+        launched = False
         for line in ssh_slurm.submit_ssh_job(cmd=command, connection=connection,
-                                             job_id=job_id):
+                                             job_id=job_id, reattach=reattach):
+            # The workflow is now running on the cluster. Everything after this
+            # point only affects how well we can watch it -- see the except
+            # clause below, which needs to know that.
+            if line == "__LAUNCHED__":
+                launched = True
+                continue
+
             # We stopped watching, but the run did NOT stop. Leave the job in
             # its current state -- marking it complete or failed here would be a
             # lie, and would hide a run that is still producing results.
@@ -191,7 +240,12 @@ def run_ssh_task(job_id: str, command: str, connection: SSHConnection):
                 slurm_id, log_path = match.groups()
                 rule_match = RULE_NAME_FROM_LOG_PATH_RE.search(log_path)
                 ungrouped_rule_name, group_name = rule_match.groups() if rule_match else (None, None)
-                job_store.add_slurm_job(job_id, slurm_id, ungrouped_rule_name or group_name or "unknown", genome=last_genome, log_path=log_path)
+                # The path is the primary source now -- see
+                # GENOME_FROM_LOG_PATH_RE. last_genome stays as a fallback for
+                # any log that does carry the "wildcards:" line.
+                path_genome_match = GENOME_FROM_LOG_PATH_RE.search(log_path)
+                genome = (path_genome_match.group(1) if path_genome_match else "") or last_genome
+                job_store.add_slurm_job(job_id, slurm_id, ungrouped_rule_name or group_name or "unknown", genome=genome, log_path=log_path)
             elif SLURM_SUBMIT_FALLBACK_RE.search(line):
                 fallback = SLURM_SUBMIT_FALLBACK_RE.search(line)
                 slurm_id = fallback.group(1)
@@ -231,13 +285,39 @@ def run_ssh_task(job_id: str, command: str, connection: SSHConnection):
         else:
             job_store.finalize(job_id, status="completed", phase="Done")
     except Exception as e:
-        job_store.append_log(job_id, f"\nError: {str(e)}")
-        job_store.finalize(job_id, status="failed", phase="Error")
+        # Once the run is launched it is detached: it belongs to the cluster,
+        # not to this SSH session. So an exception from here on is a failure to
+        # WATCH, never a failure of the analysis -- the analysis reports its own
+        # failure through __EXIT_CODE__. Marking the job failed here was
+        # actively destructive: a pooled SSH client closed underneath the
+        # stream ("'NoneType' object has no attribute 'open_session'") ended a
+        # run's job page as failed, phase "Error", with a one-line log and an
+        # empty SLURM jobs table, minutes into a run that went on to submit
+        # hundreds of SLURM jobs and finish normally. Treated like __DETACHED__
+        # now: status untouched, and the checker thread keeps updating whatever
+        # SLURM jobs were already recorded.
+        if launched:
+            LOGGER.warning("Lost the log stream for job %s (%s); it continues on the cluster", job_id, e)
+            job_store.append_log(
+                job_id,
+                f"\n\n=== Lost the connection carrying this log ({e}). "
+                "The run itself is unaffected and continues on the cluster; "
+                "reopen this job to reattach. ===")
+            job_store.update(job_id, phase="Running (detached)")
+            # force: this is the moment provenance is most likely to be lost --
+            # nothing else will write it if the API goes down before the
+            # checker's next cycle, and waiting out the throttle here buys
+            # nothing.
+            job_store.checkpoint(job_id, force=True)
+        else:
+            job_store.append_log(job_id, f"\nError: {str(e)}")
+            job_store.finalize(job_id, status="failed", phase="Error")
 
 
-def submit_job(job_id: str, command: str, connection: SSHConnection):
+def submit_job(job_id: str, command: str, connection: SSHConnection,
+               reattach: bool = False):
     """Submit a job to the thread pool executor."""
-    executor.submit(run_ssh_task, job_id, command, connection)
+    executor.submit(run_ssh_task, job_id, command, connection, reattach)
 
 
 async def job_status_generator(job_id: str):
