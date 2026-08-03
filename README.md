@@ -17,7 +17,7 @@ Annotates prokaryotic genomes, finds operons, and scores how confident it is abo
 <a href="#run"><b>Run</b></a> &nbsp;|&nbsp;
 <a href="#licensing"><b>Licensing</b></a> &nbsp;|&nbsp;
 <a href="#prefer-a-web-app"><b>Web app</b></a> &nbsp;|&nbsp;
-<a href="#acknowledgements"><b>Acknowledgements</b></a>
+<a href="#ai-usage-in-the-project"><b>AI usage in the project</b></a>
 
 </div>
 
@@ -111,7 +111,7 @@ Both routes drive this backend's `dane-api`, and both use the same licensing acc
 - Run only some tools: add `margie_sb.selected_tools: prodigal,rast,pfam`.
 - Full toolkit (file tools, API, front-end): [README-detailed.md](README-detailed.md).
 
-## Acknowledgements
+## AI usage in the project
 
 Phase 9-12 scripts were designed and implemented by **Sajal Bhattarai**.
 During script development, **Claude Sonnet 4.6** was used in interactive mode to improve robustness and debug issues.
