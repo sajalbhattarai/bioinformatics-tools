@@ -2022,7 +2022,11 @@ rule run_gtdbtk_batch:
     resources:
         mem_mb=rc('gtdbtk.mem_mb', 460000, config=config),
         runtime=rc('gtdbtk.runtime', 240, config=config),
-        slurm_partition=rc('gtdbtk.partition', 'highmem', config=config)
+        # Prefer namespaced key (margie_sb.gtdbtk.partition) so Profile/GUI is
+        # the source of truth; keep legacy top-level fallback for old configs.
+        slurm_partition=rc('margie_sb.gtdbtk.partition',
+                           rc('gtdbtk.partition', 'highmem', config=config),
+                           config=config)
     params:
         stage_dir=GTDBTK_BATCH_STAGE_DIR,
         output_dir=rc('gtdbtk.output_dir', GTDBTK_BATCH_OUTPUT_DIR, config=config),

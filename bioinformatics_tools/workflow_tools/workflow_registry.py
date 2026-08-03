@@ -166,7 +166,7 @@ def _margie_sb_tool_params() -> list[dict]:
             },
             {
                 'param': f'margie_sb.{key}.partition',
-                'default': 'cpu',
+                'default': 'highmem' if key == 'gtdbtk' else 'cpu',
                 'description': f'Phase {phase}: SLURM partition for {label}',
                 'type': 'string'
             },
