@@ -16,20 +16,33 @@ Annotates prokaryotic genomes, finds operons, and scores how confident it is abo
 <a href="#configure"><b>Configure</b></a> &nbsp;|&nbsp;
 <a href="#run"><b>Run</b></a> &nbsp;|&nbsp;
 <a href="#licensing"><b>Licensing</b></a> &nbsp;|&nbsp;
-<a href="#prefer-a-web-app"><b>Web app</b></a>
+<a href="#prefer-a-web-app"><b>Web app</b></a> &nbsp;|&nbsp;
+<a href="#acknowledgements"><b>Acknowledgements</b></a>
 
 </div>
 
-> [!TIP]
-> Prefer clicking to typing? MARGIE also has a **web interface**. Use the hosted app at **[bsp.anvilcloud.rcac.purdue.edu](https://bsp.anvilcloud.rcac.purdue.edu/)** — nothing to install — or run your own from **[biolab-fe](https://github.com/sajalbhattarai/biolab-fe)**. This page covers the **command-line** backend.
+<details>
+<summary><b>Tip: Prefer the web app?</b></summary>
+
+Prefer clicking to typing? MARGIE also has a **web interface**. Use the hosted app at **[bsp.anvilcloud.rcac.purdue.edu](https://bsp.anvilcloud.rcac.purdue.edu/)** with nothing to install, or run your own from **[biolab-fe](https://github.com/sajalbhattarai/biolab-fe)**. This page covers the **command-line** backend.
+
+</details>
+
+## Repo scope
+
+This repository is the **backend** repository for MARGIE.
+It contains backend code and backend operations only (pipeline, CLI, API, licensing gate, and backend runtime/config behavior).
+It does **not** contain frontend GUI code.
+
+For frontend setup and browser usage, use **[biolab-fe](https://github.com/sajalbhattarai/biolab-fe)**.
 
 ## Install
 
 ```bash
-git clone <github-url> ~/bioinformatics-tools
+git clone path-to-repository ~/bioinformatics-tools
 cd ~/bioinformatics-tools
 uv sync
-source .venv/bin/activate      # now the `dane_wf` command works
+source .venv/bin/activate
 ```
 
 ## Configure
@@ -43,8 +56,11 @@ dane_wf                        # creates ~/.config/bioinformatics-tools/config.y
 Open that file and set where results are saved:
 
 ```yaml
-main_database: <path-to-your-results>.db
+main_database: path-to-sqlite-database.db
 ```
+
+`main_database` is the SQLite database file used to store run metadata and results.
+It is different from the `output_dir` folder used for generated run files, and different from fingerprint-related databases.
 
 Databases default to `/depot/lindems/...`. To use your own, set those paths in the config — empty folders fill up as you run.
 
@@ -52,15 +68,15 @@ Databases default to `/depot/lindems/...`. To use your own, set those paths in t
 
 ```bash
 dane_wf margie sb \
-    input: <folder of FASTA files, or one FASTA> \
-    output_dir: <folder for results> \
-    run_full_operon_map: true
+  input: path-to-input-folder-or-fasta \
+  output_dir: path-to-output-folder \
+  run_full_operon_map: true
 ```
 
 Run it in the background so it survives logout:
 
 ```bash
-nohup dane_wf margie sb input: <...> output_dir: <...> run_full_operon_map: true > margie.log 2>&1 &
+nohup dane_wf margie sb input: path-to-input-folder-or-fasta output_dir: path-to-output-folder run_full_operon_map: true > margie.log 2>&1 &
 ```
 
 Watch it: `tail -f margie.log`  —  Stop it: `pkill -f dane_wf`
@@ -81,10 +97,10 @@ Your acceptance is saved to `~/.config/bioinformatics-tools/` and archived (with
 
 ## Prefer a web app?
 
-The command line is one way to run MARGIE; the same pipeline is also driven by a browser front-end, **[biolab-fe](https://github.com/sajalbhattarai/biolab-fe)**.
+This backend can be used from the command line or from the separate frontend repository, **[biolab-fe](https://github.com/sajalbhattarai/biolab-fe)**.
 
 - **Just use it** — the hosted app at **[bsp.anvilcloud.rcac.purdue.edu](https://bsp.anvilcloud.rcac.purdue.edu/)**. Nothing to install; sign in and submit.
-- **Run your own** — clone `biolab-fe` and run its one-time `setup.sh`. It starts this backend on your HPC over SSH, opens a tunnel, and launches the app in your browser.
+- **Run your own** — clone `biolab-fe` and run its one-time `setup.sh`. That frontend launcher starts this backend on your HPC over SSH, opens a tunnel, and launches the app in your browser.
 
 Both routes drive this backend's `dane-api`, and both use the same licensing acceptance described above.
 
@@ -94,6 +110,16 @@ Both routes drive this backend's `dane-api`, and both use the same licensing acc
 - Resume a crashed run: add `margie_sb.resume: true`.
 - Run only some tools: add `margie_sb.selected_tools: prodigal,rast,pfam`.
 - Full toolkit (file tools, API, front-end): [README-detailed.md](README-detailed.md).
+
+## Acknowledgements
+
+Phase 9-12 scripts were designed and implemented by **Sajal Bhattarai**.
+During script development, **Claude Sonnet 4.6** was used in interactive mode to improve robustness and debug issues.
+The core ideas, architecture, and intended behavior were defined by Sajal Bhattarai.
+These scripts were manually validated for intended behavior.
+
+Visualization and LLM work, including the operon circular diagram page, HTML creation, and interactive chat mode, were refined with interactive-mode assistance from **Claude Opus 4.8**.
+These components were also manually checked and validated for intended purpose.
 
 ## Citation
 
