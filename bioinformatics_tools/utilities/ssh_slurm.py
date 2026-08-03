@@ -53,6 +53,11 @@ def run_file_stem(job_id: str | None) -> str:
 # cycle roughly every 30s for as long as it has jobs in flight.
 RUN_STALE_AFTER = 900.0
 
+# How long to wait for the launching shell to echo the detached run's pid.
+# Generous, because it is only a guard against hanging: the pid arrives in
+# milliseconds when it arrives at all, and the run is already going either way.
+_LAUNCH_ACK_TIMEOUT = 30.0
+
 
 def probe_run(job_id: str, connection: SSHConnection) -> dict:
     """One SSH round-trip answering: is this detached run's log worth tailing?
@@ -179,9 +184,35 @@ def submit_ssh_job(
                 f'>/dev/null 2>&1 & echo $! | tee {pidf}'
             )
             _in, _out, _err = ssh.exec_command(launch)
-            pid = (_out.read().decode() or '').strip().splitlines()
-            pid = pid[-1] if pid else ''
-            _out.channel.recv_exit_status()
+            # ONE line, with a deadline -- never .read(), and never
+            # recv_exit_status().
+            #
+            # Both of those wait for the channel to reach EOF, and EOF here does
+            # not mean "the pid has been printed". `A && B && nohup setsid ... &`
+            # backgrounds the whole and-list, so a shell sits there waiting for
+            # the workflow with this channel still open on its fd 1 -- confirmed
+            # on a live run: the launcher was 13 minutes old, /proc/<pid>/fd/1
+            # still pointing at the channel pipe. EOF therefore arrives when the
+            # RUN ends, hours later.
+            #
+            # So the generator blocked here forever: it never yielded, never
+            # started the tail, and never parsed a line. The job page showed the
+            # phase frozen at "Submitting via SSH", an empty Slurm Jobs table and
+            # an empty log for the entire run, while the run itself went on
+            # perfectly well. Every run since detached launches were introduced
+            # was affected; the last run with provenance predates them.
+            #
+            # A missed pid is survivable -- the launch shell tees it to $pidf
+            # anyway -- so a timeout here logs and carries on rather than
+            # failing a run that has already started.
+            pid = ''
+            _out.channel.settimeout(_LAUNCH_ACK_TIMEOUT)
+            try:
+                pid = (_out.readline() or '').strip()
+            except Exception as exc:
+                LOGGER.warning('No pid from the launch of %s within %ss (%s); '
+                               'the run is started regardless',
+                               safe, _LAUNCH_ACK_TIMEOUT, exc)
             LOGGER.info('Detached run started (pid %s), log %s', pid, log)
 
         # From here on the workflow IS running on the cluster. Everything after

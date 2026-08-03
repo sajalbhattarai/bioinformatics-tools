@@ -117,3 +117,64 @@ class TestProbeRun:
         flight, so the cutoff must sit far above that and far below the age of
         an abandoned run."""
         assert 300 < ssh_slurm.RUN_STALE_AFTER < 3600
+
+
+class TestLaunchDoesNotWaitForTheRun:
+    """The launch must not read the exec channel to EOF.
+
+    `A && B && nohup setsid ... &` backgrounds the whole and-list, so a shell
+    sits waiting for the workflow with the exec channel still open on its
+    stdout. EOF therefore means "the run has finished" -- hours away. Reading
+    to EOF hung the generator before its first yield: no tail, no parsed
+    lines, and a job page stuck on "Submitting via SSH" with an empty Slurm
+    Jobs table for the whole run.
+    """
+
+    @staticmethod
+    def _connection_whose_stdout_never_ends(pid_line=b"1330075\n"):
+        """stdout yields the pid line, then blocks forever -- exactly what the
+        real channel does while the launcher is still alive."""
+        import threading
+
+        never = threading.Event()          # never set: stands in for "no EOF"
+
+        mock_stdout = MagicMock()
+        mock_stdout.readline.return_value = pid_line.decode()
+        mock_stdout.read.side_effect = lambda *a, **k: (never.wait(), b"")[1]
+
+        mock_ssh = MagicMock()
+        mock_ssh.exec_command.return_value = (None, mock_stdout, MagicMock())
+        mock_connection = MagicMock()
+        mock_connection.connect.return_value = mock_ssh
+        return mock_connection, mock_stdout
+
+    def test_launch_yields_without_waiting_for_eof(self):
+        conn, stdout = self._connection_whose_stdout_never_ends()
+        gen = ssh_slurm.submit_ssh_job(cmd="dane_wf margie sb", connection=conn,
+                                       job_id="job-1")
+
+        # Before the fix this call never returned.
+        assert next(gen) == "__LAUNCHED__"
+        stdout.read.assert_not_called()
+        gen.close()
+
+    def test_launch_survives_a_pid_that_never_arrives(self):
+        """A silent launcher must not fail a run that has already started."""
+        import socket
+
+        conn, stdout = self._connection_whose_stdout_never_ends()
+        stdout.readline.side_effect = socket.timeout("timed out")
+
+        gen = ssh_slurm.submit_ssh_job(cmd="dane_wf margie sb", connection=conn,
+                                       job_id="job-2")
+        assert next(gen) == "__LAUNCHED__"
+        gen.close()
+
+    def test_launch_never_blocks_on_the_exit_status(self):
+        """recv_exit_status() waits for the same EOF and is just as fatal."""
+        conn, stdout = self._connection_whose_stdout_never_ends()
+        gen = ssh_slurm.submit_ssh_job(cmd="dane_wf margie sb", connection=conn,
+                                       job_id="job-3")
+        next(gen)
+        stdout.channel.recv_exit_status.assert_not_called()
+        gen.close()
