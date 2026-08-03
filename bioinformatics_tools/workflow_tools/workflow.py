@@ -1014,9 +1014,42 @@ class WorkflowBase(ProgramBase):
                 LOGGER.warning('Output reorganization raised %s; continuing.', reorg_exc)
 
         result = self._build_result(key_name, last_proc) if last_proc else {'workflow': key_name, 'rules_summary': {}}
+        stage1_rc = stage1.poll()
+        result['stage1_returncode'] = stage1_rc
+        result['genomes_total'] = total
+        result['genomes_processed'] = processed
+        result['genomes_skipped'] = sorted(skipped)
+
+        summary = (f'{processed}/{total} genome(s) processed'
+                   f'{f", {len(skipped)} skipped" if skipped else ""}')
+
+        # Nothing came out of a run that had genomes to process. Stage 1 owns
+        # RASTtk/GTDB-Tk, so when it dies every genome is skipped and there is
+        # no result at all -- reporting that as a 200 exits 0, and the GUI reads
+        # the exit code (not this status) to decide completed vs failed, so a
+        # totally empty run used to show up as a success.
+        if total > 0 and processed == 0:
+            self.failed(
+                msg=f'Workflow "{key_name}" produced nothing ({summary})'
+                    f'{f" -- Stage 1 (rasttk_all) exited rc={stage1_rc}" if stage1_rc else ""}',
+                dex=result,
+            )
+            return stage1_rc or 1
+
+        # Some genomes made it. Their outputs are real and already in the DB, so
+        # failing the whole run would be wrong -- but a run that lost genomes or
+        # whose Stage 1 failed is not a clean success either. Inconclusive keeps
+        # the exit code at 0 while dropping the "Success" banner.
+        if skipped or stage1_rc:
+            self.finished(
+                msg=f'Workflow "{key_name}" completed with gaps ({summary})'
+                    f'{f" -- Stage 1 (rasttk_all) exited rc={stage1_rc}" if stage1_rc else ""}',
+                dex=result,
+            )
+            return
+
         self.succeeded(
-            msg=f'Workflow "{key_name}" completed ({processed}/{total} genome(s) processed'
-                f'{f", {len(skipped)} skipped" if skipped else ""})',
+            msg=f'Workflow "{key_name}" completed ({summary})',
             dex=result,
         )
 
