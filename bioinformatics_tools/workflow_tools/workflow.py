@@ -40,6 +40,20 @@ INTERPRO_DB_BASENAMES = [
 ]
 WORKFLOW_DIR = Path(__file__).parent
 
+# --cores for SLURM-mode runs. NOT 'all', because Snakemake clamps every rule's
+# threads: to --cores when it builds the DAG -- including rules it will hand to
+# SLURM, which run on a different node than the driver and so have nothing to do
+# with the driver's own core count. The driver now runs inside a small batch
+# allocation (see ssh_slurm.DRIVER_CPUS), where 'all' resolves to that
+# allocation's handful of cores; gtdbtk's threads: 64 silently became 4, and
+# sbatch rejected the child job because Negishi's highmem partition requires at
+# least 64 cores. Any ceiling at or above the largest rule's threads: restores
+# the declared value; 256 is the biggest node on this cluster, so no rule can
+# usefully ask for more. This does not oversubscribe the driver: in cluster mode
+# it is --local-cores, defaulting to the host's real core count, that bounds the
+# local rules actually running here, and --jobs that bounds the submitted ones.
+SLURM_MODE_CORES = 256
+
 
 def _subprocess_env() -> dict:
     '''Env for every snakemake subprocess we launch. Sets BASH_ENV to
@@ -142,10 +156,14 @@ class WorkflowBase(ProgramBase):
         if max_jobs_override is not None:
             max_jobs = max_jobs_override
 
+        # 'all' only in dev mode, where every rule really does run on this
+        # machine and should be sized to it. See SLURM_MODE_CORES.
+        cores = 'all' if mode == 'dev' else SLURM_MODE_CORES
+
         core_command = [
             _snakemake_executable(),
             '-s', str(smk_path),
-            '--cores=all',
+            f'--cores={cores}',
             '--keep-going',
             '--use-apptainer',
             '--sdm=apptainer',
