@@ -2096,29 +2096,32 @@ rule run_gtdbtk_batch:
 
 
 rule split_gtdbtk_batch_per_genome:
-    """Split batched GTDB-Tk outputs into per-genome files.
+    """Split batched GTDB-Tk outputs into ONE genome's per-genome files.
 
     Keeps downstream phase3+ contracts unchanged: each genome still gets its
     own gtdbtk_results.tsv and translation_table.tsv under output_dir/<genome>/.
+
+    Scoped to a single {genome} rather than expand()-ing over every genome on
+    purpose. As one all-or-nothing job producing all N pairs, a single missing
+    genome forced the whole rule to run, and because the rule then "produced"
+    the already-cached genomes' files too, EVERY genome's run_rasttk was placed
+    behind the full GTDB-Tk batch -- including genomes whose GTDB-Tk outputs
+    output_cache had already restored before the run began. Per-genome, a
+    restored genome's pair is simply up to date, its split job is skipped, and
+    its RASTtk starts immediately while GTDB-Tk is still classifying the rest.
     """
     input:
         results=GTDBTK_BATCH_RESULTS,
         translation_table=GTDBTK_BATCH_TRANSLATION_TABLE,
         done=GTDBTK_BATCH_DONE
     output:
-        results=expand(GTDBTK_RESULTS, genome=list(GENOMES.keys())),
-        translation_tables=expand(GTDBTK_TRANSLATION_TABLE, genome=list(GENOMES.keys()))
+        results=GTDBTK_RESULTS,
+        translation_table=GTDBTK_TRANSLATION_TABLE
     run:
         import csv
         from pathlib import Path
 
-        def _genome_from_path(path_str: str) -> str:
-            p = Path(path_str)
-            # .../<genome>/gtdbtk/<file>
-            return p.parts[-3]
-
-        result_targets = { _genome_from_path(p): Path(p) for p in output.results }
-        translation_targets = { _genome_from_path(p): Path(p) for p in output.translation_tables }
+        genome = wildcards.genome
 
         with open(input.results, newline='') as fh:
             reader = csv.DictReader(fh, delimiter='\t')
@@ -2131,15 +2134,15 @@ rule split_gtdbtk_batch_per_genome:
                 if g:
                     rows_by_genome[g] = row
 
-        for genome, target in result_targets.items():
-            row = rows_by_genome.get(genome)
-            if row is None:
-                raise ValueError(f"Missing GTDB-Tk row for genome '{genome}' in {input.results}")
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with target.open('w', newline='') as out_fh:
-                writer = csv.DictWriter(out_fh, fieldnames=list(row.keys()), delimiter='\t')
-                writer.writeheader()
-                writer.writerow(row)
+        row = rows_by_genome.get(genome)
+        if row is None:
+            raise ValueError(f"Missing GTDB-Tk row for genome '{genome}' in {input.results}")
+        target = Path(output.results)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open('w', newline='') as out_fh:
+            writer = csv.DictWriter(out_fh, fieldnames=list(row.keys()), delimiter='\t')
+            writer.writeheader()
+            writer.writerow(row)
 
         rows_by_genome = {}
         with open(input.translation_table, newline='') as fh:
@@ -2171,21 +2174,21 @@ rule split_gtdbtk_batch_per_genome:
                         'translation_table': parts[1],
                     }
 
-        for genome, target in translation_targets.items():
-            row = rows_by_genome.get(genome)
-            if row is None:
-                # run_gtdbtk_batch now always forces full species placement
-                # (GTDBTK_PLACE_SPECIES=1), so every genome runs identify and
-                # should have a row here -- a gap means something genuinely
-                # went wrong (e.g. a name mismatch), not the expected
-                # ANI-only-skips-identify case this used to silently paper
-                # over with a hardcoded default.
-                raise ValueError(f"Missing GTDB-Tk translation table row for genome '{genome}' in {input.translation_table}")
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with target.open('w', newline='') as out_fh:
-                writer = csv.DictWriter(out_fh, fieldnames=list(row.keys()), delimiter='\t')
-                writer.writeheader()
-                writer.writerow(row)
+        row = rows_by_genome.get(genome)
+        if row is None:
+            # run_gtdbtk_batch now always forces full species placement
+            # (GTDBTK_PLACE_SPECIES=1), so every genome runs identify and
+            # should have a row here -- a gap means something genuinely
+            # went wrong (e.g. a name mismatch), not the expected
+            # ANI-only-skips-identify case this used to silently paper
+            # over with a hardcoded default.
+            raise ValueError(f"Missing GTDB-Tk translation table row for genome '{genome}' in {input.translation_table}")
+        target = Path(output.translation_table)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open('w', newline='') as out_fh:
+            writer = csv.DictWriter(out_fh, fieldnames=list(row.keys()), delimiter='\t')
+            writer.writeheader()
+            writer.writerow(row)
 
 
 rule load_gtdbtk_to_db:
