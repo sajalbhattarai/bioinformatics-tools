@@ -133,7 +133,9 @@ def _slurm_status_checker(job_id: str, connection: SSHConnection):
 
 
 def run_ssh_task(job_id: str, command: str, connection: SSHConnection,
-                 reattach: bool = False, in_slurm: bool = True):
+                 reattach: bool = False, in_slurm: bool = True,
+                 driver_account: str | None = None,
+                 driver_partition: str | None = None):
     """Generic SSH task runner with log parsing, SLURM tracking, and progress parsing.
 
     reattach=True picks up a run that is already going -- one started by an
@@ -164,7 +166,9 @@ def run_ssh_task(job_id: str, command: str, connection: SSHConnection,
         launched = False
         for line in ssh_slurm.submit_ssh_job(cmd=command, connection=connection,
                                              job_id=job_id, reattach=reattach,
-                                             in_slurm=in_slurm):
+                                             in_slurm=in_slurm,
+                                             driver_account=driver_account,
+                                             driver_partition=driver_partition):
             # The workflow is now running on the cluster. Everything after this
             # point only affects how well we can watch it -- see the except
             # clause below, which needs to know that.
@@ -316,14 +320,25 @@ def run_ssh_task(job_id: str, command: str, connection: SSHConnection,
 
 
 def submit_job(job_id: str, command: str, connection: SSHConnection,
-               reattach: bool = False, in_slurm: bool = True):
+               reattach: bool = False, in_slurm: bool = True,
+               driver_account: str | None = None,
+               driver_partition: str | None = None):
     """Submit a job to the thread pool executor.
 
     in_slurm=False keeps the run on the login node, for the short self-test
     workflows: they exist to answer "is the plumbing working" in seconds, and
     a queue wait would defeat that. Real annotations always want True.
     """
-    executor.submit(run_ssh_task, job_id, command, connection, reattach, in_slurm)
+    executor.submit(
+        run_ssh_task,
+        job_id,
+        command,
+        connection,
+        reattach,
+        in_slurm,
+        driver_account,
+        driver_partition,
+    )
 
 
 async def job_status_generator(job_id: str):

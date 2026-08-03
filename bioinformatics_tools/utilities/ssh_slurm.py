@@ -259,6 +259,8 @@ def submit_ssh_job(
     poll: float = 1.0,
     reattach: bool = False,
     in_slurm: bool = True,
+    driver_account: str | None = None,
+    driver_partition: str | None = None,
 ):
     '''Run a workflow command on the login node, DETACHED, and stream its log.
 
@@ -304,7 +306,11 @@ def submit_ssh_job(
         elif in_slurm:
             # The driver goes to a compute node under the scheduler, not onto
             # the login node -- see the DRIVER_* constants for why.
-            launch = build_driver_launch(cmd, base, safe, log, rcf, jobidf, driversh)
+            launch = build_driver_launch(
+                cmd, base, safe, log, rcf, jobidf, driversh,
+                partition=(driver_partition or DRIVER_PARTITION),
+                account=(driver_account if driver_account is not None else DRIVER_ACCOUNT),
+            )
             _in, _out, _err = ssh.exec_command(launch)
             driver_job = ''
             _out.channel.settimeout(_LAUNCH_ACK_TIMEOUT)

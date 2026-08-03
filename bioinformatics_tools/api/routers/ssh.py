@@ -577,6 +577,8 @@ def _check_genome_path_exists(genome_path: str, workflow: str, conn) -> None:
 def _launch_job(
     *, genome_path: str, workflow: str, base_output_dir: str,
     selected_tools: list[str] | None, current_user: dict, conn, main_db: str | None,
+    slurm_account: str | None = None,
+    slurm_partition: str | None = None,
     relaunched_from: str | None = None,
     copy_from_work_dir: str | None = None,
     run_full_operon_map: bool = False,
@@ -652,7 +654,13 @@ def _launch_job(
         f"{license_env}~/bioinformatics-tools/.venv/bin/dane_wf {dispatch_tokens}"
         f" input: {genome_path} output_dir: {output_dir}{selected_tools_arg}{full_operon_map_arg}{resume_arg}"
     )
-    job_runner.submit_job(job_id, command, connection=conn)
+    job_runner.submit_job(
+        job_id,
+        command,
+        connection=conn,
+        driver_account=slurm_account,
+        driver_partition=slurm_partition,
+    )
 
     return {"success": True, "job_id": job_id, "output_dir": output_dir, "message": "Job submitted successfully"}
 
@@ -703,6 +711,9 @@ def run_workflow(genome_data: GenomeSend, current_user: dict = Depends(get_curre
     account = user_config.get('compute', {}).get('cluster_default', {}).get('account')
     if not account or str(account).strip() == '':
         missing_fields.append('compute.cluster_default.account (SLURM account)')
+    slurm_account = str(account).strip() if account else None
+    partition = user_config.get('compute', {}).get('cluster_default', {}).get('partition')
+    slurm_partition = str(partition).strip() if partition else None
 
     if missing_fields:
         raise HTTPException(
@@ -772,6 +783,7 @@ def run_workflow(genome_data: GenomeSend, current_user: dict = Depends(get_curre
         genome_path=genome_path, workflow=genome_data.workflow,
         base_output_dir=base_dir, selected_tools=genome_data.selected_tools,
         current_user=current_user, conn=conn, main_db=main_db,
+        slurm_account=slurm_account, slurm_partition=slurm_partition,
         run_full_operon_map=effective_full_operon_map,
     )
 
@@ -1183,7 +1195,7 @@ def cancel_job(job_id: str, current_user: dict = Depends(get_current_user)):
     }
 
 
-def _main_db_for(current_user: dict, conn) -> str:
+def _main_db_for(current_user: dict, conn) -> tuple[str, dict]:
     """Fetch main_database from the user's config, raising HTTPException(400)
     if the config or that field is missing. Shared pre-flight for resume_job/
     restart_job (run_workflow does the same check inline as part of its
@@ -1203,7 +1215,7 @@ def _main_db_for(current_user: dict, conn) -> str:
             status_code=400,
             detail="main_database is not configured. Please configure it in your Profile settings.",
         )
-    return main_db
+    return main_db, user_config
 
 
 def _base_output_dir_from(path: str) -> str:
@@ -1260,7 +1272,14 @@ def resume_job(job_id: str, current_user: dict = Depends(get_current_user)):
     if not genome_path or not workflow:
         raise HTTPException(status_code=400, detail="Original job is missing genome_path/workflow, cannot resume")
 
-    main_db = _main_db_for(current_user, conn)
+    main_db, user_config = _main_db_for(current_user, conn)
+    slurm_account = str(user_config.get('compute', {}).get('cluster_default', {}).get('account', '')).strip() or None
+    slurm_partition = str(user_config.get('compute', {}).get('cluster_default', {}).get('partition', '')).strip() or None
+    if not slurm_account:
+        raise HTTPException(
+            status_code=400,
+            detail="compute.cluster_default.account is not configured. Please configure it in your Profile settings.",
+        )
     _check_genome_path_exists(genome_path, workflow, conn)
 
     selected_tools_csv = original.get("selected_tools")
@@ -1270,6 +1289,7 @@ def resume_job(job_id: str, current_user: dict = Depends(get_current_user)):
         genome_path=genome_path, workflow=workflow,
         base_output_dir=_base_output_dir_from(work_dir), selected_tools=selected_tools,
         current_user=current_user, conn=conn, main_db=main_db,
+        slurm_account=slurm_account, slurm_partition=slurm_partition,
         relaunched_from=job_id, copy_from_work_dir=work_dir,
     )
 
@@ -1291,7 +1311,14 @@ def restart_job(job_id: str, current_user: dict = Depends(get_current_user)):
     if not genome_path or not workflow:
         raise HTTPException(status_code=400, detail="Original job is missing genome_path/workflow, cannot restart")
 
-    main_db = _main_db_for(current_user, conn)
+    main_db, user_config = _main_db_for(current_user, conn)
+    slurm_account = str(user_config.get('compute', {}).get('cluster_default', {}).get('account', '')).strip() or None
+    slurm_partition = str(user_config.get('compute', {}).get('cluster_default', {}).get('partition', '')).strip() or None
+    if not slurm_account:
+        raise HTTPException(
+            status_code=400,
+            detail="compute.cluster_default.account is not configured. Please configure it in your Profile settings.",
+        )
     _check_genome_path_exists(genome_path, workflow, conn)
 
     selected_tools_csv = original.get("selected_tools")
@@ -1301,6 +1328,7 @@ def restart_job(job_id: str, current_user: dict = Depends(get_current_user)):
         genome_path=genome_path, workflow=workflow,
         base_output_dir=_base_output_dir_from(base_for_dir), selected_tools=selected_tools,
         current_user=current_user, conn=conn, main_db=main_db,
+        slurm_account=slurm_account, slurm_partition=slurm_partition,
         relaunched_from=job_id,
     )
 
