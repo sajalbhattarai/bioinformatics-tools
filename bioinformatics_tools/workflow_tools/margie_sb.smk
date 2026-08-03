@@ -2018,10 +2018,16 @@ rule run_gtdbtk_batch:
         translation_table=GTDBTK_BATCH_TRANSLATION_TABLE,
         done=GTDBTK_BATCH_DONE
     group: "gtdbtk"
-    threads: rc('gtdbtk.threads', 64, config=config)
+    threads: rc('margie_sb.gtdbtk.threads',
+                rc('gtdbtk.threads', 64, config=config),
+                config=config)
     resources:
-        mem_mb=rc('gtdbtk.mem_mb', 460000, config=config),
-        runtime=rc('gtdbtk.runtime', 240, config=config),
+        mem_mb=rc('margie_sb.gtdbtk.mem_mb',
+                  rc('gtdbtk.mem_mb', 460000, config=config),
+                  config=config),
+        runtime=rc('margie_sb.gtdbtk.runtime',
+                   rc('gtdbtk.runtime', 240, config=config),
+                   config=config),
         # Prefer namespaced key (margie_sb.gtdbtk.partition) so Profile/GUI is
         # the source of truth; keep legacy top-level fallback for old configs.
         slurm_partition=rc('margie_sb.gtdbtk.partition',
