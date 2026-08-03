@@ -2028,10 +2028,12 @@ rule run_gtdbtk_batch:
         runtime=rc('margie_sb.gtdbtk.runtime',
                    rc('gtdbtk.runtime', 240, config=config),
                    config=config),
-        # Prefer namespaced key (margie_sb.gtdbtk.partition) so Profile/GUI is
-        # the source of truth; keep legacy top-level fallback for old configs.
+        # Prefer tool-specific key first, then phase2-wide partition (GTDB-Tk is
+        # phase 2), then legacy top-level fallback for older configs.
         slurm_partition=rc('margie_sb.gtdbtk.partition',
-                           rc('gtdbtk.partition', 'highmem', config=config),
+                   rc('margie_sb.phase2.partition',
+                      rc('gtdbtk.partition', 'highmem', config=config),
+                      config=config),
                            config=config)
     params:
         stage_dir=GTDBTK_BATCH_STAGE_DIR,

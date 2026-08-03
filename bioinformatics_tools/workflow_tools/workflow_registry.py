@@ -132,9 +132,41 @@ MARGIE_SB_PHASED_TOOLS = [
 
 
 def _margie_sb_default_threads(tool_key: str) -> int:
+    if tool_key == 'gtdbtk':
+        return 64
     if tool_key in {'kegg', 'eggnog'}:
         return 16
     return 8
+
+
+def _margie_sb_default_mem_mb(tool_key: str) -> int:
+    if tool_key == 'gtdbtk':
+        return 460000
+    if tool_key == 'interpro':
+        return 48000
+    if tool_key == 'eggnog':
+        return 64000
+    if tool_key == 'kegg':
+        return 16000
+    if tool_key == 'dbcan':
+        return 16000
+    if tool_key == 'pgap':
+        return 12000
+    if tool_key == 'tmbed':
+        return 8000
+    return 4000
+
+
+def _margie_sb_default_runtime(tool_key: str) -> int:
+    if tool_key == 'gtdbtk':
+        return 240
+    if tool_key in {'interpro'}:
+        return 300
+    if tool_key in {'kegg', 'eggnog'}:
+        return 90
+    if tool_key in {'dbcan', 'pgap', 'tmbed'}:
+        return 60
+    return 120
 
 
 def margie_sb_sif_files(selected_tool_keys: set[str] | None = None) -> list[tuple]:
@@ -172,13 +204,13 @@ def _margie_sb_tool_params() -> list[dict]:
             },
             {
                 'param': f'margie_sb.{key}.mem_mb',
-                'default': 4000,
+                'default': _margie_sb_default_mem_mb(key),
                 'description': f'Phase {phase}: memory limit (MB) for {label}',
                 'type': 'int'
             },
             {
                 'param': f'margie_sb.{key}.runtime',
-                'default': 120,
+                'default': _margie_sb_default_runtime(key),
                 'description': f'Phase {phase}: runtime limit (minutes) for {label}',
                 'type': 'int'
             },
