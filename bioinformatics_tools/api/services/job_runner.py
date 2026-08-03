@@ -158,6 +158,7 @@ def run_ssh_task(job_id: str, command: str, connection: SSHConnection,
 
     exit_code = 0  # Track command exit code
     last_genome = ""  # Most recently seen "wildcards: genome=..." value
+    saw_snakemake_syntax_error = False
 
     try:
         # job_id names the detached run's log/sentinel files, so a reconnect
@@ -262,6 +263,12 @@ def run_ssh_task(job_id: str, command: str, connection: SSHConnection,
                 done, total, pct = progress_match.groups()
                 job_store.update(job_id, steps_done=int(done), steps_total=int(total), progress=int(pct))
 
+            # The workflow wrapper can still emit a "success" report when
+            # Snakemake itself fails to parse the snakefile. Do not allow such
+            # runs to be finalized as completed.
+            if "SyntaxError in file" in line or "Unexpected keyword" in line and "rule definition" in line:
+                saw_snakemake_syntax_error = True
+
             # Parse the sequential orchestrator's own genome-transition marker
             genome_match = SEQUENTIAL_GENOME_RE.search(line)
             if genome_match:
@@ -287,6 +294,10 @@ def run_ssh_task(job_id: str, command: str, connection: SSHConnection,
             job_store.append_log(job_id, f"\n\n=== Command exited with code {exit_code} ===")
             job_store.finalize(job_id, status="failed", phase="Failed")
             LOGGER.error("Job %s failed with exit code %d", job_id, exit_code)
+        elif saw_snakemake_syntax_error:
+            job_store.append_log(job_id, "\n\n=== Snakemake syntax validation failed ===")
+            job_store.finalize(job_id, status="failed", phase="Failed (Snakemake syntax error)")
+            LOGGER.error("Job %s failed due to Snakemake syntax error despite zero wrapper exit code", job_id)
         else:
             job_store.finalize(job_id, status="completed", phase="Done")
     except Exception as e:

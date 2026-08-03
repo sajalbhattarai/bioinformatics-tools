@@ -2018,9 +2018,7 @@ rule run_gtdbtk_batch:
         translation_table=GTDBTK_BATCH_TRANSLATION_TABLE,
         done=GTDBTK_BATCH_DONE
     group: "gtdbtk"
-    threads: rc('margie_sb.gtdbtk.threads',
-                rc('gtdbtk.threads', 64, config=config),
-                config=config)
+    threads: rc('margie_sb.gtdbtk.threads', rc('gtdbtk.threads', 64, config=config), config=config)
     resources:
         mem_mb=rc('margie_sb.gtdbtk.mem_mb',
                   rc('gtdbtk.mem_mb', 460000, config=config),
