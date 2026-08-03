@@ -10,7 +10,9 @@ SSHConnection for each request.
 """
 import io
 import logging
+import posixpath
 import re
+import shlex
 import threading
 import uuid
 from datetime import datetime
@@ -59,6 +61,129 @@ def _validate_relative_path(path: str, *, label: str = "file") -> None:
     """
     if path and (path.startswith("/") or ".." in path.split("/")):
         raise HTTPException(status_code=400, detail=f"Invalid {label} path")
+
+
+def _cfg_get(cfg: dict, key: str, default=None):
+    """Get a nested config value using dot notation, returning default if any
+    segment is missing."""
+    value = cfg
+    for part in key.split('.'):
+        if isinstance(value, dict) and part in value:
+            value = value[part]
+        else:
+            return default
+    return value
+
+
+def _first_nonempty(*values):
+    for value in values:
+        if value is None:
+            continue
+        if str(value).strip() == "":
+            continue
+        return value
+    return None
+
+
+def _expand_remote_home(path: str, home_dir: str) -> str:
+    if path.startswith("~"):
+        return path.replace("~", home_dir, 1)
+    return path
+
+
+def _run_remote_check(conn, command: str) -> tuple[int, str]:
+    ssh = conn.connect()
+    _, stdout, stderr = ssh.exec_command(command)
+    exit_code = stdout.channel.recv_exit_status()
+    output = (stdout.read().decode(errors="replace") + stderr.read().decode(errors="replace")).strip()
+    return exit_code, output
+
+
+def _assert_remote_writable(conn, path: str, *, label: str, treat_as_file: bool = False) -> None:
+    target_dir = posixpath.dirname(path) if treat_as_file else path
+    if not target_dir:
+        target_dir = "."
+    probe = posixpath.join(target_dir, f".margie_write_test_{uuid.uuid4().hex}")
+    command = (
+        f"mkdir -p {shlex.quote(target_dir)} && "
+        f"test -w {shlex.quote(target_dir)} && "
+        f"touch {shlex.quote(probe)} && rm -f {shlex.quote(probe)}"
+    )
+    exit_code, output = _run_remote_check(conn, command)
+    if exit_code != 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{label} is not writable or cannot be created at '{path}'. "
+                   f"Please update your Profile config path settings. Details: {output or 'permission/path check failed'}",
+        )
+
+
+def _validate_margie_sb_shared_paths(user_config: dict, conn, home_dir: str) -> None:
+    """Fail early if MARGIE_SB shared storage paths are not writable.
+
+    New namespaced keys are preferred; legacy top-level keys remain supported
+    as fallback for older configs.
+    """
+    writable_paths = [
+        (
+            _first_nonempty(
+                _cfg_get(user_config, 'margie_sb.operon_database.occ_reference_pkl'),
+                _cfg_get(user_config, 'operon_database.occ_reference_pkl'),
+                '/depot/lindems/data/margie/operon-database/occ_reference.pkl',
+            ),
+            'margie_sb.operon_database.occ_reference_pkl',
+            True,
+        ),
+        (
+            _first_nonempty(
+                _cfg_get(user_config, 'margie_sb.fingerprint_database.path'),
+                _cfg_get(user_config, 'fingerprint_database.path'),
+                '/depot/lindems/data/margie/fingerprint-database/fingerprint-database.tsv',
+            ),
+            'margie_sb.fingerprint_database.path',
+            True,
+        ),
+        (
+            _first_nonempty(
+                _cfg_get(user_config, 'margie_sb.genome_pool.path'),
+                _cfg_get(user_config, 'genome_pool.path'),
+                '/depot/lindems/data/margie/genome-pool',
+            ),
+            'margie_sb.genome_pool.path',
+            False,
+        ),
+        (
+            _first_nonempty(
+                _cfg_get(user_config, 'margie_sb.scoring_results_historical.path'),
+                _cfg_get(user_config, 'scoring_results_historical.path'),
+                '/depot/lindems/data/margie/scoring-results-historical',
+            ),
+            'margie_sb.scoring_results_historical.path',
+            False,
+        ),
+        (
+            _first_nonempty(
+                _cfg_get(user_config, 'margie_sb.final_tables_depot.path'),
+                _cfg_get(user_config, 'final_tables_depot.path'),
+                '/depot/lindems/data/margie/final-tables',
+            ),
+            'margie_sb.final_tables_depot.path',
+            False,
+        ),
+        (
+            _first_nonempty(
+                _cfg_get(user_config, 'margie_sb.sqlite_pipeline_snapshot.path'),
+                _cfg_get(user_config, 'sqlite_pipeline_snapshot.path'),
+                '/depot/lindems/data/margie/sqlite/pipeline-version',
+            ),
+            'margie_sb.sqlite_pipeline_snapshot.path',
+            False,
+        ),
+    ]
+
+    for raw_path, key_name, treat_as_file in writable_paths:
+        expanded = _expand_remote_home(str(raw_path), home_dir)
+        _assert_remote_writable(conn, expanded, label=f"Shared path '{key_name}'", treat_as_file=treat_as_file)
 
 
 def _resolve_job_work_dir(job_id: str, current_user: dict, conn) -> str:
@@ -721,6 +846,9 @@ def run_workflow(genome_data: GenomeSend, current_user: dict = Depends(get_curre
             detail=f"Required configuration missing: {', '.join(missing_fields)}. "
                    "Please configure these in your Profile settings before running workflows."
         )
+
+    if genome_data.workflow == 'margie_sb':
+        _validate_margie_sb_shared_paths(user_config, conn, current_user["home_dir"])
 
     # Resolves genome path / output dir, falling back to the user's global config
     # defaults (input_path / output_path) when the request didn't specify one.

@@ -427,6 +427,48 @@ WORKFLOWS: dict[str, WorkflowKey] = {
                 'type': 'int'
             },
             {
+                'param': 'margie_sb.operon_database.occ_reference_pkl',
+                'default': '/depot/lindems/data/margie/operon-database/occ_reference.pkl',
+                'description': 'Shared cross-run OCC reference pickle path for C3 scoring updates',
+                'type': 'path'
+            },
+            {
+                'param': 'margie_sb.fingerprint_database.path',
+                'default': '/depot/lindems/data/margie/fingerprint-database/fingerprint-database.tsv',
+                'description': 'Shared cross-run gene fingerprint database TSV',
+                'type': 'path'
+            },
+            {
+                'param': 'margie_sb.genome_pool.path',
+                'default': '/depot/lindems/data/margie/genome-pool',
+                'description': 'Shared genome pool root (contains fna/ and faa/ subfolders)',
+                'type': 'path'
+            },
+            {
+                'param': 'margie_sb.scoring_results_historical.path',
+                'default': '/depot/lindems/data/margie/scoring-results-historical',
+                'description': 'Archive root for per-run historical FINAL scoring tables',
+                'type': 'path'
+            },
+            {
+                'param': 'margie_sb.final_tables_depot.path',
+                'default': '/depot/lindems/data/margie/final-tables',
+                'description': 'Reviewer-facing per-organism final table export root',
+                'type': 'path'
+            },
+            {
+                'param': 'margie_sb.report_figures.operon_db',
+                'default': '/depot/lindems/data/margie/fingerprint-database/operon-fingerprint-database-label-ordered.tsv',
+                'description': 'Operon fingerprint database used by downstream report figure scripts',
+                'type': 'path'
+            },
+            {
+                'param': 'margie_sb.sqlite_pipeline_snapshot.path',
+                'default': '/depot/lindems/data/margie/sqlite/pipeline-version',
+                'description': 'Destination root for versioned sqlite snapshot queueing',
+                'type': 'path'
+            },
+            {
                 'param': 'margie_sb.phase4.max_parallel_tools',
                 'default': 4,
                 'description': 'Max parallel phase4 annotation tools per genome',
