@@ -131,4 +131,6 @@ APA 7th (software):
 
 Bhattarai, S., Deemer, D., & Lindemann, S. (2026). *bioinformatics-tools* (Version 1.0.0) [Computer software]. https://github.com/sajalbhattarai/bioinformatics-tools
 
+Please also cite the individual tools and databases you use in the MARGIE pipeline, in accordance with their licensing and citation requirements. The licensing gates during MARGIE runs provide the relevant licensing details, but you should still cross-check and confirm the requirements before publication.
+
 For machine-readable citation metadata, see [CITATION.cff](CITATION.cff).
