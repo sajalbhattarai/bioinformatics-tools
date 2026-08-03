@@ -281,10 +281,30 @@ class JobStore:
         self.checkpoint(job_id)
 
     def add_container(self, job_id: str, container_info: dict):
-        """Register a container discovered from log parsing."""
-        if job_id in self._jobs:
-            self._jobs[job_id]["containers"].append(container_info)
-            self.checkpoint(job_id)
+        """Register a container discovered from log parsing.
+
+        Deduped for the same reason add_slurm_job is: the workflow's log emits
+        every line twice (two handlers on the workflow_tools logger, one
+        timestamp-prefixed and one not), so each bapptainer __CONTAINER__ line
+        was parsed twice and the Containers box listed every image twice over.
+        add_slurm_job had this guard and this did not, which is why the SLURM
+        table looked right while the container list did not.
+
+        A container is identified by name + version + path: the same image used
+        by ten rules is still one image, and this list answers "what did this
+        run use", not "how many times was it used". Deduping here rather than
+        at the parser covers every route into the list, and stays correct once
+        the double logging is itself fixed.
+        """
+        if job_id not in self._jobs:
+            return
+        rows = self._jobs[job_id]["containers"]
+        key = (container_info.get("name"), container_info.get("version"),
+               container_info.get("path"))
+        if any((c.get("name"), c.get("version"), c.get("path")) == key for c in rows):
+            return
+        rows.append(container_info)
+        self.checkpoint(job_id)
 
     def get_slurm_jobs(self, job_id: str) -> list[dict]:
         """Get the slurm_jobs list for a job."""

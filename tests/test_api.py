@@ -226,6 +226,23 @@ class TestJobStore:
         assert kwargs["slurm_jobs"][0]["job_id"] == "111"
         assert kwargs["containers"][0]["name"] == "quast"
 
+    def test_add_container_ignores_a_duplicate(self):
+        """The workflow logs every line twice, so each __CONTAINER__ line is
+        parsed twice. The Containers box listed every image twice over."""
+        job_store.create("j-cont", "/g")
+        c = {"name": "rasttk", "version": "1.3.0",
+             "path": "/depot/containers/rasttk.sif", "source": "cached"}
+        job_store.add_container("j-cont", dict(c))
+        job_store.add_container("j-cont", dict(c))          # the double-logged copy
+        assert len(job_store.get("j-cont")["containers"]) == 1
+
+    def test_add_container_keeps_genuinely_different_images(self):
+        job_store.create("j-cont2", "/g")
+        job_store.add_container("j-cont2", {"name": "rasttk", "version": "1.3.0", "path": "/a.sif"})
+        job_store.add_container("j-cont2", {"name": "rasttk", "version": "2.0.0", "path": "/b.sif"})
+        job_store.add_container("j-cont2", {"name": "eggnog", "version": "1.3.0", "path": "/c.sif"})
+        assert len(job_store.get("j-cont2")["containers"]) == 3
+
     @patch("bioinformatics_tools.api.services.job_store.job_history_client")
     def test_provenance_persists_without_finalize(self, mock_history):
         """The regression this whole mechanism exists for.
