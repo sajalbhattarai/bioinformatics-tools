@@ -12,6 +12,7 @@ hits the correct cluster and account.
 import asyncio
 import json
 import logging
+from pathlib import PurePosixPath
 import re
 import threading
 import time
@@ -60,6 +61,7 @@ SLURM_SUBMIT_FALLBACK_RE = re.compile(r'SLURM jobid (\d+)')
 GENOME_FROM_LOG_PATH_RE = re.compile(r'/slurm_logs/[^/]+/([^/]+)/[^/]+$')
 STEPS_PROGRESS_RE = re.compile(r'(\d+) of (\d+) steps \((\d+)%\) done')
 CACHE_HIT_RE = re.compile(r'Cache HIT for (\w+) \(genome=([^)]+)\)')
+RESTORED_FROM_CACHE_RE = re.compile(r'Restored from cache:\s+(.+)$')
 # Genome attribution: build_executable() now passes --verbose, so Snakemake
 # prints each job's "wildcards: genome=..." line to its own live log right
 # before submitting it -- read here into last_genome and attached directly
@@ -156,6 +158,12 @@ def run_ssh_task(job_id: str, command: str, connection: SSHConnection,
     )
     checker.start()
 
+    def register_cached_job(rule_name: str, genome_name: str) -> None:
+        job_store.add_slurm_job(job_id, "—", rule_name, genome=genome_name, source="from cache")
+        for sj in job_store.get_slurm_jobs(job_id):
+            if sj["job_id"] == "—" and sj["rule"] == rule_name and sj.get("genome") == genome_name:
+                sj["status"] = "CACHED"
+
     exit_code = 0  # Track command exit code
     last_genome = ""  # Most recently seen "wildcards: genome=..." value
     saw_snakemake_syntax_error = False
@@ -224,11 +232,22 @@ def run_ssh_task(job_id: str, command: str, connection: SSHConnection,
             cache_match = CACHE_HIT_RE.search(line)
             if cache_match:
                 rule_name, cache_genome = cache_match.groups()
-                job_store.add_slurm_job(job_id, "—", rule_name, genome=cache_genome, source="from cache")
-                # Immediately mark as CACHED so the checker skips it
-                for sj in job_store.get_slurm_jobs(job_id):
-                    if sj["rule"] == rule_name and sj["job_id"] == "—":
-                        sj["status"] = "CACHED"
+                register_cached_job(rule_name, cache_genome)
+
+            # output_cache also logs per-file restores as:
+            # "Restored from cache: .../<genome>/<tool>/<file>".
+            # Surface those as cache-derived rows so users can see cache vs
+            # fresh provenance even when no explicit "Cache HIT for ..." line
+            # is emitted for that stage.
+            restored_match = RESTORED_FROM_CACHE_RE.search(line)
+            if restored_match:
+                restored_path = restored_match.group(1).strip()
+                parts = PurePosixPath(restored_path).parts
+                if len(parts) >= 3:
+                    cache_tool = parts[-2]
+                    cache_genome = parts[-3]
+                    if cache_tool and cache_genome:
+                        register_cached_job(cache_tool, cache_genome)
 
             # Snakemake's own --verbose "wildcards: genome=..." line, printed
             # right before it submits that same job -- see last_genome's

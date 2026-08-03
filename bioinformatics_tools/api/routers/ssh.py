@@ -1246,7 +1246,7 @@ def get_job_status(job_id: str, current_user: dict = Depends(get_current_user)):
                         "status": m["state"],
                         "time": m.get("time", ""),
                         "genome": m.get("genome"),
-                        "source": None,
+                        "source": "fresh run",
                     }
                     for m in enriched
                 ]
