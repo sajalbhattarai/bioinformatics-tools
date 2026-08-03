@@ -18,6 +18,7 @@ import uuid
 from datetime import datetime
 
 import pandas as pd
+import yaml
 from fastapi import APIRouter, Depends, HTTPException, Query
 from openpyxl.styles import Border, Font, PatternFill, Side
 from fastapi.responses import Response, StreamingResponse
@@ -460,6 +461,93 @@ def _config_path(home_dir: str) -> str:
     return f'{home_dir}/.config/bioinformatics-tools/config.yaml'
 
 
+def _yaml_block(data: dict, indent: int = 0) -> str:
+    block = yaml.safe_dump(data, sort_keys=False, default_flow_style=False).rstrip()
+    prefix = ' ' * indent
+    return '\n'.join(f'{prefix}{line}' if line else '' for line in block.splitlines())
+
+
+def _set_nested_value(target: dict, parts: list[str], value):
+    current = target
+    for part in parts[:-1]:
+        current = current.setdefault(part, {})
+    current[parts[-1]] = value
+
+
+def _ordered_workflow_params(workflow_id: str, params: list[dict]) -> list[dict]:
+    if workflow_id != 'margie_sb':
+        return list(params)
+
+    shared_group_order = {
+        'operon_database': 0,
+        'fingerprint_database': 1,
+        'genome_pool': 2,
+        'scoring_results_historical': 3,
+        'final_tables_depot': 4,
+        'sqlite_pipeline_snapshot': 5,
+        'report_figures': 6,
+    }
+    tool_phase_order = {tool['key']: (tool['phase'], index) for index, tool in enumerate(MARGIE_SB_PHASED_TOOLS)}
+
+    def phase_leaf_order(leaf: str) -> int:
+        return {
+            'partition': 0,
+            'max_parallel_genomes': 1,
+            'max_parallel_tools': 2,
+            'threads': 3,
+            'mem_mb': 4,
+            'runtime': 5,
+            'db': 6,
+            'sif': 7,
+        }.get(leaf, 99)
+
+    def sort_key(param: dict) -> tuple:
+        parts = param['param'].split('.')
+        if len(parts) == 2 and parts[1] in {'default_threads', 'default_mem_mb', 'default_runtime'}:
+            return (0, 0, 0, parts[1])
+        if len(parts) >= 3 and parts[1].startswith('phase'):
+            phase_num = int(parts[1][5:]) if parts[1][5:].isdigit() else 999
+            return (1, phase_num, phase_leaf_order(parts[-1]), param['param'])
+        if len(parts) >= 3 and parts[1] in shared_group_order:
+            return (2, shared_group_order[parts[1]], phase_leaf_order(parts[-1]), param['param'])
+        if len(parts) >= 2 and parts[0] == 'margie_sb':
+            phase_num, tool_index = tool_phase_order.get(parts[1], (999, 999))
+            return (3, phase_num, tool_index, phase_leaf_order(parts[-1]), param['param'])
+        return (4, param['param'])
+
+    return sorted(params, key=sort_key)
+
+
+def _build_default_config_payload() -> dict:
+    config: dict = {
+        'main_database': '~/.local/share/bioinformatics-tools/my-db.db',
+        'compute': {'cluster_default': {}},
+    }
+
+    for param in REQUIRED_SYSTEM_PARAMS:
+        if param['param'].startswith('compute.cluster_default.'):
+            key = param['param'].split('.')[-1]
+            default_value = param.get('default')
+            config['compute']['cluster_default'][key] = default_value if default_value is not None else ''
+
+    for workflow_id, workflow in WORKFLOWS.items():
+        if not workflow.configurable_params:
+            continue
+        section: dict = {}
+        for param in _ordered_workflow_params(workflow_id, workflow.configurable_params):
+            parts = param['param'].split('.')
+            default_value = param.get('default')
+            if default_value is not None:
+                _set_nested_value(section, parts, default_value)
+        config[workflow_id] = section
+
+    return config
+
+
+def _build_default_config_text(config: dict) -> str:
+    return yaml.safe_dump(config, sort_keys=False, default_flow_style=False)
+
+
 @router.get("/workflows")
 def list_workflows(current_user: dict = Depends(get_current_user)):
     """Return the list of user-facing workflows with detailed metadata."""
@@ -555,24 +643,11 @@ def create_default_config(current_user: dict = Depends(get_current_user)):
     conn = _build_connection(current_user)
     path = _config_path(current_user["home_dir"])
 
-    # Build default config from REQUIRED_SYSTEM_PARAMS
-    default_config = {
-        "main_database": "~/.local/share/bioinformatics-tools/my-db.db",
-        "compute": {
-            "cluster_default": {}
-        }
-    }
-
-    # Populate compute.cluster_default with all defaults from REQUIRED_SYSTEM_PARAMS
-    for param in REQUIRED_SYSTEM_PARAMS:
-        if param['param'].startswith('compute.cluster_default.'):
-            key = param['param'].split('.')[-1]  # Extract the last part (e.g., 'account', 'partition')
-            default_value = param.get('default')
-            # Use empty string for required fields with no default, otherwise use the default
-            default_config['compute']['cluster_default'][key] = default_value if default_value is not None else ""
+    default_config = _build_default_config_payload()
+    default_config_text = _build_default_config_text(default_config)
 
     try:
-        ssh_sftp.write_remote_yaml(path, default_config, connection=conn)
+        ssh_sftp.write_remote_text_file(path, default_config_text, connection=conn)
         LOGGER.info("Created default config for user %s at %s", current_user["username"], path)
         return {"success": True, "config": default_config}
     except Exception as exc:
@@ -1789,3 +1864,38 @@ def browse_view(path: str, current_user: dict = Depends(get_current_user)):
         "truncated": total >= _VIEW_MAX_BYTES,
         "content": raw.decode("utf-8", errors="replace"),
     }
+
+
+@router.post("/browse_save")
+def browse_save(payload: dict, current_user: dict = Depends(get_current_user)):
+    """Write edited text back to a file on the user's cluster from the file
+    explorer's in-browser editor. Refuses to save over a directory, and
+    refuses truncated content (the viewer only loaded part of a large file,
+    so saving it would silently discard the rest). Same credential/permission
+    model as /browse and /browse_view.
+    """
+    path = payload.get("path", "").strip()
+    content = payload.get("content", "")
+    if not path:
+        raise HTTPException(status_code=400, detail="Path is required")
+    if payload.get("truncated"):
+        raise HTTPException(status_code=400, detail="File is too large to edit in-browser")
+
+    conn = _build_connection(current_user)
+    resolved_path = _resolve_browse_path(path, current_user)
+
+    try:
+        kind = ssh_sftp.check_remote_path_kind(resolved_path, conn)
+        if kind == "directory":
+            raise HTTPException(status_code=400, detail=f"Path is a directory, not a file: '{resolved_path}'")
+    except FileNotFoundError:
+        pass  # new file — fine to create on save
+
+    try:
+        ssh_sftp.write_remote_text_file(resolved_path, content, connection=conn)
+    except Exception as exc:
+        status = _permission_status(exc)
+        detail = f"Permission denied: '{resolved_path}'" if status == 403 else f"Failed to save file: {exc}"
+        raise HTTPException(status_code=status, detail=detail)
+
+    return {"success": True, "path": resolved_path}

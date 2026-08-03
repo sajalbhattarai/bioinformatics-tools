@@ -184,6 +184,32 @@ def write_remote_yaml(
     LOGGER.info('Wrote remote config to %s', remote_path)
 
 
+def write_remote_text_file(
+    remote_path: str,
+    content: str,
+    connection: SSHConnection,
+) -> None:
+    """Write raw text to a remote path via SFTP, creating parent directories
+    if needed. Unlike write_remote_yaml, writes the content verbatim -- for
+    the file explorer's Save action on arbitrary text files (config.yaml,
+    scripts, etc.), not just structured config.
+    """
+    ssh = connection.connect()
+
+    parent = remote_path.rsplit('/', 1)[0]
+    if parent:
+        ssh.exec_command(f'mkdir -p {shlex.quote(parent)}')
+
+    sftp = ssh.open_sftp()
+    try:
+        with sftp.open(remote_path, 'w') as f:
+            f.write(content)
+    finally:
+        sftp.close()
+        pass  # pooled client: closing it would defeat SSHConnection's pool
+    LOGGER.info('Wrote remote text file to %s', remote_path)
+
+
 def copy_remote_directory(
     src_path: str,
     dest_path: str,
