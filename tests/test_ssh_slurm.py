@@ -4,6 +4,7 @@ Unit tests for bioinformatics_tools.utilities.ssh_slurm.
 These test the SSH-exec helpers directly (no FastAPI TestClient, no real
 network) by mocking the SSHConnection's paramiko client.
 """
+import pytest
 from unittest.mock import MagicMock
 
 from bioinformatics_tools.utilities import ssh_slurm
@@ -71,7 +72,8 @@ class TestProbeRun:
         """Log being written, no exit sentinel."""
         mock_connection, _ = _mock_connection_for_exec(b"6806541|-|178\n")
         probe = ssh_slurm.probe_run("job-1", connection=mock_connection)
-        assert probe == {"has_log": True, "exit_code": None, "log_idle": 178.0}
+        assert probe == {"has_log": True, "exit_code": None, "log_idle": 178.0,
+                         "driver_state": None}
         assert ssh_slurm.is_replayable(probe)
 
     def test_finished_run_is_replayable_however_old(self):
@@ -80,7 +82,8 @@ class TestProbeRun:
         that finished while the API was down stops being stuck at 'running'."""
         mock_connection, _ = _mock_connection_for_exec(b"628807|0|40432\n")
         probe = ssh_slurm.probe_run("job-2", connection=mock_connection)
-        assert probe == {"has_log": True, "exit_code": "0", "log_idle": 40432.0}
+        assert probe == {"has_log": True, "exit_code": "0", "log_idle": 40432.0,
+                         "driver_state": None}
         assert ssh_slurm.is_replayable(probe)
 
     def test_interrupted_run_is_not_replayable(self):
@@ -98,7 +101,8 @@ class TestProbeRun:
     def test_unparseable_output_fails_safe(self):
         mock_connection, _ = _mock_connection_for_exec(b"bash: stat: command not found\n")
         probe = ssh_slurm.probe_run("job-5", connection=mock_connection)
-        assert probe == {"has_log": False, "exit_code": None, "log_idle": float("inf")}
+        assert probe == {"has_log": False, "exit_code": None, "log_idle": float("inf"),
+                         "driver_state": None}
         assert not ssh_slurm.is_replayable(probe)
 
     def test_probe_does_not_consult_the_process_table(self):
@@ -166,8 +170,22 @@ class TestLaunchDoesNotWaitForTheRun:
         stdout.readline.side_effect = socket.timeout("timed out")
 
         gen = ssh_slurm.submit_ssh_job(cmd="dane_wf margie sb", connection=conn,
-                                       job_id="job-2")
+                                       job_id="job-2", in_slurm=False)
         assert next(gen) == "__LAUNCHED__"
+        gen.close()
+
+    def test_a_refused_sbatch_is_a_real_failure(self):
+        """The opposite of the login-node case, and deliberately so: there,
+        the run is already going and a missing pid costs only bookkeeping.
+        Here nothing has started, so yielding __LAUNCHED__ would leave the
+        runner tailing a log that will never exist."""
+        conn, stdout = self._connection_whose_stdout_never_ends()
+        stdout.readline.return_value = "sbatch: error: Invalid account\n"
+
+        gen = ssh_slurm.submit_ssh_job(cmd="dane_wf margie sb", connection=conn,
+                                       job_id="job-2b", in_slurm=True)
+        with pytest.raises(RuntimeError, match="Could not submit"):
+            next(gen)
         gen.close()
 
     def test_launch_never_blocks_on_the_exit_status(self):
@@ -178,3 +196,69 @@ class TestLaunchDoesNotWaitForTheRun:
         next(gen)
         stdout.channel.recv_exit_status.assert_not_called()
         gen.close()
+
+
+class TestDriverInSlurm:
+    """The workflow driver runs as a SLURM job, not on the login node.
+
+    setsid + nohup already survive the SSH session dying, so a closed laptop
+    was safe. What they cannot survive is the login node -- a reboot, a
+    maintenance window, or an administrator reaping long-running processes,
+    which is what Snakemake running for hours looks like. The run then stalls
+    half-done: queued SLURM jobs finish, nothing further is ever submitted.
+    """
+
+    def _launch(self, cmd="dane_wf margie sb"):
+        base = "$HOME/.local/share/bsp/jobs/j1"
+        return ssh_slurm.build_driver_launch(
+            cmd=cmd, base=base, safe="j1", log=f"{base}.log", rcf=f"{base}.rc",
+            jobidf=f"{base}.jobid", driversh=f"{base}.driver.sh")
+
+    def test_it_is_submitted_with_sbatch_and_the_id_recorded(self):
+        s = self._launch()
+        assert "sbatch --parsable" in s
+        assert "$HOME/.local/share/bsp/jobs/j1.jobid" in s
+
+    def test_log_and_sentinel_paths_are_unchanged(self):
+        """Everything downstream -- tail -F, probe_run, is_replayable, the
+        reattach -- keys off these two files and nothing else."""
+        s = self._launch()
+        assert "> $HOME/.local/share/bsp/jobs/j1.log 2>&1" in s
+        assert "echo $? > $HOME/.local/share/bsp/jobs/j1.rc" in s
+
+    def test_the_workflow_is_not_backgrounded(self):
+        """On the login node it had to be, so the SSH call could return. Inside
+        a batch job the opposite holds: if the script exits, SLURM tears the
+        allocation down and takes the run with it."""
+        s = self._launch()
+        run_line = [l for l in s.splitlines() if l.startswith("nohup bash ")][0]
+        assert not run_line.rstrip().endswith("&")
+
+    def test_nohup_is_used(self):
+        assert "nohup bash " in self._launch()
+
+    def test_a_command_containing_quotes_survives(self):
+        """The real command carries MARGIE_LICENSE_ACCEPTED='...' -- wrapping
+        it in another layer of single quotes would break it, which is why it
+        goes into a file of its own via a quoted heredoc."""
+        cmd = "MARGIE_LICENSE_ACCEPTED='2026-07-31' MARGIE_USAGE_TYPE='academic' dane_wf margie sb"
+        s = self._launch(cmd)
+        assert cmd in s
+        assert "<<'MARGIE_WORKFLOW_EOF'" in s      # quoted: nothing expands early
+
+    def test_a_queued_driver_is_replayable_even_with_no_log(self):
+        """A driver waiting for a node has no log and no sentinel, which under
+        the old two-case rule was indistinguishable from a dead run."""
+        assert ssh_slurm.is_replayable(
+            {"has_log": False, "exit_code": None, "log_idle": float("inf"),
+             "driver_state": "PENDING"}) is True
+
+    def test_a_dead_run_with_no_driver_is_still_not_replayable(self):
+        assert ssh_slurm.is_replayable(
+            {"has_log": False, "exit_code": None, "log_idle": float("inf"),
+             "driver_state": None}) is False
+
+    def test_an_interrupted_run_whose_driver_is_gone_is_not_replayable(self):
+        assert ssh_slurm.is_replayable(
+            {"has_log": True, "exit_code": None, "log_idle": 99999.0,
+             "driver_state": None}) is False

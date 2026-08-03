@@ -1140,15 +1140,33 @@ def cancel_job(job_id: str, current_user: dict = Depends(get_current_user)):
             raise HTTPException(status_code=404, detail="Job not found")
         slurm_ids = [sj["job_id"] for sj in (row.get("slurm_jobs") or [])]
 
+    # The DRIVER goes first, and it is a SLURM job now rather than a login-node
+    # process. Cancelling the children first would be pointless: Snakemake is
+    # still alive at that moment and simply resubmits them. Killing the thing
+    # that submits, then the things it submitted, is the only order that ends
+    # the run.
+    driver = None
+    try:
+        driver = ssh_slurm.driver_job_id(job_id, connection=conn)
+    except Exception as exc:
+        LOGGER.warning("Could not look up the driver job for %s: %s", job_id, exc)
+    if driver:
+        ssh_slurm.cancel_slurm_jobs([driver], connection=conn)
+        LOGGER.info("Cancelled driver job %s for job %s", driver, job_id)
+
     # Cancel all SLURM subjobs
     if slurm_ids:
         ssh_slurm.cancel_slurm_jobs(slurm_ids, connection=conn)
         LOGGER.info("Cancelled %d SLURM jobs for job %s", len(slurm_ids), job_id)
 
-    # Kill the remote dane_wf process on the login node
-    # This ensures the SSH task stops immediately instead of waiting for Snakemake to notice
-    ssh_slurm.kill_remote_process("dane_wf", connection=conn)
-    LOGGER.info("Killed remote dane_wf process for job %s", job_id)
+    # Only for runs with no driver job -- ones started before the driver moved
+    # into SLURM, which really do have a dane_wf on the login node. Skipped
+    # otherwise because this is a pkill by name across the whole account: with
+    # two runs in flight it would kill the other user-visible run too, and for
+    # a driver on a compute node it cannot reach it anyway.
+    if not driver:
+        ssh_slurm.kill_remote_process("dane_wf", connection=conn)
+        LOGGER.info("Killed remote dane_wf process for job %s", job_id)
 
     # Mark job as cancelled (this will also stop the status checker daemon, if any)
     if job is not None:

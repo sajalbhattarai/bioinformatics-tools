@@ -41,7 +41,9 @@ async def run_quick_example(current_user: dict = Depends(get_current_user)):
     # package independent of whether ~/bioinformatics-tools points at fresh
     # code, and costs 3+ minutes per run to boot even when forced fresh).
     command = "~/bioinformatics-tools/.venv/bin/dane_wf quick example"
-    job_runner.submit_job(job_id, command, connection=conn)
+    # Login node on purpose: a self-test that queues behind other work is no
+    # longer a quick answer about whether the plumbing is up.
+    job_runner.submit_job(job_id, command, connection=conn, in_slurm=False)
 
     return {"success": True, "job_id": job_id, "message": "quick_example submitted"}
 
@@ -54,6 +56,8 @@ async def run_fresh_test(current_user: dict = Depends(get_current_user)):
     job_store.create(job_id, "fresh_test (selftest)", user_id=current_user["user_id"])
 
     command = "~/bioinformatics-tools/.venv/bin/dane_wf fresh test"
-    job_runner.submit_job(job_id, command, connection=conn)
+    # Login node on purpose: a self-test that queues behind other work is no
+    # longer a quick answer about whether the plumbing is up.
+    job_runner.submit_job(job_id, command, connection=conn, in_slurm=False)
 
     return {"success": True, "job_id": job_id, "message": "fresh_test submitted"}
