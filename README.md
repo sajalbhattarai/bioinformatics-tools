@@ -64,6 +64,56 @@ It is different from the `output_dir` folder used for generated run files, and d
 
 Databases default to `/depot/lindems/...`. To use your own, set those paths in the config — empty folders fill up as you run.
 
+### Shared Storage Paths: What They Are, Why They Matter
+
+MARGIE(SB) uses a mix of:
+
+- **Pipeline-critical shared stores** (must be writable, used during scoring/fingerprinting/synteny)
+- **Record-keeping stores** (archives/snapshots for reproducibility and review)
+- **Presentation-only inputs** (used for report figures; non-fatal if unavailable)
+
+These are configured under `margie_sb.*` in `~/.config/bioinformatics-tools/config.yaml`.
+
+| Config key | Purpose | Category | Required for a successful core run? | Auto-created if missing? |
+| --- | --- | --- | --- | --- |
+| `main_database` | Stores run metadata + loaded result tables | Pipeline-critical | **Yes** | **File is created by pipeline/sqlite if directory is writable** |
+| `margie_sb.operon_database.occ_reference_pkl` | Cross-genome OCC reference used by C3 scoring | Pipeline-critical | **Yes** | **Yes** (file initialized on first update) |
+| `margie_sb.fingerprint_database.path` | Shared gene-fingerprint pool across genomes/runs | Pipeline-critical | **Yes** | **Yes** (file initialized on first update) |
+| `margie_sb.genome_pool.path` | Shared FASTA/FAA pool used by ANI/AAI/synteny staging | Pipeline-critical | **Yes** | **Directory created as needed** |
+| `margie_sb.scoring_results_historical.path` | Immutable per-run scoring history archive | Record-keeping | No (but strongly recommended) | **Directory created as needed** |
+| `margie_sb.final_tables_depot.path` | Reviewer-facing `FINAL_ANNOTATION_WITH_CONFIDENCE.tsv` export root | Record-keeping | No (but strongly recommended) | **Directory created as needed** |
+| `margie_sb.sqlite_pipeline_snapshot.path` | Destination root for versioned sqlite snapshot queue jobs | Record-keeping | No (but strongly recommended) | **Directory created as needed** |
+| `margie_sb.report_figures.operon_db` | Operon-fingerprint DB used by downstream figure scripts | Presentation-only | No (figures are non-fatal) | **No** (this is read-only input) |
+
+### Required vs Optional: Practical Guidance
+
+- **Compulsory for normal MARGIE(SB) operation:**
+  - `main_database`
+  - `margie_sb.operon_database.occ_reference_pkl`
+  - `margie_sb.fingerprint_database.path`
+  - `margie_sb.genome_pool.path`
+- **Important but not strict blockers for core scoring outputs:**
+  - `margie_sb.scoring_results_historical.path`
+  - `margie_sb.final_tables_depot.path`
+  - `margie_sb.sqlite_pipeline_snapshot.path`
+- **Optional/non-fatal presentation input:**
+  - `margie_sb.report_figures.operon_db`
+
+### Filename Rules (Canonical Name vs Path-Only)
+
+For file-backed keys (`occ_reference_pkl`, `fingerprint_database.path`, `report_figures.operon_db`), you can now provide either:
+
+- a **full file path** (custom filename allowed), or
+- a **directory path only**.
+
+If you provide only a directory path, MARGIE appends a canonical default filename automatically:
+
+- `occ_reference.pkl`
+- `fingerprint-database.tsv`
+- `operon-fingerprint-database-label-ordered.tsv`
+
+So users do **not** have to type canonical filenames unless they want to override them explicitly.
+
 ## Run
 
 ```bash
