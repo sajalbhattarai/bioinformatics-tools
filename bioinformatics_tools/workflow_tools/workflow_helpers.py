@@ -4,7 +4,10 @@ Shared utilities for Snakemake workflows.
 Provides configuration helpers and standardized path generation.
 Import into Snakemake files to access config and generate output paths.
 """
+import logging
 from pathlib import Path
+
+LOGGER = logging.getLogger(__name__)
 
 # Repo root (the bioinformatics-tools checkout), used to derive machine-agnostic
 # fallback paths.
@@ -135,6 +138,25 @@ def get_container_outputs_prefix_for(genome_stem: str, config) -> str:
 GENOME_EXTENSIONS = ('.fasta', '.fa', '.fna', '.fasta.gz', '.fa.gz', '.fna.gz')
 
 
+def genome_stem(name: str) -> str:
+    """Genome key for a genome filename: the basename minus its recognized
+    extension, and minus .gz first.
+
+    Path.stem strips only the FINAL suffix, so a gzipped genome came out as
+    'ecoli.fna' rather than 'ecoli' -- a key that then propagated into the
+    output directory name, the DB rows and the cache. .fasta and .fna are
+    the same content (the suffix only conventionally distinguishes complete
+    genomes from scaffolds/contigs), so both map to the same key here.
+    """
+    lowered = name.lower()
+    if lowered.endswith('.gz'):
+        name, lowered = name[:-3], lowered[:-3]
+    for ext in ('.fasta', '.fna', '.fa'):
+        if lowered.endswith(ext):
+            return name[: -len(ext)]
+    return Path(name).stem
+
+
 def discover_genomes(input_path: str, recursive: bool = False) -> dict[str, str]:
     """Resolve an input path to a {stem: filepath} map. A single file
     resolves to one entry; a directory is scanned for recognized genome
@@ -150,9 +172,33 @@ def discover_genomes(input_path: str, recursive: bool = False) -> dict[str, str]
         genomes = {}
         for entry in sorted(entries):
             if entry.is_file() and entry.name.lower().endswith(GENOME_EXTENSIONS):
-                genomes[entry.stem] = str(entry)
+                stem = genome_stem(entry.name)
+                previous = genomes.get(stem)
+                if previous is not None:
+                    # A genome's identity is its FASTA content hash, not its
+                    # filename (the same hash keys output_cache and
+                    # is_already_processed), so two files sharing a stem are
+                    # only a problem when their CONTENT differs -- then two
+                    # genuinely different genomes are competing for one key,
+                    # and one of them used to be dropped silently. Identical
+                    # content is just the same genome stored twice (e.g. as
+                    # both .fasta and .fna); keep either. Hashing happens only
+                    # on a stem collision, so the common case reads no bytes.
+                    from bioinformatics_tools.workflow_tools.load_to_db import compute_fasta_hash
+                    if compute_fasta_hash(previous) == compute_fasta_hash(str(entry)):
+                        LOGGER.info(
+                            "Genome '%s' present as both %s and %s with identical "
+                            "content -- same genome, using %s",
+                            stem, Path(previous).name, entry.name, Path(previous).name)
+                        continue
+                    raise ValueError(
+                        f"Two DIFFERENT genomes map to the same name '{stem}': "
+                        f"{previous} and {entry}. Their contents differ, so one "
+                        f"would overwrite the other's outputs. Rename one so each "
+                        f"genome has a distinct name.")
+                genomes[stem] = str(entry)
         return genomes
-    return {path.stem: str(path)}
+    return {genome_stem(path.name): str(path)}
 
 
 def fixed_path(relative_path: str, config=None) -> str:
