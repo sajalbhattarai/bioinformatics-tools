@@ -98,6 +98,81 @@ class _BackgroundProcess:
         return self.proc.wait()
 
 
+class _Stage1Waves:
+    '''Stage 1 as up to three Snakemake invocations behind one
+    _BackgroundProcess-shaped handle, so the Stage 2 poll loop can keep
+    treating Stage 1 as a single thing.
+
+    The waves exist because GTDB-Tk runs as ONE batch across every genome,
+    while output_cache restores GTDB-Tk outputs per genome. Genomes already
+    restored need nothing from that batch, so making them share its DAG put
+    their RASTtk behind a run they had no stake in:
+
+      batch    GTDB-Tk, only when some genome actually still needs it
+      ready    RASTtk for genomes whose GTDB-Tk outputs are already on disk
+      pending  RASTtk for the rest, started only once the batch has landed
+
+    "ready" runs concurrently with "batch" -- different tools, disjoint
+    outputs. The two RASTtk waves never overlap: run_rasttk drives BV-BRC's
+    remote service, which must see one submission at a time, so "pending" is
+    launched only after "ready" has exited (each wave is itself --jobs=1).
+
+    Both RASTtk waves share the output_dir's .snakemake metadata, so the
+    batch's provenance is already recorded by the time "pending" builds its
+    DAG and it does not re-run GTDB-Tk.
+    '''
+
+    def __init__(self, launch, batch_targets, ready_targets, pending_targets):
+        self._launch = launch          # (targets, label) -> _BackgroundProcess | None
+        self._lock = threading.Lock()
+        self._procs: list = []
+        self._launch_failed = False
+        self._done = threading.Event()
+        self._thread = threading.Thread(
+            target=self._drive, args=(batch_targets, ready_targets, pending_targets), daemon=True)
+        self._thread.start()
+
+    def _start(self, targets, label):
+        if not targets:
+            return None
+        proc = self._launch(targets, label)
+        if proc is None:
+            self._launch_failed = True
+            return None
+        with self._lock:
+            self._procs.append(proc)
+        return proc
+
+    def _drive(self, batch_targets, ready_targets, pending_targets):
+        try:
+            batch = self._start(batch_targets, 'GTDB-Tk batch')
+            ready = self._start(ready_targets, 'RASTtk, GTDB-Tk already available')
+            for proc in (batch, ready):
+                if proc is not None:
+                    proc.wait()
+            # Only after the batch has landed AND the first RASTtk wave has
+            # exited -- see this class's docstring for both reasons.
+            rest = self._start(pending_targets, 'RASTtk, after GTDB-Tk batch')
+            if rest is not None:
+                rest.wait()
+        finally:
+            self._done.set()
+
+    def poll(self):
+        '''None until every wave has finished; then the first non-zero exit
+        code, so a failure in any wave is reported rather than averaged away.'''
+        if not self._done.is_set():
+            return None
+        if self._launch_failed:
+            return 1
+        with self._lock:
+            return next((rc for p in self._procs if (rc := p.poll())), 0)
+
+    def wait(self) -> int:
+        self._done.wait()
+        return self.poll()
+
+
 class WorkflowBase(ProgramBase):
     '''Snakemake workflow execution. Inherits single-program commands from ProgramBase.
     '''
@@ -184,7 +259,10 @@ class WorkflowBase(ProgramBase):
 
         if target:
             core_command.append('--nolock')
-            core_command.append(target)
+            # A list means explicit file targets rather than a rule name --
+            # Stage 1 uses that to drive a chosen SUBSET of genomes (see
+            # _Stage1Waves) instead of an all-genome aggregate rule.
+            core_command.extend([target] if isinstance(target, str) else list(target))
 
         # Check for dry-run/test mode (from config or command line)
         if self.conf.get('dry_run', False) or self.conf.get('test_only', False):
@@ -748,19 +826,55 @@ class WorkflowBase(ProgramBase):
             LOGGER.info('GTDB-Tk batch cache hit: %s. RASTtk per-genome cache restore results: %s',
                         gtdbtk_batch_hit, rasttk_restored)
 
-        # Stage 1: one long-running snakemake invocation, phase1-3 only,
-        # every genome -- runs breadth-first in the background for the rest
-        # of this method's lifetime. max_jobs_override=1 keeps real BV-BRC
-        # submissions one genome at a time (see this method's own docstring).
-        stage1_command = self.build_executable(selected_wf, config_overrides=smk_config, mode=mode,
-                                                compute_config=compute_config, extra_resources=extra_resources,
-                                                rerun_triggers=rerun_triggers, target='rasttk_all',
-                                                max_jobs_override=1)
-        LOGGER.info('Starting Stage 1 (phase1-3, all genomes): %s', ' '.join(stage1_command))
-        stage1 = self._start_background_subprocess(stage1_command)
-        if stage1 is None:
-            self.failed(f'Workflow "{key_name}" failed to launch Stage 1 (rasttk_all)')
-            return 1
+        # Stage 1: phase1-3, every genome, running in the background for the
+        # rest of this method's lifetime. Split into waves (see _Stage1Waves)
+        # so genomes whose GTDB-Tk outputs output_cache already restored start
+        # RASTtk immediately instead of waiting on a GTDB-Tk batch only the
+        # remaining genomes need. Every wave is max_jobs_override=1 and the two
+        # RASTtk waves are sequenced, so BV-BRC still only ever sees one
+        # submission at a time (see this method's own docstring).
+        run_gtdbtk_enabled = smk_config.get('run_gtdbtk', True) not in (False, 'false', '0', 'no')
+
+        def _stage1_targets(genome: str) -> list[str]:
+            '''Same files rule rasttk_all asks for, for ONE genome -- the
+            RASTtk DB token, plus the GTDB-Tk one when GTDB-Tk is selected.'''
+            prefix = get_workflow_prefix_for(genome, smk_config)
+            targets = [f"{prefix}rasttk/rasttk_db.tkn"]
+            if run_gtdbtk_enabled:
+                targets.append(f"{prefix}gtdbtk/gtdbtk_db.tkn")
+            return targets
+
+        # A genome is "ready" when its per-genome GTDB-Tk outputs are already on
+        # disk, which after the restore above means output_cache had them. Those
+        # genomes' run_rasttk needs nothing the batch produces.
+        gtdbtk_ready = [g for g in genome_files
+                        if all(Path(p).exists() for p in self._gtdbtk_split_paths(g, smk_config))]
+        gtdbtk_pending = [g for g in genome_files if g not in set(gtdbtk_ready)]
+        LOGGER.info('Stage 1 waves: %d genome(s) have GTDB-Tk outputs already, %d still need the batch',
+                    len(gtdbtk_ready), len(gtdbtk_pending))
+
+        output_dir_for_batch = (smk_config.get('output_dir') or '').rstrip('/')
+        batch_targets = ([f"{output_dir_for_batch}/original_container_outputs/gtdbtk/gtdbtk_batch.done"]
+                         if gtdbtk_pending and output_dir_for_batch else [])
+
+        def _launch_wave(targets: list[str], label: str):
+            command = self.build_executable(selected_wf, config_overrides=smk_config, mode=mode,
+                                            compute_config=compute_config, extra_resources=extra_resources,
+                                            rerun_triggers=rerun_triggers, target=targets,
+                                            max_jobs_override=1)
+            LOGGER.info('Starting Stage 1 wave [%s] over %d target(s): %s',
+                        label, len(targets), ' '.join(command))
+            proc = self._start_background_subprocess(command)
+            if proc is None:
+                LOGGER.error('Stage 1 wave [%s] failed to launch', label)
+            return proc
+
+        stage1 = _Stage1Waves(
+            _launch_wave,
+            batch_targets,
+            [t for g in gtdbtk_ready for t in _stage1_targets(g)],
+            [t for g in gtdbtk_pending for t in _stage1_targets(g)],
+        )
 
         def _rasttk_token_path(genome: str) -> str:
             return f"{get_workflow_prefix_for(genome, smk_config)}rasttk/rasttk_db.tkn"
