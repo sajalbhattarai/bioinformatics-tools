@@ -518,6 +518,34 @@ def _ordered_workflow_params(workflow_id: str, params: list[dict]) -> list[dict]
     return sorted(params, key=sort_key)
 
 
+def _default_params_for_workflow(workflow_id: str, workflow) -> list[dict]:
+    """Return the per-workflow params that should be materialized in a
+    default config payload.
+
+    Keeps this aligned with /workflows metadata shown in Profile: root-path
+    params are injected based on workflow capabilities, then merged with the
+    workflow's own configurable params.
+    """
+    path_params = workflow_path_params(
+        workflow_id,
+        include_sif=workflow.local_sif_only,
+        include_db_root=workflow.supports_db_root,
+        supports_batch_input=workflow.supports_batch_input,
+    )
+    combined = path_params + (workflow.configurable_params or [])
+
+    # De-duplicate by key while preserving first-seen order.
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for param in combined:
+        key = param.get('param')
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        unique.append(param)
+    return unique
+
+
 def _build_default_config_payload() -> dict:
     config: dict = {
         'main_database': '~/.local/share/bioinformatics-tools/my-db.db',
@@ -531,15 +559,29 @@ def _build_default_config_payload() -> dict:
             config['compute']['cluster_default'][key] = default_value if default_value is not None else ''
 
     for workflow_id, workflow in WORKFLOWS.items():
-        if not workflow.configurable_params:
+        params = _default_params_for_workflow(workflow_id, workflow)
+        if not params:
             continue
+
         section: dict = {}
-        for param in _ordered_workflow_params(workflow_id, workflow.configurable_params):
+        for param in _ordered_workflow_params(workflow_id, params):
             parts = param['param'].split('.')
+
+            # Params are usually namespaced (e.g. "margie_sb.sif_path").
+            # Strip that prefix so values live under one workflow block:
+            # margie_sb:
+            #   sif_path: ...
+            if parts and parts[0] == workflow_id:
+                parts = parts[1:]
+            if not parts:
+                continue
+
             default_value = param.get('default')
             if default_value is not None:
                 _set_nested_value(section, parts, default_value)
-        config[workflow_id] = section
+
+        if section:
+            config[workflow_id] = section
 
     return config
 
