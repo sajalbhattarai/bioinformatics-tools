@@ -2047,16 +2047,32 @@ rule run_gtdbtk_batch:
 
         # Stage all discovered genomes into one folder for a single GTDB-Tk
         # classify_wf call. Preserve duplicate basenames by suffixing.
+        #
+        # Every copy is renamed to .fna. The container passes --extension fna
+        # to classify_wf, so anything staged under another suffix is accepted
+        # by the container's own staging and then silently ignored by GTDB-Tk
+        # -- discover_genomes takes .fasta/.fa/.fna (GENOME_EXTENSIONS), so a
+        # single .fasta in the pool left the batch one genome short and only
+        # surfaced much later, as a missing row in
+        # split_gtdbtk_batch_per_genome. The stem (basename minus the final
+        # suffix, and minus .gz first) is exactly the genome key downstream
+        # rules use, and is also the name GTDB-Tk reports, so renaming the
+        # extension keeps every contract intact. Gzipped inputs are expanded
+        # rather than copied, since a .fna holding gzip bytes would parse as
+        # an empty genome.
         i=0
         for src in {input}; do
             base=$(basename "$src")
-            dest="{params.stage_dir}/$base"
+            stem="${{base%.gz}}"
+            stem="${{stem%.*}}"
+            dest="{params.stage_dir}/${{stem}}.fna"
             if [[ -e "$dest" ]]; then
-                stem="${{base%.*}}"
-                ext="${{base##*.}}"
-                dest="{params.stage_dir}/${{stem}}_dup${{i}}.${{ext}}"
+                dest="{params.stage_dir}/${{stem}}_dup${{i}}.fna"
             fi
-            cp -f "$src" "$dest"
+            case "$base" in
+                *.gz) zcat "$src" > "$dest" ;;
+                *)    cp -f "$src" "$dest" ;;
+            esac
             i=$((i + 1))
         done
 
