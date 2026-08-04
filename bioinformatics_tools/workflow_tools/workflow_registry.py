@@ -27,7 +27,7 @@ REQUIRED_SYSTEM_PARAMS = [
     },
     {
         'param': 'compute.cluster_default.default_runtime',
-        'default': 30,
+        'default': 240,
         'description': 'Default runtime limit in minutes for SLURM jobs',
         'type': 'int'
     },
@@ -153,20 +153,14 @@ def _margie_sb_default_mem_mb(tool_key: str) -> int:
     if tool_key == 'pgap':
         return 12000
     if tool_key == 'tmbed':
-        return 8000
+        return 32000
     return 4000
 
 
 def _margie_sb_default_runtime(tool_key: str) -> int:
-    if tool_key == 'gtdbtk':
-        return 240
     if tool_key in {'interpro'}:
         return 300
-    if tool_key in {'kegg', 'eggnog'}:
-        return 90
-    if tool_key in {'dbcan', 'pgap', 'tmbed'}:
-        return 60
-    return 120
+    return 240
 
 
 def margie_sb_sif_files(selected_tool_keys: set[str] | None = None) -> list[tuple]:
@@ -454,7 +448,7 @@ WORKFLOWS: dict[str, WorkflowKey] = {
             },
             {
                 'param': 'margie_sb.default_runtime',
-                'default': 120,
+                'default': 240,
                 'description': 'Default runtime limit in minutes for MARGIE(SB) tools unless overridden per tool',
                 'type': 'int'
             },

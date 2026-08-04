@@ -73,6 +73,17 @@ GENOME_PREFIX = get_workflow_prefix_for('{genome}', config=config)
 CONTAINER_OUTPUTS_PREFIX = get_container_outputs_prefix_for('{genome}', config=config)
 
 _OUTPUT_ROOT = rc('output_dir', '', config=config).rstrip('/')
+MIN_SLURM_RUNTIME_MINUTES = 240
+
+
+def runtime_min(key: str, default: int, config=None) -> int:
+    """Clamp per-rule runtime so no SLURM job gets less than 4 hours."""
+    minutes = rc(key, default, config=config)
+    try:
+        minutes = int(minutes)
+    except (TypeError, ValueError):
+        minutes = int(default)
+    return max(MIN_SLURM_RUNTIME_MINUTES, minutes)
 
 # Run-wide (not per-genome) mutex directory serializing run_rasttk's actual
 # BV-BRC submissions -- see run_rasttk's own comment for why this exists
@@ -840,7 +851,7 @@ rule run_consolidation:
     threads: rc('consolidation.threads', 1, config=config)
     resources:
         mem_mb=rc('consolidation.mem_mb', 8000, config=config),
-        runtime=rc('consolidation.runtime', 30, config=config)
+        runtime=runtime_min('consolidation.runtime', 30, config=config)
     params:
         genome_dir=lambda wildcards: GENOME_PREFIX.format(genome=wildcards.genome).rstrip('/')
     shell:
@@ -884,7 +895,7 @@ rule run_labeling:
     threads: rc('labeling.threads', 1, config=config)
     resources:
         mem_mb=rc('labeling.mem_mb', 8000, config=config),
-        runtime=rc('labeling.runtime', 30, config=config)
+        runtime=runtime_min('labeling.runtime', 30, config=config)
     shell:
         """
         echo "=== MARGIE_SB PHASE 10: LABELING ({wildcards.genome}) ==="
@@ -918,7 +929,7 @@ rule update_c3_occ_reference_depot:
     threads: 1
     resources:
         mem_mb=rc('scoring_occ_update.mem_mb', 4000, config=config),
-        runtime=rc('scoring_occ_update.runtime', 30, config=config)
+        runtime=runtime_min('scoring_occ_update.runtime', 30, config=config)
     params:
         reference=C3_REFERENCE_PKL
     shell:
@@ -969,7 +980,7 @@ rule run_scoring:
     threads: rc('scoring.threads', 1, config=config)
     resources:
         mem_mb=rc('scoring.mem_mb', 8000, config=config),
-        runtime=rc('scoring.runtime', 30, config=config)
+        runtime=runtime_min('scoring.runtime', 30, config=config)
     shell:
         """
         echo "=== MARGIE_SB PHASE 11: SCORING ({wildcards.genome}) ==="
@@ -1042,7 +1053,7 @@ rule run_fingerprint:
     threads: rc('fingerprint.threads', 1, config=config)
     resources:
         mem_mb=rc('fingerprint.mem_mb', 8000, config=config),
-        runtime=rc('fingerprint.runtime', 30, config=config)
+        runtime=runtime_min('fingerprint.runtime', 30, config=config)
     shell:
         """
         echo "=== MARGIE_SB PHASE 12: FINGERPRINT ({wildcards.genome}) ==="
@@ -1075,7 +1086,7 @@ rule update_fingerprint_database:
     threads: rc('fingerprint_database.threads', 1, config=config)
     resources:
         mem_mb=rc('fingerprint_database.mem_mb', 4000, config=config),
-        runtime=rc('fingerprint_database.runtime', 15, config=config)
+        runtime=runtime_min('fingerprint_database.runtime', 15, config=config)
     shell:
         """
         {LOADER_PYTHON} {FINGERPRINT_SCRIPTS_DIR}/update-fingerprint-database.py \
@@ -1120,7 +1131,7 @@ rule run_operon_fingerprint:
     threads: rc('operon_fingerprint.threads', 1, config=config)
     resources:
         mem_mb=rc('operon_fingerprint.mem_mb', 4000, config=config),
-        runtime=rc('operon_fingerprint.runtime', 15, config=config)
+        runtime=runtime_min('operon_fingerprint.runtime', 15, config=config)
     shell:
         """
         echo "=== MARGIE_SB PHASE 12: OPERON FINGERPRINT ({wildcards.genome}) ==="
@@ -1164,7 +1175,7 @@ rule update_operon_fingerprint_database:
     threads: rc('operon_fingerprint_database.threads', 1, config=config)
     resources:
         mem_mb=rc('operon_fingerprint_database.mem_mb', 4000, config=config),
-        runtime=rc('operon_fingerprint_database.runtime', 15, config=config)
+        runtime=runtime_min('operon_fingerprint_database.runtime', 15, config=config)
     shell:
         """
         {LOADER_PYTHON} {FINGERPRINT_SCRIPTS_DIR}/update-operon-fingerprint-database.py \
@@ -1302,7 +1313,7 @@ rule archive_scoring_to_depot:
     threads: 1
     resources:
         mem_mb=rc('scoring_archive.mem_mb', 1000, config=config),
-        runtime=rc('scoring_archive.runtime', 10, config=config)
+        runtime=runtime_min('scoring_archive.runtime', 10, config=config)
     shell:
         """
         echo "=== MARGIE_SB: ARCHIVE SCORING TO DEPOT ({wildcards.genome}) ==="
@@ -1324,7 +1335,7 @@ rule publish_final_annotation_to_depot:
     threads: 1
     resources:
         mem_mb=rc('final_tables_depot.mem_mb', 1000, config=config),
-        runtime=rc('final_tables_depot.runtime', 10, config=config)
+        runtime=runtime_min('final_tables_depot.runtime', 10, config=config)
     shell:
         """
         echo "=== MARGIE_SB: PUBLISH FINAL TABLE TO DEPOT ({wildcards.genome}) ==="
@@ -1354,7 +1365,7 @@ rule run_report_figures_one_genome:
     threads: 1
     resources:
         mem_mb=rc('report_figures.mem_mb', 8000, config=config),
-        runtime=rc('report_figures.runtime', 30, config=config)
+        runtime=runtime_min('report_figures.runtime', 30, config=config)
     shell:
         """
         echo "=== MARGIE_SB: REPORT FIGURES ({wildcards.genome}) ==="
@@ -1402,7 +1413,7 @@ rule run_genome_viewer_one_genome:
     threads: 1
     resources:
         mem_mb=rc('genome_viewer.mem_mb', 8000, config=config),
-        runtime=rc('genome_viewer.runtime', 30, config=config)
+        runtime=runtime_min('genome_viewer.runtime', 30, config=config)
     shell:
         """
         echo "=== MARGIE_SB: GENOME VIEWER ({wildcards.genome}) ==="
@@ -1439,7 +1450,7 @@ rule run_full_operon_map_one_genome:
     threads: 1
     resources:
         mem_mb=rc('full_operon_map.mem_mb', 8000, config=config),
-        runtime=rc('full_operon_map.runtime', 90, config=config)
+        runtime=runtime_min('full_operon_map.runtime', 90, config=config)
     shell:
         """
         echo "=== MARGIE_SB: FULL OPERON MAP ({wildcards.genome}) ==="
@@ -1469,7 +1480,7 @@ rule run_report_figures_global:
     threads: 1
     resources:
         mem_mb=rc('report_figures.global_mem_mb', 16000, config=config),
-        runtime=rc('report_figures.global_runtime', 45, config=config)
+        runtime=runtime_min('report_figures.global_runtime', 45, config=config)
     shell:
         """
         echo "=== MARGIE_SB: REPORT FIGURES (global / pangenome) ==="
@@ -1501,7 +1512,7 @@ rule queue_sqlite_backup_snapshot:
     threads: 1
     resources:
         mem_mb=rc('sqlite_backup.mem_mb', 1000, config=config),
-        runtime=rc('sqlite_backup.runtime', 10, config=config)
+        runtime=runtime_min('sqlite_backup.runtime', 10, config=config)
     shell:
         """
         echo "=== MARGIE_SB: QUEUE SQLITE BACKUP SNAPSHOT ==="
@@ -1585,7 +1596,7 @@ rule build_gene_evidence_report:
     threads: rc('evidence.threads', 1, config=config)
     resources:
         mem_mb=rc('evidence.mem_mb', 8000, config=config),
-        runtime=rc('evidence.runtime', 60, config=config)
+        runtime=runtime_min('evidence.runtime', 60, config=config)
     params:
         # Persistent, cross-genome -- NOT per-genome outputs, so passed
         # as read-only lookup paths rather than declared inputs: every
@@ -1634,7 +1645,7 @@ rule run_llm:
     threads: rc('llm.threads', 10, config=config)
     resources:
         mem_mb=rc('llm.mem_mb', 32000, config=config),
-        runtime=rc('llm.runtime', 240, config=config),
+        runtime=runtime_min('llm.runtime', 240, config=config),
         slurm_partition=rc('llm.partition', 'gpu', config=config),
         gres=rc('llm.gres', 'gpu:1', config=config)
     params:
@@ -1747,7 +1758,7 @@ rule copy_to_genome_pool:
     threads: 1
     resources:
         mem_mb=rc('genome_pool.mem_mb', 1000, config=config),
-        runtime=rc('genome_pool.runtime', 10, config=config)
+        runtime=runtime_min('genome_pool.runtime', 10, config=config)
     params:
         fna_dir=GENOME_POOL_FNA_DIR,
         faa_dir=GENOME_POOL_FAA_DIR
@@ -1776,7 +1787,7 @@ rule run_ani_batch:
     threads: rc('ani.threads', 8, config=config)
     resources:
         mem_mb=rc('ani.mem_mb', 8000, config=config),
-        runtime=rc('ani.runtime', 60, config=config)
+        runtime=runtime_min('ani.runtime', 60, config=config)
     params:
         pool_dir=GENOME_POOL_FNA_DIR,
         output_dir=rc('ani.output_dir', ANI_BATCH_OUTPUT_DIR, config=config),
@@ -1828,7 +1839,7 @@ rule run_aai_batch:
     threads: rc('aai.threads', 8, config=config)
     resources:
         mem_mb=rc('aai.mem_mb', 8000, config=config),
-        runtime=rc('aai.runtime', 60, config=config)
+        runtime=runtime_min('aai.runtime', 60, config=config)
     params:
         pool_dir=GENOME_POOL_FAA_DIR,
         output_dir=rc('aai.output_dir', AAI_BATCH_OUTPUT_DIR, config=config),
@@ -1883,7 +1894,7 @@ rule run_closest_organisms_batch:
     threads: rc('closest.threads', 2, config=config)
     resources:
         mem_mb=rc('closest.mem_mb', 4000, config=config),
-        runtime=rc('closest.runtime', 30, config=config)
+        runtime=runtime_min('closest.runtime', 30, config=config)
     params:
         output_dir=rc('closest.output_dir', CLOSEST_BATCH_OUTPUT_DIR, config=config),
         top_n=rc('closest.top_n', '5', config=config),
@@ -1935,7 +1946,7 @@ rule run_quast_batch:
     threads: rc('quast.threads', 8, config=config)
     resources:
         mem_mb=rc('quast.mem_mb', 4000, config=config),
-        runtime=rc('quast.runtime', 120, config=config)
+        runtime=runtime_min('quast.runtime', 120, config=config)
     params:
         stage_dir=QUAST_BATCH_STAGE_DIR,
         output_dir=rc('quast.output_dir', QUAST_BATCH_OUTPUT_DIR, config=config),
@@ -2023,7 +2034,7 @@ rule run_gtdbtk_batch:
         mem_mb=rc('margie_sb.gtdbtk.mem_mb',
                   rc('gtdbtk.mem_mb', 460000, config=config),
                   config=config),
-        runtime=rc('margie_sb.gtdbtk.runtime',
+        runtime=runtime_min('margie_sb.gtdbtk.runtime',
                    rc('gtdbtk.runtime', 240, config=config),
                    config=config),
         # Prefer tool-specific key first, then phase2-wide partition (GTDB-Tk is
@@ -2260,7 +2271,7 @@ rule run_rasttk:
     threads: rc('rasttk.threads', 8, config=config)
     resources:
         mem_mb=rc('rasttk.mem_mb', 8000, config=config),
-        runtime=rc('rasttk.runtime', 120, config=config)
+        runtime=runtime_min('rasttk.runtime', 120, config=config)
     params:
         output_dir=lambda wildcards: rc('rasttk.output_dir', f"{CONTAINER_OUTPUTS_PREFIX}rasttk".format(genome=wildcards.genome), config=config),
         db=db_path('rasttk', config=config, workflow_id='margie_sb'),
@@ -2347,7 +2358,7 @@ rule run_cog:
     threads: rc('cog.threads', 8, config=config)
     resources:
         mem_mb=rc('cog.mem_mb', 4000, config=config),
-        runtime=rc('cog.runtime', 60, config=config),
+        runtime=runtime_min('cog.runtime', 60, config=config),
         margie_sb_phase4_slot=1
     params:
         output_dir=lambda wildcards: rc('cog.output_dir', f"{CONTAINER_OUTPUTS_PREFIX}cog".format(genome=wildcards.genome), config=config),
@@ -2392,7 +2403,7 @@ rule run_pfam:
     threads: rc('pfam.threads', 8, config=config)
     resources:
         mem_mb=rc('pfam.mem_mb', 8000, config=config),
-        runtime=rc('pfam.runtime', 60, config=config),
+        runtime=runtime_min('pfam.runtime', 60, config=config),
         margie_sb_phase4_slot=1
     params:
         output_dir=lambda wildcards: rc('pfam.output_dir', f"{CONTAINER_OUTPUTS_PREFIX}pfam".format(genome=wildcards.genome), config=config),
@@ -2438,7 +2449,7 @@ rule run_tigrfam:
     threads: rc('tigrfam.threads', 8, config=config)
     resources:
         mem_mb=rc('tigrfam.mem_mb', 4000, config=config),
-        runtime=rc('tigrfam.runtime', 60, config=config),
+        runtime=runtime_min('tigrfam.runtime', 60, config=config),
         margie_sb_phase4_slot=1
     params:
         output_dir=lambda wildcards: rc('tigrfam.output_dir', f"{CONTAINER_OUTPUTS_PREFIX}tigrfam".format(genome=wildcards.genome), config=config),
@@ -2482,7 +2493,7 @@ rule run_merops:
     threads: rc('merops.threads', 8, config=config)
     resources:
         mem_mb=rc('merops.mem_mb', 4000, config=config),
-        runtime=rc('merops.runtime', 30, config=config),
+        runtime=runtime_min('merops.runtime', 30, config=config),
         margie_sb_phase4_slot=1
     params:
         output_dir=lambda wildcards: rc('merops.output_dir', f"{CONTAINER_OUTPUTS_PREFIX}merops".format(genome=wildcards.genome), config=config),
@@ -2526,7 +2537,7 @@ rule run_tcdb:
     threads: rc('tcdb.threads', 8, config=config)
     resources:
         mem_mb=rc('tcdb.mem_mb', 4000, config=config),
-        runtime=rc('tcdb.runtime', 30, config=config),
+        runtime=runtime_min('tcdb.runtime', 30, config=config),
         margie_sb_phase4_slot=1
     params:
         output_dir=lambda wildcards: rc('tcdb.output_dir', f"{CONTAINER_OUTPUTS_PREFIX}tcdb".format(genome=wildcards.genome), config=config),
@@ -2571,7 +2582,7 @@ rule run_uniprot:
     threads: rc('uniprot.threads', 8, config=config)
     resources:
         mem_mb=rc('uniprot.mem_mb', 4000, config=config),
-        runtime=rc('uniprot.runtime', 30, config=config),
+        runtime=runtime_min('uniprot.runtime', 30, config=config),
         margie_sb_phase4_slot=1
     params:
         output_dir=lambda wildcards: rc('uniprot.output_dir', f"{CONTAINER_OUTPUTS_PREFIX}uniprot".format(genome=wildcards.genome), config=config),
@@ -2616,7 +2627,7 @@ rule run_kegg:
     threads: rc('kegg.threads', 8, config=config)
     resources:
         mem_mb=rc('kegg.mem_mb', 16000, config=config),
-        runtime=rc('kegg.runtime', 90, config=config),
+        runtime=runtime_min('kegg.runtime', 90, config=config),
         margie_sb_phase4_slot=1
     params:
         output_dir=lambda wildcards: rc('kegg.output_dir', f"{CONTAINER_OUTPUTS_PREFIX}kegg".format(genome=wildcards.genome), config=config),
@@ -2659,7 +2670,7 @@ rule run_eggnog:
     threads: rc('eggnog.threads', 8, config=config)
     resources:
         mem_mb=rc('eggnog.mem_mb', 64000, config=config),
-        runtime=rc('eggnog.runtime', 90, config=config),
+        runtime=runtime_min('eggnog.runtime', 90, config=config),
         margie_sb_phase4_slot=1
     params:
         output_dir=lambda wildcards: rc('eggnog.output_dir', f"{CONTAINER_OUTPUTS_PREFIX}eggnog".format(genome=wildcards.genome), config=config),
@@ -2703,7 +2714,7 @@ rule run_dbcan:
     threads: rc('dbcan.threads', 8, config=config)
     resources:
         mem_mb=rc('dbcan.mem_mb', 16000, config=config),
-        runtime=rc('dbcan.runtime', 60, config=config),
+        runtime=runtime_min('dbcan.runtime', 60, config=config),
         margie_sb_phase4_slot=1
     params:
         output_dir=lambda wildcards: rc('dbcan.output_dir', f"{CONTAINER_OUTPUTS_PREFIX}dbcan".format(genome=wildcards.genome), config=config),
@@ -2746,7 +2757,7 @@ rule run_pgap:
     threads: rc('pgap.threads', 8, config=config)
     resources:
         mem_mb=rc('pgap.mem_mb', 12000, config=config),
-        runtime=rc('pgap.runtime', 60, config=config),
+        runtime=runtime_min('pgap.runtime', 60, config=config),
         margie_sb_phase4_slot=1
     params:
         output_dir=lambda wildcards: rc('pgap.output_dir', f"{CONTAINER_OUTPUTS_PREFIX}pgap".format(genome=wildcards.genome), config=config),
@@ -2801,7 +2812,7 @@ rule run_interpro:
     threads: rc('interpro.threads', 32, config=config)
     resources:
         mem_mb=rc('interpro.mem_mb', 48000, config=config),
-        runtime=rc('interpro.runtime', 300, config=config),
+        runtime=runtime_min('interpro.runtime', 300, config=config),
         # NOT highmem -- tried that, reverted. highmem is gtdbtk's partition
         # (above) because gtdbtk genuinely asks for 64 threads, clearing this
         # cluster's real policy: highmem is reserved for jobs needing more
@@ -2913,7 +2924,7 @@ rule run_geneprop:
     threads: rc('geneprop.threads', 4, config=config)
     resources:
         mem_mb=rc('geneprop.mem_mb', 2000, config=config),
-        runtime=rc('geneprop.runtime', 30, config=config),
+        runtime=runtime_min('geneprop.runtime', 30, config=config),
         margie_sb_phase4_slot=1
     params:
         output_dir=lambda wildcards: rc('geneprop.output_dir', f"{CONTAINER_OUTPUTS_PREFIX}geneprop".format(genome=wildcards.genome), config=config),
@@ -2962,7 +2973,7 @@ rule run_operon:
     threads: rc('operon.threads', 4, config=config)
     resources:
         mem_mb=rc('operon.mem_mb', 2000, config=config),
-        runtime=rc('operon.runtime', 30, config=config)
+        runtime=runtime_min('operon.runtime', 30, config=config)
     params:
         output_dir=lambda wildcards: rc('operon.output_dir', f"{CONTAINER_OUTPUTS_PREFIX}operon".format(genome=wildcards.genome), config=config)
     container: sif_path('operon.sif', config=config, workflow_id='margie_sb')
@@ -3006,7 +3017,7 @@ rule run_phobius:
     threads: rc('phobius.threads', 4, config=config)
     resources:
         mem_mb=rc('phobius.mem_mb', 2000, config=config),
-        runtime=rc('phobius.runtime', 30, config=config)
+        runtime=runtime_min('phobius.runtime', 30, config=config)
     params:
         output_dir=lambda wildcards: rc('phobius.output_dir', f"{CONTAINER_OUTPUTS_PREFIX}phobius".format(genome=wildcards.genome), config=config)
     container: sif_path('phobius.sif', config=config, workflow_id='margie_sb')
@@ -3060,8 +3071,8 @@ rule run_tmbed:
     group: "tmbed"
     threads: rc('tmbed.threads', 4, config=config)
     resources:
-        mem_mb=rc('tmbed.mem_mb', 8000, config=config),
-        runtime=rc('tmbed.runtime', 60, config=config)
+        mem_mb=rc('margie_sb.tmbed.mem_mb', rc('tmbed.mem_mb', 32000, config=config), config=config),
+        runtime=runtime_min('margie_sb.tmbed.runtime', rc('tmbed.runtime', 240, config=config), config=config)
     params:
         output_dir=lambda wildcards: rc('tmbed.output_dir', f"{CONTAINER_OUTPUTS_PREFIX}tmbed".format(genome=wildcards.genome), config=config),
         model_dir=db_path('tmbed', config=config, workflow_id='margie_sb'),
@@ -3124,7 +3135,7 @@ rule run_signalp6:
     threads: rc('signalp6.threads', 8, config=config)
     resources:
         mem_mb=rc('signalp6.mem_mb', 5000, config=config),
-        runtime=rc('signalp6.runtime', 15, config=config)
+        runtime=runtime_min('signalp6.runtime', 15, config=config)
     params:
         output_dir=lambda wildcards: rc('signalp6.output_dir', f"{CONTAINER_OUTPUTS_PREFIX}signalp6".format(genome=wildcards.genome), config=config),
         process_script=SIGNALP6_PROCESS_SCRIPT
@@ -3186,7 +3197,7 @@ rule run_envelope:
     threads: rc('envelope.threads', 1, config=config)
     resources:
         mem_mb=rc('envelope.mem_mb', 1000, config=config),
-        runtime=rc('envelope.runtime', 15, config=config)
+        runtime=runtime_min('envelope.runtime', 15, config=config)
     params:
         input_dir=lambda wildcards: GENOME_PREFIX.format(genome=wildcards.genome).rstrip('/'),
         output_dir=lambda wildcards: rc('envelope.output_dir', f"{CONTAINER_OUTPUTS_PREFIX}envelope".format(genome=wildcards.genome), config=config)
@@ -3232,7 +3243,7 @@ rule run_deepsig:
     threads: rc('deepsig.threads', 4, config=config)
     resources:
         mem_mb=rc('deepsig.mem_mb', 2000, config=config),
-        runtime=rc('deepsig.runtime', 30, config=config),
+        runtime=runtime_min('deepsig.runtime', 30, config=config),
         margie_sb_phase8_slot=1
     params:
         output_dir=lambda wildcards: rc('deepsig.output_dir', f"{CONTAINER_OUTPUTS_PREFIX}deepsig".format(genome=wildcards.genome), config=config)
@@ -3295,7 +3306,7 @@ rule run_psortb:
     threads: rc('psortb.threads', 4, config=config)
     resources:
         mem_mb=rc('psortb.mem_mb', 2000, config=config),
-        runtime=rc('psortb.runtime', 30, config=config),
+        runtime=runtime_min('psortb.runtime', 30, config=config),
         margie_sb_phase8_slot=1
     params:
         output_dir=lambda wildcards: rc('psortb.output_dir', f"{CONTAINER_OUTPUTS_PREFIX}psortb".format(genome=wildcards.genome), config=config)
@@ -3353,7 +3364,7 @@ rule run_signalp4:
     threads: rc('signalp4.threads', 2, config=config)
     resources:
         mem_mb=rc('signalp4.mem_mb', 2000, config=config),
-        runtime=rc('signalp4.runtime', 30, config=config),
+        runtime=runtime_min('signalp4.runtime', 30, config=config),
         margie_sb_phase8_slot=1
     params:
         output_dir=lambda wildcards: rc('signalp4.output_dir', f"{CONTAINER_OUTPUTS_PREFIX}signalp4".format(genome=wildcards.genome), config=config),
@@ -3452,7 +3463,7 @@ rule load_signalp4_to_db:
 #     threads: rc('MYTOOL.threads', 4, config=config)
 #     resources:
 #         mem_mb=rc('MYTOOL.mem_mb', 4000, config=config),
-#         runtime=rc('MYTOOL.runtime', 120, config=config)
+#         runtime=runtime_min('MYTOOL.runtime', 120, config=config)
 #     params:
 #         output_dir=lambda wildcards: rc('MYTOOL.output_dir', f'mytool_work/{wildcards.genome}', config=config),
 #         db=db_path('MYTOOL', config=config, workflow_id='margie_sb')

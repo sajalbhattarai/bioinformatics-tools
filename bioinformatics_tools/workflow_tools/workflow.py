@@ -186,7 +186,7 @@ class WorkflowBase(ProgramBase):
 
         super().__init__()
 
-    def build_executable(self, key: WorkflowKey, config_overrides: dict = None, mode='notdev', compute_config: dict = None,
+    def build_executable(self, key: WorkflowKey, config_overrides: dict = None, mode='slurm', compute_config: dict = None,
                           extra_resources: dict = None, rerun_triggers: str = None, target: str = None,
                           max_jobs_override: int = None) -> list[str]:
         '''
@@ -195,7 +195,7 @@ class WorkflowBase(ProgramBase):
         Args:
             key: WorkflowKey defining the workflow
             config_overrides: Only workflow-specific overrides (input_fasta, output_dir, main_database)
-            mode: Execution mode ('dev' or other for slurm)
+            mode: Execution mode ('dev' for local-only; anything else uses slurm executor)
             compute_config: Compute cluster config (account, partition, resources)
             extra_resources: Optional named Snakemake resources (--resources k=v ...) to cap
                 concurrency of a specific group of rules independently of --jobs, e.g.
@@ -275,6 +275,7 @@ class WorkflowBase(ProgramBase):
         # Add default SLURM resources from compute config
         if mode != 'dev' and compute_config:
             default_resources = ['--default-resources']
+            min_runtime_minutes = 240
 
             # Required: account
             account = compute_config.get('account', '').strip()
@@ -288,7 +289,13 @@ class WorkflowBase(ProgramBase):
 
             # Optional: default runtime and memory
             if 'default_runtime' in compute_config:
-                default_resources.append(f'runtime={compute_config["default_runtime"]}')
+                runtime_value = compute_config.get('default_runtime')
+                try:
+                    runtime_minutes = int(runtime_value)
+                except (TypeError, ValueError):
+                    runtime_minutes = min_runtime_minutes
+                runtime_minutes = max(min_runtime_minutes, runtime_minutes)
+                default_resources.append(f'runtime={runtime_minutes}')
 
             if 'default_mem_mb' in compute_config:
                 default_resources.append(f'mem_mb={compute_config["default_mem_mb"]}')
@@ -463,7 +470,7 @@ class WorkflowBase(ProgramBase):
         output_dir = self.conf.get('output_dir', '')
         return f"{output_dir.rstrip('/')}/" if output_dir else ''
 
-    def _run_pipeline(self, key_name: str, smk_config: dict, cache_map: dict = None, mode='dev', compute_config: dict = None):
+    def _run_pipeline(self, key_name: str, smk_config: dict, cache_map: dict = None, mode='slurm', compute_config: dict = None):
         '''Shared pipeline execution: cache containers, restore outputs, run snakemake, store outputs.'''
         run_id = str(uuid.uuid4())
         LOGGER.info('Starting workflow "%s" run_id=%s', key_name, run_id)
@@ -528,7 +535,7 @@ class WorkflowBase(ProgramBase):
         self.succeeded(msg=f'Workflow "{key_name}" completed successfully', dex=result)
 
     def _run_pipeline_batch(self, key_name: str, smk_config: dict, genome_files: dict[str, str],
-                             cache_tool: str, cache_paths_fn, mode='dev', compute_config: dict = None,
+                             cache_tool: str, cache_paths_fn, mode='slurm', compute_config: dict = None,
                              extra_resources: dict = None, sif_files_override: list[tuple] = None,
                              rerun_triggers: str = None):
         '''Batch sibling of _run_pipeline() for workflows that accept a folder of
@@ -735,7 +742,7 @@ class WorkflowBase(ProgramBase):
         return (max_phase, len(done))
 
     def _run_pipeline_batch_sequential(self, key_name: str, smk_config: dict, genome_files: dict[str, str],
-                                        cache_map_fn, mode='dev', compute_config: dict = None,
+                                        cache_map_fn, mode='slurm', compute_config: dict = None,
                                         extra_resources: dict = None, sif_files_override: list[tuple] = None,
                                         rerun_triggers: str = None):
         '''Sequential-per-organism sibling of _run_pipeline_batch(), used by
