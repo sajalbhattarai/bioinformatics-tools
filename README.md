@@ -195,7 +195,7 @@ For machine-readable repository metadata, see [CITATION.cff](CITATION.cff).
 
 I (Sajal) gratefully acknowledge Dane Deemer ([wintermutant](https://github.com/wintermutant)) for his mentoring, and the design and development of the engine and GUI orchestration platform on which the MARGIE(SB) workflow was built. 
 
-Special thanks goes to Dr. Stephen R Lindemann for his vision and support throughout this development.
+Special thanks goes to Dr. Stephen R Lindemann for his vision, supervision  and support throughout this development.
 I also thank members of Diet-Microbiome-Interactions Laboratory for their feedbacks and intellectual inputs during this development.
 
 We thank Purdue RCAC for providing the research computing environment that supports this work.
