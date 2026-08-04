@@ -64,6 +64,10 @@ It is different from the `output_dir` folder used for generated run files, and d
 
 Databases default to `/depot/lindems/...`. To use your own, set those paths in the config — empty folders fill up as you run.
 
+If you use the GUI, you can also open the **File Explorer** page, browse to `~/.config/bioinformatics-tools/`, and edit `config.yaml` directly there. That same config file contains both the shared pipeline paths and the per-tool resource settings (threads, memory, runtime, partition overrides).
+
+For MARGIE(SB), GTDB-Tk should remain on the `highmem` partition because it loads a very large reference database into memory.
+
 ### Shared Storage Paths: What They Are, Why They Matter
 
 MARGIE(SB) uses a mix of:
@@ -186,3 +190,11 @@ Use the exact version you ran by checking repository Releases, and include that 
 Please also cite the individual tools and databases you use in the MARGIE pipeline, in accordance with their licensing and referencing requirements. The licensing gates during MARGIE runs provide the relevant licensing details, but you should still cross-check and confirm the requirements before publication.
 
 For machine-readable repository metadata, see [CITATION.cff](CITATION.cff).
+
+## Acknowledgements
+
+We gratefully acknowledge Dane Deemer ([wintermutant](https://github.com/wintermutant)) for the design and development of the engine and orchestration platform on which the MARGIE(SB) workflow was built.
+
+We thank Purdue RCAC for providing the research computing environment that supports this work.
+
+We also thank the developers and maintainers of the upstream tools, databases, and scientific software used throughout the pipeline. Their contributions make reproducible computational biology more powerful, more accessible, and more exciting to do.
