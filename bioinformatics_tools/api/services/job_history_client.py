@@ -40,11 +40,15 @@ def _run(connection: SSHConnection, action: str, payload: dict):
 
 def record_job_created(connection: SSHConnection, db_path: str, job_id: str, workflow: str,
                         genome_path: str | None, output_dir: str | None,
+                        owner_username: str | None = None,
+                        owner_cluster_username: str | None = None,
                         selected_tools: str | None = None,
                         relaunched_from: str | None = None) -> None:
     _run(connection, "create", {
         "db_path": db_path, "job_id": job_id, "workflow": workflow,
         "genome_path": genome_path, "output_dir": output_dir,
+        "owner_username": owner_username,
+        "owner_cluster_username": owner_cluster_username,
         "selected_tools": selected_tools, "relaunched_from": relaunched_from,
     })
 
@@ -53,29 +57,57 @@ def record_job_updated(connection: SSHConnection, db_path: str, job_id: str, **f
     _run(connection, "update", {"db_path": db_path, "job_id": job_id, "fields": fields})
 
 
-def get_job(connection: SSHConnection, db_path: str, job_id: str) -> dict | None:
-    return _run(connection, "get", {"db_path": db_path, "job_id": job_id})
+def get_job(connection: SSHConnection, db_path: str, job_id: str,
+            owner_username: str | None = None,
+            owner_cluster_username: str | None = None) -> dict | None:
+    return _run(connection, "get", {
+        "db_path": db_path,
+        "job_id": job_id,
+        "owner_username": owner_username,
+        "owner_cluster_username": owner_cluster_username,
+    })
 
 
 def list_jobs(connection: SSHConnection, db_path: str, workflow: str | None = None,
-              limit: int = 100, offset: int = 0) -> list[dict]:
+              limit: int = 100, offset: int = 0,
+              owner_username: str | None = None,
+              owner_cluster_username: str | None = None) -> list[dict]:
     result = _run(connection, "list", {
-        "db_path": db_path, "workflow": workflow, "limit": limit, "offset": offset,
+        "db_path": db_path,
+        "workflow": workflow,
+        "limit": limit,
+        "offset": offset,
+        "owner_username": owner_username,
+        "owner_cluster_username": owner_cluster_username,
     })
     return result if result is not None else []
 
 
 def list_jobs_and_count(connection: SSHConnection, db_path: str, workflow: str | None = None,
-                        limit: int = 100, offset: int = 0) -> tuple[list[dict], int]:
+                        limit: int = 100, offset: int = 0,
+                        owner_username: str | None = None,
+                        owner_cluster_username: str | None = None) -> tuple[list[dict], int]:
     """Single SSH call returning (jobs, total) — avoids the separate count round-trip."""
     result = _run(connection, "list_and_count", {
-        "db_path": db_path, "workflow": workflow, "limit": limit, "offset": offset,
+        "db_path": db_path,
+        "workflow": workflow,
+        "limit": limit,
+        "offset": offset,
+        "owner_username": owner_username,
+        "owner_cluster_username": owner_cluster_username,
     })
     if result is None:
         return [], 0
     return result.get("jobs", []), result.get("total", 0)
 
 
-def count_jobs(connection: SSHConnection, db_path: str, workflow: str | None = None) -> int:
-    result = _run(connection, "count", {"db_path": db_path, "workflow": workflow})
+def count_jobs(connection: SSHConnection, db_path: str, workflow: str | None = None,
+               owner_username: str | None = None,
+               owner_cluster_username: str | None = None) -> int:
+    result = _run(connection, "count", {
+        "db_path": db_path,
+        "workflow": workflow,
+        "owner_username": owner_username,
+        "owner_cluster_username": owner_cluster_username,
+    })
     return result if result is not None else 0

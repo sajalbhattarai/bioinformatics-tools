@@ -9,6 +9,7 @@ _build_connection() decrypts the stored private key and builds a per-user
 SSHConnection for each request.
 """
 import io
+import json
 import logging
 import posixpath
 import re
@@ -76,6 +77,19 @@ def _cfg_get(cfg: dict, key: str, default=None):
     return value
 
 
+def _cfg_set(cfg: dict, key: str, value) -> None:
+    """Set a nested config value using dot notation, creating parents."""
+    parts = key.split('.')
+    target = cfg
+    for part in parts[:-1]:
+        next_value = target.get(part)
+        if not isinstance(next_value, dict):
+            next_value = {}
+            target[part] = next_value
+        target = next_value
+    target[parts[-1]] = value
+
+
 def _first_nonempty(*values):
     for value in values:
         if value is None:
@@ -90,6 +104,375 @@ def _expand_remote_home(path: str, home_dir: str) -> str:
     if path.startswith("~"):
         return path.replace("~", home_dir, 1)
     return path
+
+
+def _is_user_scoped_db(path: str, username: str) -> bool:
+    """Legacy heuristic: DB/path basename starts with username- prefix."""
+    return posixpath.basename(path).startswith(f"{username}-")
+
+
+def _owner_marker_path(path: str, *, is_dir: bool) -> str:
+    """Companion marker path storing ownership/provenance metadata."""
+    if is_dir:
+        return f"{path.rstrip('/')}/.margie-owner.json"
+    return f"{path}.margie-owner.json"
+
+
+def _read_owner_marker(conn, path: str, *, is_dir: bool) -> dict | None:
+    """Read ownership marker JSON for a path, if it exists and is valid."""
+    marker = _owner_marker_path(path, is_dir=is_dir)
+    cmd = f"if [ -f {shlex.quote(marker)} ]; then cat {shlex.quote(marker)}; fi"
+    exit_code, output = _run_remote_check(conn, cmd)
+    if exit_code != 0 or not output:
+        return None
+    try:
+        data = json.loads(output)
+        return data if isinstance(data, dict) else None
+    except json.JSONDecodeError:
+        LOGGER.warning("Ignoring invalid ownership marker at %s", marker)
+        return None
+
+
+def _write_owner_marker(current_user: dict, conn, path: str, *, is_dir: bool,
+                        source_path: str | None = None) -> None:
+    """Write ownership marker for a user-scoped promoted path."""
+    marker = _owner_marker_path(path, is_dir=is_dir)
+    payload = {
+        "scope": "user",
+        "owner_username": current_user["username"],
+        "owner_cluster_username": current_user["cluster_username"],
+        "kind": "directory" if is_dir else "file",
+        "path": path,
+    }
+    if source_path:
+        payload["source_path"] = source_path
+    ssh_sftp.write_remote_text_file(
+        marker,
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        connection=conn,
+    )
+
+
+def _classify_path_scope(current_user: dict, conn, path: str, *, is_dir: bool) -> str:
+    """Classify path as user/shared using marker-first logic.
+
+    Returns one of:
+    - 'user'   : explicitly owned by current user
+    - 'shared' : no marker and no user prefix
+
+    Raises HTTPException if marker exists but belongs to a different user.
+    """
+    marker = _read_owner_marker(conn, path, is_dir=is_dir)
+    if marker is not None:
+        owner = marker.get("owner_username")
+        scope = marker.get("scope")
+        if scope == "user" and owner == current_user["username"]:
+            return "user"
+        if scope == "user" and owner and owner != current_user["username"]:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Configured path '{path}' is marked as private to user '{owner}'. "
+                    "Please select a shared template path or your own private path."
+                ),
+            )
+
+    # Backward-compatible fallback for pre-marker paths.
+    return "user" if _is_user_scoped_db(path, current_user["username"]) else "shared"
+
+
+def _versioned_user_db_path(template_db: str, username: str, version: int) -> str:
+    """Build '<dir>/<username>-<stem>-vN<ext>' from a shared template DB path."""
+    directory = posixpath.dirname(template_db)
+    filename = posixpath.basename(template_db)
+    stem, ext = posixpath.splitext(filename)
+    target_name = f"{username}-{stem}-v{version}{ext}"
+    return posixpath.join(directory, target_name) if directory else target_name
+
+
+def _versioned_user_dir_path(template_dir: str, username: str, version: int) -> str:
+    """Build '<dir>/<username>-<name>-vN' from a shared directory path."""
+    parent = posixpath.dirname(template_dir.rstrip('/'))
+    name = posixpath.basename(template_dir.rstrip('/'))
+    target_name = f"{username}-{name}-v{version}"
+    return posixpath.join(parent, target_name) if parent else target_name
+
+
+def _find_existing_user_db_versions(conn, template_db: str, username: str) -> list[int]:
+    """List existing version numbers for username-prefixed copies of template_db."""
+    directory = posixpath.dirname(template_db)
+    if not directory:
+        directory = "."
+    filename = posixpath.basename(template_db)
+    stem, ext = posixpath.splitext(filename)
+    prefix = f"{username}-{stem}-v"
+
+    try:
+        entries = ssh_sftp.list_remote_dir(directory, connection=conn)
+    except FileNotFoundError:
+        return []
+    except Exception:
+        return []
+
+    versions: list[int] = []
+    for entry in entries:
+        if entry.get("type") != "file":
+            continue
+        name = entry.get("name") or ""
+        if not name.startswith(prefix) or not name.endswith(ext):
+            continue
+        middle = name[len(prefix):]
+        if ext:
+            middle = middle[:-len(ext)]
+        if middle.isdigit():
+            versions.append(int(middle))
+    return sorted(versions)
+
+
+def _find_existing_user_dir_versions(conn, template_dir: str, username: str) -> list[int]:
+    """List existing version numbers for username-prefixed copies of a directory."""
+    parent = posixpath.dirname(template_dir.rstrip('/'))
+    if not parent:
+        parent = "."
+    base = posixpath.basename(template_dir.rstrip('/'))
+    prefix = f"{username}-{base}-v"
+
+    try:
+        entries = ssh_sftp.list_remote_dir(parent, connection=conn)
+    except FileNotFoundError:
+        return []
+    except Exception:
+        return []
+
+    versions: list[int] = []
+    for entry in entries:
+        if entry.get("type") != "directory":
+            continue
+        name = entry.get("name") or ""
+        if not name.startswith(prefix):
+            continue
+        suffix = name[len(prefix):]
+        if suffix.isdigit():
+            versions.append(int(suffix))
+    return sorted(versions)
+
+
+def _promote_shared_file_to_user_file(current_user: dict, conn, raw_path: str) -> tuple[str, bool]:
+    """Resolve a writable per-user file path, copying shared template on first use."""
+    expanded = _expand_remote_home(raw_path, current_user["home_dir"])
+    username = current_user["username"]
+
+    if _classify_path_scope(current_user, conn, expanded, is_dir=False) == "user":
+        # Upgrade legacy user-prefixed paths by backfilling marker metadata.
+        if _read_owner_marker(conn, expanded, is_dir=False) is None:
+            _write_owner_marker(current_user, conn, expanded, is_dir=False)
+        return expanded, False
+
+    try:
+        ssh_sftp.check_remote_file(expanded, connection=conn)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Shared file path does not exist or is unreadable: '{expanded}'. Details: {exc}",
+        )
+
+    existing_versions = _find_existing_user_db_versions(conn, expanded, username)
+    if existing_versions:
+        target = _versioned_user_db_path(expanded, username, existing_versions[-1])
+        if _read_owner_marker(conn, target, is_dir=False) is None:
+            _write_owner_marker(current_user, conn, target, is_dir=False, source_path=expanded)
+    else:
+        target = _versioned_user_db_path(expanded, username, 1)
+        target_dir = posixpath.dirname(target) or "."
+        cmd = (
+            f"mkdir -p {shlex.quote(target_dir)} && "
+            f"cp {shlex.quote(expanded)} {shlex.quote(target)}"
+        )
+        exit_code, output = _run_remote_check(conn, cmd)
+        if exit_code != 0:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Could not create user-specific file from shared template. "
+                    f"Source: '{expanded}', target: '{target}'. Details: {output or 'copy failed'}"
+                ),
+            )
+        LOGGER.info("Created user-specific shared file copy for %s: %s", username, target)
+        _write_owner_marker(current_user, conn, target, is_dir=False, source_path=expanded)
+    return target, True
+
+
+def _promote_shared_dir_to_user_dir(current_user: dict, conn, raw_path: str) -> tuple[str, bool]:
+    """Resolve a writable per-user directory path, creating versioned copy dir on first use."""
+    expanded = _expand_remote_home(raw_path, current_user["home_dir"])
+    username = current_user["username"]
+
+    if _classify_path_scope(current_user, conn, expanded.rstrip('/'), is_dir=True) == "user":
+        cmd = f"mkdir -p {shlex.quote(expanded)}"
+        exit_code, output = _run_remote_check(conn, cmd)
+        if exit_code != 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Could not ensure user directory exists: '{expanded}'. Details: {output or 'mkdir failed'}",
+            )
+        if _read_owner_marker(conn, expanded, is_dir=True) is None:
+            _write_owner_marker(current_user, conn, expanded, is_dir=True)
+        return expanded, False
+
+    existing_versions = _find_existing_user_dir_versions(conn, expanded, username)
+    if existing_versions:
+        target = _versioned_user_dir_path(expanded, username, existing_versions[-1])
+    else:
+        target = _versioned_user_dir_path(expanded, username, 1)
+
+    cmd = f"mkdir -p {shlex.quote(target)}"
+    exit_code, output = _run_remote_check(conn, cmd)
+    if exit_code != 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not create user-specific directory: '{target}'. Details: {output or 'mkdir failed'}",
+        )
+    if not existing_versions:
+        LOGGER.info("Created user-specific shared directory for %s: %s", username, target)
+    if _read_owner_marker(conn, target, is_dir=True) is None:
+        _write_owner_marker(current_user, conn, target, is_dir=True, source_path=expanded)
+    return target, True
+
+
+def _promote_shared_main_db_to_user_db(current_user: dict, user_config: dict, conn) -> tuple[str, bool]:
+    """Resolve a writable per-user main_database path.
+
+    If main_database already points to a username-prefixed file, keep it.
+    Otherwise treat it as a shared template and switch to a user-specific
+    versioned copy alongside it (reuse highest existing version if present,
+    else create v1 by copying the template).
+
+    Returns: (resolved_main_db_path, config_changed)
+    """
+    raw = user_config.get("main_database")
+    if not raw or str(raw).strip() == "":
+        raise HTTPException(
+            status_code=400,
+            detail="main_database is not configured. Please configure it in your Profile settings.",
+        )
+
+    username = current_user["username"]
+    expanded = _expand_remote_home(str(raw).strip(), current_user["home_dir"])
+    if _classify_path_scope(current_user, conn, expanded, is_dir=False) == "user":
+        if _read_owner_marker(conn, expanded, is_dir=False) is None:
+            _write_owner_marker(current_user, conn, expanded, is_dir=False)
+        return expanded, False
+
+    # Shared template mode: switch to user-specific path in same directory.
+    try:
+        ssh_sftp.check_remote_file(expanded, connection=conn)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Configured main_database does not exist or is unreadable: '{expanded}'. Details: {exc}",
+        )
+
+    existing_versions = _find_existing_user_db_versions(conn, expanded, username)
+    if existing_versions:
+        target = _versioned_user_db_path(expanded, username, existing_versions[-1])
+        if _read_owner_marker(conn, target, is_dir=False) is None:
+            _write_owner_marker(current_user, conn, target, is_dir=False, source_path=expanded)
+    else:
+        target = _versioned_user_db_path(expanded, username, 1)
+        target_dir = posixpath.dirname(target) or "."
+        cmd = (
+            f"mkdir -p {shlex.quote(target_dir)} && "
+            f"cp {shlex.quote(expanded)} {shlex.quote(target)}"
+        )
+        exit_code, output = _run_remote_check(conn, cmd)
+        if exit_code != 0:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Could not create user-specific main_database from shared template. "
+                    f"Source: '{expanded}', target: '{target}'. Details: {output or 'copy failed'}"
+                ),
+            )
+        LOGGER.info("Created user-specific main_database for %s: %s", username, target)
+        _write_owner_marker(current_user, conn, target, is_dir=False, source_path=expanded)
+
+    user_config["main_database"] = target
+    return target, True
+
+
+def _resolve_effective_main_db(current_user: dict, conn, user_config: dict, *, persist: bool) -> str:
+    """Resolve main_database and optionally persist config updates.
+
+    During workflow launches we persist the promoted user-scoped DB path so
+    subsequent runs keep using it by default.
+    """
+    main_db, changed = _promote_shared_main_db_to_user_db(current_user, user_config, conn)
+    if changed and persist:
+        ssh_sftp.write_remote_yaml(_config_path(current_user["home_dir"]), user_config, connection=conn)
+    return main_db
+
+
+def _resolve_effective_margie_sb_writable_paths(current_user: dict, conn, user_config: dict, *, persist: bool) -> dict:
+    """Promote writable margie_sb shared paths to per-user versioned paths.
+
+    Returns mapping of config key -> resolved path.
+    """
+    resolved: dict[str, str] = {}
+    changed_any = False
+
+    file_keys = (
+        (
+            'margie_sb.operon_database.occ_reference_pkl',
+            'operon_database.occ_reference_pkl',
+            '/depot/lindems/data/margie/operon-database/occ_reference.pkl',
+        ),
+        (
+            'margie_sb.fingerprint_database.path',
+            'fingerprint_database.path',
+            '/depot/lindems/data/margie/fingerprint-database/fingerprint-database.tsv',
+        ),
+    )
+    dir_keys = (
+        (
+            'margie_sb.genome_pool.path',
+            'genome_pool.path',
+            '/depot/lindems/data/margie/genome-pool',
+        ),
+        (
+            'margie_sb.scoring_results_historical.path',
+            'scoring_results_historical.path',
+            '/depot/lindems/data/margie/scoring-results-historical',
+        ),
+        (
+            'margie_sb.final_tables_depot.path',
+            'final_tables_depot.path',
+            '/depot/lindems/data/margie/final-tables',
+        ),
+        (
+            'margie_sb.sqlite_pipeline_snapshot.path',
+            'sqlite_pipeline_snapshot.path',
+            '/depot/lindems/data/margie/sqlite/pipeline-version',
+        ),
+    )
+
+    for key, legacy_key, default_value in file_keys:
+        raw = _first_nonempty(_cfg_get(user_config, key), _cfg_get(user_config, legacy_key), default_value)
+        target, changed = _promote_shared_file_to_user_file(current_user, conn, str(raw))
+        _cfg_set(user_config, key, target)
+        resolved[key] = target
+        changed_any = changed_any or changed
+
+    for key, legacy_key, default_value in dir_keys:
+        raw = _first_nonempty(_cfg_get(user_config, key), _cfg_get(user_config, legacy_key), default_value)
+        target, changed = _promote_shared_dir_to_user_dir(current_user, conn, str(raw))
+        _cfg_set(user_config, key, target)
+        resolved[key] = target
+        changed_any = changed_any or changed
+
+    if changed_any and persist:
+        ssh_sftp.write_remote_yaml(_config_path(current_user["home_dir"]), user_config, connection=conn)
+
+    return resolved
 
 
 def _run_remote_check(conn, command: str) -> tuple[int, str]:
@@ -209,7 +592,16 @@ def _resolve_job_work_dir(job_id: str, current_user: dict, conn) -> str:
             raise HTTPException(status_code=404, detail="Job not found")
 
         main_db = user_config.get('main_database')
-        row = job_history_client.get_job(conn, main_db, job_id) if main_db else None
+        row = (
+            job_history_client.get_job(
+                conn,
+                main_db,
+                job_id,
+                owner_username=current_user["username"],
+                owner_cluster_username=current_user["cluster_username"],
+            )
+            if main_db else None
+        )
         if row is None:
             raise HTTPException(status_code=404, detail="Job not found")
         work_dir = row.get("work_dir")
@@ -861,6 +1253,8 @@ def _launch_job(
         job_id, genome_path, user_id=current_user["user_id"],
         workflow=workflow, output_dir=output_dir,
         selected_tools=selected_tools_csv, relaunched_from=relaunched_from,
+        persist_owner_username=current_user["username"],
+        persist_owner_cluster_username=current_user["cluster_username"],
         persist_db_path=main_db, persist_connection=conn,
     )
     job_store.update(job_id, work_dir=output_dir)
@@ -965,7 +1359,12 @@ def run_workflow(genome_data: GenomeSend, current_user: dict = Depends(get_curre
         )
 
     if genome_data.workflow == 'margie_sb':
+        _resolve_effective_margie_sb_writable_paths(current_user, conn, user_config, persist=True)
         _validate_margie_sb_shared_paths(user_config, conn, current_user["home_dir"])
+
+    # Shared template DB -> per-user DB promotion (persisted), so concurrent
+    # users stop writing to one SQLite file.
+    main_db = _resolve_effective_main_db(current_user, conn, user_config, persist=True)
 
     # Resolves genome path / output dir, falling back to the user's global config
     # defaults (input_path / output_path) when the request didn't specify one.
@@ -1050,6 +1449,8 @@ def _job_from_history_row(row: dict) -> dict:
     """
     return {
         "job_id": row["job_id"],
+        "owner_username": row.get("owner_username"),
+        "owner_cluster_username": row.get("owner_cluster_username"),
         "status": row["status"],
         "phase": row.get("phase"),
         "genome_path": row.get("genome_path"),
@@ -1064,7 +1465,6 @@ def _job_from_history_row(row: dict) -> dict:
         "logs": row.get("logs") or "",
         "resumed_from_history": True,
     }
-
 
 def _load_job_for_action(job_id: str, current_user: dict, conn) -> dict:
     """Resolve a job_id to enough info to relaunch it (genome_path, workflow,
@@ -1090,7 +1490,16 @@ def _load_job_for_action(job_id: str, current_user: dict, conn) -> dict:
     except Exception:
         raise HTTPException(status_code=404, detail="Job not found")
     main_db = user_config.get('main_database')
-    row = job_history_client.get_job(conn, main_db, job_id) if main_db else None
+    row = (
+        job_history_client.get_job(
+            conn,
+            main_db,
+            job_id,
+            owner_username=current_user["username"],
+            owner_cluster_username=current_user["cluster_username"],
+        )
+        if main_db else None
+    )
     if row is None:
         raise HTTPException(status_code=404, detail="Job not found")
     return _job_from_history_row(row)
@@ -1174,7 +1583,10 @@ def _try_reattach(job_id: str, row: dict, conn, main_db: str | None,
 
 
 @router.get("/job_status/{job_id}")
-def get_job_status(job_id: str, current_user: dict = Depends(get_current_user)):
+def get_job_status(
+    job_id: str,
+    current_user: dict = Depends(get_current_user),
+):
     """Get status of a running job. Falls back to persistent history (e.g.
     after a dane-api restart wiped the in-memory job_store) before giving
     up. Returns 403 if the in-memory job belongs to a different user --
@@ -1199,7 +1611,16 @@ def get_job_status(job_id: str, current_user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Job not found")
 
     main_db = user_config.get('main_database')
-    row = job_history_client.get_job(conn, main_db, job_id) if main_db else None
+    row = (
+        job_history_client.get_job(
+            conn,
+            main_db,
+            job_id,
+            owner_username=current_user["username"],
+            owner_cluster_username=current_user["cluster_username"],
+        )
+        if main_db else None
+    )
     if row is None:
         raise HTTPException(status_code=404, detail="Job not found")
 
@@ -1250,6 +1671,21 @@ def get_job_status(job_id: str, current_user: dict = Depends(get_current_user)):
                     }
                     for m in enriched
                 ]
+        else:
+            # Persisted status said non-terminal but there are no active jobs.
+            # Normalize so this job no longer appears as running forever.
+            result["status"] = "cancelled"
+            result["phase"] = "Interrupted (no active jobs)"
+            try:
+                job_history_client.record_job_updated(
+                    conn,
+                    main_db,
+                    job_id,
+                    status=result["status"],
+                    phase=result["phase"],
+                )
+            except Exception as exc:
+                LOGGER.warning("Could not persist stale-status correction for %s: %s", job_id, exc)
 
     if not result.get("logs") and row.get("work_dir"):
         try:
@@ -1294,10 +1730,13 @@ def _reconcile_running(conn, main_db: str, rows: list[dict]) -> None:
             jid = row.get("job_id") or row.get("id")
             if not jid:
                 continue
+            # Keep matching strict: substring matches produced false positives
+            # and left finished jobs marked as running.
+            escaped = re.escape(jid)
             probe = (
                 f'rc=$(cat $HOME/.local/share/bsp/jobs/{jid}.rc 2>/dev/null); '
-                f'drv=$(pgrep -u $USER -f {jid} 2>/dev/null | wc -l); '
-                f'slurm=$(squeue -u $USER -h -o %j 2>/dev/null | grep -c {jid}); '
+                f'drv=$(pgrep -u $USER -f "dane_wf.*{escaped}" 2>/dev/null | wc -l); '
+                f'slurm=$(squeue -u $USER -h -o %j 2>/dev/null | grep -c "^{escaped}$"); '
                 f'echo "${{rc:--}}|$drv|$slurm"'
             )
             _in, out, _err = ssh.exec_command(probe)
@@ -1353,7 +1792,13 @@ def list_jobs(
 
     offset = (page - 1) * page_size
     rows, total_jobs = job_history_client.list_jobs_and_count(
-        conn, main_db, workflow=workflow, limit=page_size, offset=offset,
+        conn,
+        main_db,
+        workflow=workflow,
+        limit=page_size,
+        offset=offset,
+        owner_username=current_user["username"],
+        owner_cluster_username=current_user["cluster_username"],
     )
     # Verify anything claiming to be running before reporting it as such.
     _reconcile_running(conn, main_db, rows)
@@ -1392,7 +1837,16 @@ def cancel_job(job_id: str, current_user: dict = Depends(get_current_user)):
             raise HTTPException(status_code=404, detail="Job not found")
 
         main_db = user_config.get('main_database')
-        row = job_history_client.get_job(conn, main_db, job_id) if main_db else None
+        row = (
+            job_history_client.get_job(
+                conn,
+                main_db,
+                job_id,
+                owner_username=current_user["username"],
+                owner_cluster_username=current_user["cluster_username"],
+            )
+            if main_db else None
+        )
         if row is None:
             raise HTTPException(status_code=404, detail="Job not found")
         slurm_ids = [sj["job_id"] for sj in (row.get("slurm_jobs") or [])]
@@ -1454,12 +1908,7 @@ def _main_db_for(current_user: dict, conn) -> tuple[str, dict]:
             status_code=400,
             detail="Configuration file not found. Please create a configuration in your Profile settings first.",
         )
-    main_db = user_config.get('main_database')
-    if not main_db or str(main_db).strip() == '':
-        raise HTTPException(
-            status_code=400,
-            detail="main_database is not configured. Please configure it in your Profile settings.",
-        )
+    main_db = _resolve_effective_main_db(current_user, conn, user_config, persist=True)
     return main_db, user_config
 
 

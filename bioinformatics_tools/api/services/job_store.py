@@ -65,6 +65,8 @@ class JobStore:
     def create(self, job_id: str, genome_path: str, user_id: int | None = None,
                workflow: str | None = None, output_dir: str | None = None,
                selected_tools: str | None = None, relaunched_from: str | None = None,
+               persist_owner_username: str | None = None,
+               persist_owner_cluster_username: str | None = None,
                persist_db_path: str | None = None, persist_connection=None) -> dict:
         """Initialize a new job entry with all default fields.
 
@@ -105,6 +107,8 @@ class JobStore:
                 job_history_client.record_job_created(
                     persist_connection, persist_db_path, job_id,
                     workflow or "unknown", genome_path, output_dir,
+                    owner_username=persist_owner_username,
+                    owner_cluster_username=persist_owner_cluster_username,
                     selected_tools=selected_tools, relaunched_from=relaunched_from,
                 )
             except Exception as exc:

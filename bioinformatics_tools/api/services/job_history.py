@@ -35,6 +35,8 @@ LOGGER = logging.getLogger(__name__)
 CREATE_API_JOBS_SQL = """
 CREATE TABLE IF NOT EXISTS api_jobs (
     job_id TEXT PRIMARY KEY,
+    owner_username TEXT,
+    owner_cluster_username TEXT,
     workflow TEXT NOT NULL,
     genome_path TEXT,
     output_dir TEXT,
@@ -54,7 +56,15 @@ CREATE TABLE IF NOT EXISTS api_jobs (
 # Columns added after the table's initial release -- CREATE TABLE IF NOT
 # EXISTS above only helps brand-new databases; existing deployed ones need
 # an explicit ALTER (SQLite has no ADD COLUMN IF NOT EXISTS).
-_ADDED_COLUMNS = ("selected_tools", "relaunched_from", "logs", "slurm_jobs", "containers")
+_ADDED_COLUMNS = (
+    "owner_username",
+    "owner_cluster_username",
+    "selected_tools",
+    "relaunched_from",
+    "logs",
+    "slurm_jobs",
+    "containers",
+)
 
 # update() may be called with any subset of job_store's fields. status/
 # phase/work_dir are persisted on every change (job_store.update()'s own
@@ -103,6 +113,8 @@ def ensure_table(db_path: str) -> None:
 
 def record_job_created(db_path: str, job_id: str, workflow: str,
                        genome_path: str | None, output_dir: str | None,
+                       owner_username: str | None = None,
+                       owner_cluster_username: str | None = None,
                        selected_tools: str | None = None,
                        relaunched_from: str | None = None) -> None:
     if not db_path:
@@ -114,10 +126,21 @@ def record_job_created(db_path: str, job_id: str, workflow: str,
         try:
             conn.execute(
                 "INSERT OR REPLACE INTO api_jobs "
-                "(job_id, workflow, genome_path, output_dir, work_dir, status, phase, "
-                " selected_tools, relaunched_from, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, NULL, 'pending', 'Initializing', ?, ?, ?, ?)",
-                (job_id, workflow, genome_path, output_dir, selected_tools, relaunched_from, now, now),
+                "(job_id, owner_username, owner_cluster_username, workflow, genome_path, output_dir, "
+                " work_dir, status, phase, selected_tools, relaunched_from, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, NULL, 'pending', 'Initializing', ?, ?, ?, ?)",
+                (
+                    job_id,
+                    owner_username,
+                    owner_cluster_username,
+                    workflow,
+                    genome_path,
+                    output_dir,
+                    selected_tools,
+                    relaunched_from,
+                    now,
+                    now,
+                ),
             )
             conn.commit()
         finally:
@@ -172,14 +195,46 @@ def _decode_row(row: dict) -> dict:
     return row
 
 
-def get_job(db_path: str, job_id: str) -> dict | None:
+def _ownership_where(owner_username: str | None,
+                     owner_cluster_username: str | None) -> tuple[str, list[str]]:
+    """Return SQL ownership guard + params.
+
+    New rows carry owner_username directly. Legacy rows may have no owner_* at
+    all, so allow a narrow fallback for those: match owner_cluster_username when
+    present, or infer by path segment '/<cluster_user>/' in work_dir/genome_path.
+    """
+    if not owner_username:
+        return "", []
+
+    if owner_cluster_username:
+        like = f"%/{owner_cluster_username}/%"
+        return (
+            "(owner_username = ? "
+            "OR (owner_username IS NULL AND owner_cluster_username = ?) "
+            "OR (owner_username IS NULL AND owner_cluster_username IS NULL "
+            "    AND (work_dir LIKE ? OR genome_path LIKE ?)))",
+            [owner_username, owner_cluster_username, like, like],
+        )
+
+    return "(owner_username = ?)", [owner_username]
+
+
+def get_job(db_path: str, job_id: str,
+            owner_username: str | None = None,
+            owner_cluster_username: str | None = None) -> dict | None:
     if not db_path or not Path(os.path.expanduser(db_path)).exists():
         return None
     try:
         conn = _get_connection(db_path)
         try:
             conn.row_factory = sqlite3.Row
-            row = conn.execute("SELECT * FROM api_jobs WHERE job_id = ?", (job_id,)).fetchone()
+            where_ownership, owner_params = _ownership_where(owner_username, owner_cluster_username)
+            sql = "SELECT * FROM api_jobs WHERE job_id = ?"
+            params: list[str] = [job_id]
+            if where_ownership:
+                sql += f" AND {where_ownership}"
+                params.extend(owner_params)
+            row = conn.execute(sql, params).fetchone()
             return _decode_row(dict(row)) if row else None
         finally:
             conn.close()
@@ -188,7 +243,9 @@ def get_job(db_path: str, job_id: str) -> dict | None:
         return None
 
 
-def list_jobs(db_path: str, workflow: str | None = None, limit: int = 100, offset: int = 0) -> list[dict]:
+def list_jobs(db_path: str, workflow: str | None = None, limit: int = 100,
+              offset: int = 0, owner_username: str | None = None,
+              owner_cluster_username: str | None = None) -> list[dict]:
     """Most recent jobs first, optionally filtered to one workflow, paginated
     via limit/offset. Empty list (not an error) if the table doesn't exist
     yet -- a brand new user with no history at all is the normal case, not
@@ -200,16 +257,21 @@ def list_jobs(db_path: str, workflow: str | None = None, limit: int = 100, offse
         conn = _get_connection(db_path)
         try:
             conn.row_factory = sqlite3.Row
+            where_ownership, owner_params = _ownership_where(owner_username, owner_cluster_username)
+            conditions: list[str] = []
+            params: list[str | int] = []
             if workflow:
-                rows = conn.execute(
-                    "SELECT * FROM api_jobs WHERE workflow = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                    (workflow, limit, offset),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT * FROM api_jobs ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                    (limit, offset),
-                ).fetchall()
+                conditions.append("workflow = ?")
+                params.append(workflow)
+            if where_ownership:
+                conditions.append(where_ownership)
+                params.extend(owner_params)
+
+            where_clause = f"WHERE {' AND '.join(conditions)} " if conditions else ""
+            rows = conn.execute(
+                f"SELECT * FROM api_jobs {where_clause}ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                [*params, limit, offset],
+            ).fetchall()
             return [_decode_row(dict(r)) for r in rows]
         finally:
             conn.close()
@@ -219,16 +281,32 @@ def list_jobs(db_path: str, workflow: str | None = None, limit: int = 100, offse
 
 
 def list_jobs_and_count(db_path: str, workflow: str | None = None,
-                        limit: int = 100, offset: int = 0) -> dict:
+                        limit: int = 100, offset: int = 0,
+                        owner_username: str | None = None,
+                        owner_cluster_username: str | None = None) -> dict:
     """list_jobs + count_jobs in a single DB open — avoids two SSH round-trips
     when the caller needs both (e.g. the paginated /jobs endpoint)."""
     return {
-        "jobs": list_jobs(db_path, workflow=workflow, limit=limit, offset=offset),
-        "total": count_jobs(db_path, workflow=workflow),
+        "jobs": list_jobs(
+            db_path,
+            workflow=workflow,
+            limit=limit,
+            offset=offset,
+            owner_username=owner_username,
+            owner_cluster_username=owner_cluster_username,
+        ),
+        "total": count_jobs(
+            db_path,
+            workflow=workflow,
+            owner_username=owner_username,
+            owner_cluster_username=owner_cluster_username,
+        ),
     }
 
 
-def count_jobs(db_path: str, workflow: str | None = None) -> int:
+def count_jobs(db_path: str, workflow: str | None = None,
+               owner_username: str | None = None,
+               owner_cluster_username: str | None = None) -> int:
     """Total number of history rows matching workflow (or all rows if
     None) -- used alongside list_jobs's limit/offset to compute total
     page count on the API side."""
@@ -237,10 +315,17 @@ def count_jobs(db_path: str, workflow: str | None = None) -> int:
     try:
         conn = _get_connection(db_path)
         try:
+            where_ownership, owner_params = _ownership_where(owner_username, owner_cluster_username)
+            conditions: list[str] = []
+            params: list[str] = []
             if workflow:
-                row = conn.execute("SELECT COUNT(*) FROM api_jobs WHERE workflow = ?", (workflow,)).fetchone()
-            else:
-                row = conn.execute("SELECT COUNT(*) FROM api_jobs").fetchone()
+                conditions.append("workflow = ?")
+                params.append(workflow)
+            if where_ownership:
+                conditions.append(where_ownership)
+                params.extend(owner_params)
+            where_clause = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+            row = conn.execute(f"SELECT COUNT(*) FROM api_jobs{where_clause}", params).fetchone()
             return row[0] if row else 0
         finally:
             conn.close()
@@ -271,25 +356,46 @@ def _main() -> int:
         record_job_created(
             db_path, payload["job_id"], payload["workflow"],
             payload.get("genome_path"), payload.get("output_dir"),
+            payload.get("owner_username"), payload.get("owner_cluster_username"),
             payload.get("selected_tools"), payload.get("relaunched_from"),
         )
     elif action == "update":
         record_job_updated(db_path, payload["job_id"], **payload.get("fields", {}))
     elif action == "get":
-        result = get_job(db_path, payload["job_id"])
+        result = get_job(
+            db_path,
+            payload["job_id"],
+            payload.get("owner_username"),
+            payload.get("owner_cluster_username"),
+        )
         print(json.dumps(result))
     elif action == "list":
         result = list_jobs(
-            db_path, payload.get("workflow"), payload.get("limit", 100), payload.get("offset", 0),
+            db_path,
+            payload.get("workflow"),
+            payload.get("limit", 100),
+            payload.get("offset", 0),
+            payload.get("owner_username"),
+            payload.get("owner_cluster_username"),
         )
         print(json.dumps(result))
     elif action == "list_and_count":
         result = list_jobs_and_count(
-            db_path, payload.get("workflow"), payload.get("limit", 100), payload.get("offset", 0),
+            db_path,
+            payload.get("workflow"),
+            payload.get("limit", 100),
+            payload.get("offset", 0),
+            payload.get("owner_username"),
+            payload.get("owner_cluster_username"),
         )
         print(json.dumps(result))
     elif action == "count":
-        result = count_jobs(db_path, payload.get("workflow"))
+        result = count_jobs(
+            db_path,
+            payload.get("workflow"),
+            payload.get("owner_username"),
+            payload.get("owner_cluster_username"),
+        )
         print(json.dumps(result))
     else:
         print(f"unknown action: {action}", file=sys.stderr)

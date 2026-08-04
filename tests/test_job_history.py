@@ -24,6 +24,8 @@ class TestEnsureTableMigration:
         db_path = str(tmp_path / "fresh.db")
         job_history.ensure_table(db_path)
         cols = _columns(db_path)
+        assert "owner_username" in cols
+        assert "owner_cluster_username" in cols
         assert "selected_tools" in cols
         assert "relaunched_from" in cols
 
@@ -57,6 +59,8 @@ class TestEnsureTableMigration:
         job_history.ensure_table(db_path)
 
         cols = _columns(db_path)
+        assert "owner_username" in cols
+        assert "owner_cluster_username" in cols
         assert "selected_tools" in cols
         assert "relaunched_from" in cols
 
@@ -79,9 +83,12 @@ class TestRecordJobCreatedRoundTrip:
         db_path = str(tmp_path / "round_trip.db")
         job_history.record_job_created(
             db_path, "job-1", "margie_sb", "/genomes/e.fasta", "/out/2026-06-21-1200",
+            owner_username="alice", owner_cluster_username="alice_cluster",
             selected_tools="quast,gtdbtk", relaunched_from="job-0",
         )
         row = job_history.get_job(db_path, "job-1")
+        assert row["owner_username"] == "alice"
+        assert row["owner_cluster_username"] == "alice_cluster"
         assert row["selected_tools"] == "quast,gtdbtk"
         assert row["relaunched_from"] == "job-0"
 
@@ -144,3 +151,48 @@ class TestFinalSnapshotPersistence:
         assert row["containers"] == []
         assert row["logs"] is None
         assert row["relaunched_from"] is None
+
+
+class TestOwnershipFiltering:
+    def test_list_and_get_are_scoped_by_owner(self, tmp_path):
+        db_path = str(tmp_path / "owners.db")
+        job_history.record_job_created(
+            db_path, "job-a", "margie_sb", "/genomes/a.fasta", "/scratch/team/alice/out",
+            owner_username="alice", owner_cluster_username="alice",
+        )
+        job_history.record_job_created(
+            db_path, "job-b", "margie_sb", "/genomes/b.fasta", "/scratch/team/bob/out",
+            owner_username="bob", owner_cluster_username="bob",
+        )
+
+        rows = job_history.list_jobs(
+            db_path,
+            owner_username="alice",
+            owner_cluster_username="alice",
+        )
+        assert [r["job_id"] for r in rows] == ["job-a"]
+
+        assert job_history.get_job(
+            db_path,
+            "job-b",
+            owner_username="alice",
+            owner_cluster_username="alice",
+        ) is None
+
+    def test_legacy_ownerless_rows_can_fallback_to_cluster_path(self, tmp_path):
+        db_path = str(tmp_path / "legacy_ownerless.db")
+        job_history.record_job_created(
+            db_path, "legacy-a", "margie_sb", "/scratch/negishi/alice/genomes/a.fasta",
+            "/scratch/negishi/alice/margie-output/2026-08-04-1200",
+        )
+        job_history.record_job_created(
+            db_path, "legacy-b", "margie_sb", "/scratch/negishi/bob/genomes/b.fasta",
+            "/scratch/negishi/bob/margie-output/2026-08-04-1200",
+        )
+
+        rows = job_history.list_jobs(
+            db_path,
+            owner_username="alice-app",
+            owner_cluster_username="alice",
+        )
+        assert [r["job_id"] for r in rows] == ["legacy-a"]
