@@ -21,8 +21,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 # so a workflow's defaults only need to be written in one place.
 WORKFLOW_PATH_DEFAULTS: dict[str, dict[str, str]] = {
     'margie_sb': {
-        'sif_path': str(_REPO_ROOT / 'sif'),
-        'db_root': str(_REPO_ROOT / 'db'),
+        'sif_path': '/depot/lindems/data/margie/sif',
+        'db_root': '/depot/lindems/data/margie/db',
         'input_path': str(_REPO_ROOT / 'user-input'),
         'output_path': str(_REPO_ROOT / 'output'),
     },
