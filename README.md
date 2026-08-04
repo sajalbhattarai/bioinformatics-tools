@@ -6,7 +6,8 @@
 
 Annotates prokaryotic genomes, finds operons, and scores how confident it is about each gene.
 
-<img src="docs/img/ecoli-s10-ribosomal-operon.png" width="820" alt="E. coli operon with per-gene confidence">
+<img src="docs/img/Sedimenticola_thiotaurini_GCF_001007875.1.png" width="820" alt="Sedimenticola_thiotaurini_GCF_001007875.1 circular genome map: Operon mode">
+<img src="docs/img/operon_0313_operon_map.png" width="820" alt="Operon map for Operon_0313 in Sedimenticola_thiotaurini_GCF_001007875.1 ">
 
 [![Hosted app](https://img.shields.io/badge/Hosted_app-Open-2ea44f?style=for-the-badge)](https://bsp.anvilcloud.rcac.purdue.edu/)
 [![Front-end (GUI)](https://img.shields.io/badge/Front--end-biolab--fe-1f6feb?style=for-the-badge)](https://github.com/sajalbhattarai/biolab-fe)
