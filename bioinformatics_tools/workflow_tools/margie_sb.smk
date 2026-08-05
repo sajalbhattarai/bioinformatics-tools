@@ -657,6 +657,12 @@ def _phase4_8_targets_for_genome(genome):
     local-compute work always completes fully before the next one's starts,
     while RASTtk itself (bottlenecked on BV-BRC's remote service) keeps
     running ahead independently."""
+    # target_genome is unset (empty) whenever this file is parsed for a run
+    # that doesn't target the phase4_8/phase4_12_one_genome rules -- returning
+    # [] then keeps their input: blocks from formatting bogus '{output_dir}//tool'
+    # paths (empty {genome}), which Snakemake warns about as double '/'.
+    if not genome:
+        return []
     targets = []
     for t in PHASE4_TOOLS:
         if rc_bool(f'run_{t}', True, config=config):
@@ -696,6 +702,8 @@ def _phase9_12_targets_for_genome(genome, include_llm=True):
     include_llm=False omits the LLM token so phase4_12_one_genome_no_llm
     can be used as Stage 2 of the sequential orchestrator while LLM runs
     across all genomes in a separate Stage 3 (rule llm_all)."""
+    if not genome:
+        return []
     targets = []
     if rc_bool('run_consolidation', True, config=config):
         targets.append(CONSOLIDATION_TOKEN.format(genome=genome))
