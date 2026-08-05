@@ -21,6 +21,12 @@ if not os.path.exists(LOADER_PYTHON):
 # tool's results.tsv (same value on every row -- envelope's decision is
 # genome-level). Used by run_deepsig/run_psortb instead of a plain cp.
 ENRICH_SCRIPT = os.path.join(WORKFLOW_DIR, "enrich_with_envelope.py")
+# signalp6/signalp4 have no build-here container/entrypoint (HPC envmodules
+# wrapping images we don't own), so unlike phobius/tmbed/deepsig/psortb they
+# need a real host-side processing script -- these are it, bundled here
+# rather than left as an unset user-supplied path.
+SIGNALP6_SCRIPT = os.path.join(WORKFLOW_DIR, "process_signalp6.py")
+SIGNALP4_SCRIPT = os.path.join(WORKFLOW_DIR, "process_signalp4.py")
 
 
 def _resolve_cfg_path(preferred_key: str, legacy_key: str, default: str) -> str:
@@ -303,7 +309,7 @@ PSORTB_TOKEN = f"{GENOME_PREFIX}psortb/psortb_db.tkn"
 # (config: signalp4.process_script), same as signalp6.
 SIGNALP4_RESULTS = f"{GENOME_PREFIX}signalp4/signalp4_results.tsv"
 SIGNALP4_TOKEN = f"{GENOME_PREFIX}signalp4/signalp4_db.tkn"
-SIGNALP4_PROCESS_SCRIPT = rc('signalp4.process_script', '', config=config)
+SIGNALP4_PROCESS_SCRIPT = rc('signalp4.process_script', SIGNALP4_SCRIPT, config=config)
 
 # Phase9 (consolidation): modular pipeline of scripts under
 # workflow_tools/consolidation/ (detect-columns.py, merge-all-columns.py,
@@ -3153,18 +3159,21 @@ rule run_signalp6:
     shell:
         """
         echo "=== MARGIE_SB PHASE 6: SIGNALP6 ({wildcards.genome}) ==="
-        mkdir -p {params.output_dir}
-        SIGNALP6_CMD="signalp6 --fastafile {input.faa} --output_dir {params.output_dir} --organism other --mode fast --format none"
+        RAW_DIR={params.output_dir}/raw
+        PROCESSED_DIR={params.output_dir}/processed
+        mkdir -p "$RAW_DIR" "$PROCESSED_DIR"
+        SIGNALP6_CMD="signalp6 --fastafile {input.faa} --output_dir $RAW_DIR --organism other --mode fast --format none"
         $SIGNALP6_CMD
         {LOADER_PYTHON} {params.process_script} \
-            --input {params.output_dir}/prediction_results.txt \
-            --output {output.results} \
+            --input "$RAW_DIR/prediction_results.txt" \
+            --output "$PROCESSED_DIR/signalp6_results.tsv" \
             --organism-name {wildcards.genome} \
             --tool-used "SignalP 6.0" \
             --command-used "$SIGNALP6_CMD" \
             --database-used "SignalP6 bundled model | biocontainers/default + signalp6/6.0-fast" \
             --input-path {input.faa} \
-            --output-path {params.output_dir}
+            --output-path "$RAW_DIR"
+        cp "$PROCESSED_DIR/signalp6_results.tsv" {output.results}
         """
 
 
@@ -3390,18 +3399,21 @@ rule run_signalp4:
             *)         GRAMCLASS=gram- ;;
         esac
         echo "[signalp4] envelope_type=$ENVTYPE -> -t $GRAMCLASS"
-        mkdir -p {params.output_dir}
+        RAW_DIR={params.output_dir}/raw
+        PROCESSED_DIR={params.output_dir}/processed
+        mkdir -p "$RAW_DIR" "$PROCESSED_DIR"
         SIGNALP4_CMD="signalp -f short -t $GRAMCLASS {input.faa}"
-        $SIGNALP4_CMD > {params.output_dir}/signalp4_out.txt 2> {params.output_dir}/signalp4_err.txt
+        $SIGNALP4_CMD > "$RAW_DIR/signalp4_out.txt" 2> "$RAW_DIR/signalp4_err.txt"
         {LOADER_PYTHON} {params.process_script} \
-            --input {params.output_dir}/signalp4_out.txt \
-            --output {output.results} \
+            --input "$RAW_DIR/signalp4_out.txt" \
+            --output "$PROCESSED_DIR/signalp4_results.tsv" \
             --organism-name {wildcards.genome} \
             --gram-class "$GRAMCLASS" \
             --command-used "$SIGNALP4_CMD" \
             --database-used "SignalP4 bundled model | biocontainers/default + signalp4/4.1" \
             --input-path {input.faa} \
-            --output-path {params.output_dir}
+            --output-path "$RAW_DIR"
+        cp "$PROCESSED_DIR/signalp4_results.tsv" {output.results}
         """
 
 
