@@ -1287,12 +1287,16 @@ def _launch_job(
     # minutes per run and still serving a stale build without --refresh.
     # The venv binary has neither problem: ~0.4s overhead, always current.
     # Cheap best-effort check (a git fetch + SHA compare) so an already-
-    # provisioned account picks up a new deployment without the user having to
-    # do anything -- never blocks the launch, see sync_remote_dane_wf's docstring.
-    try:
-        sync_remote_dane_wf(conn)
-    except Exception as exc:
-        LOGGER.warning("dane_wf version-sync check raised unexpectedly, ignoring: %s", exc)
+    # provisioned account picks up a new margie_sb deployment without the user
+    # having to do anything -- never blocks the launch, see sync_remote_dane_wf's
+    # docstring. margie is wintermutant's own workflow; deliberately left alone
+    # here so it keeps doing whatever it already does on his deployment, with
+    # no forced branch/ref applied to it by this team's tooling.
+    if workflow == 'margie_sb':
+        try:
+            sync_remote_dane_wf(conn)
+        except Exception as exc:
+            LOGGER.warning("dane_wf version-sync check raised unexpectedly, ignoring: %s", exc)
 
     command = (
         f"{license_env}~/bioinformatics-tools/.venv/bin/dane_wf {dispatch_tokens}"

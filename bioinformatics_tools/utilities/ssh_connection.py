@@ -28,9 +28,12 @@ LOGGER = logging.getLogger(__name__)
 # BACKEND_REPO_URL there so the bootstrap below and a laptop's `./margie.sh`
 # provision an identical checkout.
 _DANE_WF_REPO_URL = 'https://github.com/sajalbhattarai/bioinformatics-tools.git'
-# Branch a hosted deployment's users' remote checkouts should track. Override
-# with BSP_REMOTE_DANE_WF_REF if this API is ever deployed from a different branch.
-_DANE_WF_REF = os.getenv('BSP_REMOTE_DANE_WF_REF', 'master')
+# Branch margie_sb's remote checkouts should track once wintermutant has this
+# team's work -- for now this branch IS that work, still ahead of master.
+# margie itself is wintermutant's and is deliberately never auto-synced (see
+# sync_remote_dane_wf's callers), so this only ever matters for margie_sb.
+# Override with BSP_MARGIE_SB_REF once this branch is merged upstream.
+_MARGIE_SB_REF = os.getenv('BSP_MARGIE_SB_REF', 'for-website-deployment')
 
 # ---------------------------------------------------------------------------
 # Connection pool.
@@ -256,7 +259,7 @@ test -x "$HOME/bioinformatics-tools/.venv/bin/dane_wf"
         )
 
 
-def sync_remote_dane_wf(conn: SSHConnection, *, ref: str = _DANE_WF_REF, timeout: float = 30.0) -> str:
+def sync_remote_dane_wf(conn: SSHConnection, *, ref: str = _MARGIE_SB_REF, timeout: float = 30.0) -> str:
     """
     Best-effort check for whether this user's ~/bioinformatics-tools is behind
     `ref` on origin, and if so (and only if the checkout has no local changes),
