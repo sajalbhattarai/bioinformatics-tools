@@ -43,10 +43,17 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# Add CORS middleware (adjust origins for production)
+# Add CORS middleware. Defaults to "*" so local dev (frontend on any of
+# localhost:5173/3000/etc.) keeps working untouched; set BSP_CORS_ALLOWED_ORIGINS
+# to a comma-separated list of real origins (e.g. https://dane.anvilcloud.rcac.purdue.edu)
+# for a public deployment.
+_cors_origins_env = os.getenv('BSP_CORS_ALLOWED_ORIGINS', '*')
+_cors_origins = ["*"] if _cors_origins_env == '*' else [
+    origin.strip() for origin in _cors_origins_env.split(',') if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify your frontend domain
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
