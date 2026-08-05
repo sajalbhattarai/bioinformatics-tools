@@ -91,10 +91,23 @@ def runtime_min(key: str, default: int, config=None) -> int:
         minutes = int(default)
     return max(MIN_SLURM_RUNTIME_MINUTES, minutes)
 
-# Run-wide (not per-genome) mutex directory serializing run_rasttk's actual
-# BV-BRC submissions -- see run_rasttk's own comment for why this exists
-# instead of the margie_sb_phase3_slot Snakemake resource it replaced.
-RASTTK_BVBRC_LOCK = f"{_OUTPUT_ROOT}/.rasttk_bvbrc.lock" if _OUTPUT_ROOT else ".rasttk_bvbrc.lock"
+# Account-wide (not per-run, not per-genome) mutex directory serializing
+# run_rasttk's actual BV-BRC submissions -- see run_rasttk's own comment for
+# why this exists instead of the margie_sb_phase3_slot Snakemake resource it
+# replaced. Deliberately NOT under _OUTPUT_ROOT: a per-run lock path gets
+# swept up (with its already-"acquired" acquired_at marker, timestamp intact)
+# whenever a new run's local-storage cache is staged from an older run's
+# directory, so a brand new run could be born already seeing a stale lock as
+# freshly-held -- confirmed live on 2026-08-05 (two new runs both stuck
+# behind a lock time-stamped hours before either run directory existed). A
+# fixed, account-wide path also correctly serializes BV-BRC submissions
+# across multiple concurrent margie_sb invocations, not just genomes within
+# one of them.
+RASTTK_BVBRC_LOCK = _resolve_shared_dir(
+    'rasttk.bvbrc_lock_dir', 'rasttk_bvbrc_lock_dir',
+    os.path.join(os.path.expanduser('~'), '.cache', 'bioinformatics-tools', 'rasttk_bvbrc.lock'),
+)
+os.makedirs(os.path.dirname(RASTTK_BVBRC_LOCK), exist_ok=True)
 
 # Quast outputs
 QUAST_RESULTS = f"{GENOME_PREFIX}quast/quast.tsv"
@@ -2270,13 +2283,16 @@ rule run_rasttk:
     {genome}-wildcarded, same shape as run_quast/run_gtdbtk.
 
     BV-BRC submissions are serialized by a plain mkdir-based mutex
-    (RASTTK_BVBRC_LOCK, one fixed path per run, shared by every genome) around
-    just the BV-BRC call -- a Snakemake resource pool leaks under the SLURM
-    jobstep executor (two rasttk jobs can start at once and the pool can stick
-    at 0, deadlocking the run). mkdir is atomic and needs no extra binary in the
-    container (no flock dependency in rasttk.sif). The stale-lock check (age vs.
-    2x this rule's own runtime) self-heals if a holder is hard-killed
-    (walltime/OOM) before its EXIT trap can fire.
+    (RASTTK_BVBRC_LOCK, one fixed path for this whole account, shared by every
+    genome AND every concurrent margie_sb run) around just the BV-BRC call --
+    a Snakemake resource pool leaks under the SLURM jobstep executor (two
+    rasttk jobs can start at once and the pool can stick at 0, deadlocking
+    the run). mkdir is atomic and needs no extra binary in the container (no
+    flock dependency in rasttk.sif). The stale-lock check (age vs. this
+    rule's own runtime) self-heals if a holder is hard-killed (walltime/OOM)
+    before its EXIT trap can fire -- 1x, not 2x, because SLURM itself already
+    guarantees no real holder can still be running past its own walltime, so
+    waiting past that point only wastes cluster allocation for nothing.
 
     This mutex alone still let Snakemake submit up to max_jobs genomes'
     rasttk SLURM jobs at once, all but one just idling on the mutex's sleep
@@ -2325,7 +2341,10 @@ rule run_rasttk:
             exit 1
         fi
 
-        STALE_SECONDS=$(( {resources.runtime} * 60 * 2 ))
+        # 1x, not 2x: SLURM itself already guarantees no real holder can
+        # still be running past its own walltime allocation, so any lock
+        # older than that is a hard-killed holder whose EXIT trap never ran.
+        STALE_SECONDS=$(( {resources.runtime} * 60 ))
         while ! mkdir "{params.lock}" 2>/dev/null; do
             if [[ -f "{params.lock}/acquired_at" ]]; then
                 AGE=$(( $(date +%s) - $(cat "{params.lock}/acquired_at" 2>/dev/null || echo 0) ))
