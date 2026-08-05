@@ -31,7 +31,7 @@ from bioinformatics_tools.api.models import GenomeSend, SlurmSend
 from bioinformatics_tools.api.services import job_history_client, job_runner
 from bioinformatics_tools.api.services.job_store import job_store
 from bioinformatics_tools.utilities import ssh_sftp, ssh_slurm
-from bioinformatics_tools.utilities.ssh_connection import make_user_connection
+from bioinformatics_tools.utilities.ssh_connection import make_user_connection, sync_remote_dane_wf
 from bioinformatics_tools.workflow_tools.workflow_helpers import GENOME_EXTENSIONS
 from bioinformatics_tools.workflow_tools.workflow_registry import (
     MARGIE_SB_PHASED_TOOLS,
@@ -1286,6 +1286,14 @@ def _launch_job(
     # api/main.py) actually points at fresh code -- confirmed adding 3+
     # minutes per run and still serving a stale build without --refresh.
     # The venv binary has neither problem: ~0.4s overhead, always current.
+    # Cheap best-effort check (a git fetch + SHA compare) so an already-
+    # provisioned account picks up a new deployment without the user having to
+    # do anything -- never blocks the launch, see sync_remote_dane_wf's docstring.
+    try:
+        sync_remote_dane_wf(conn)
+    except Exception as exc:
+        LOGGER.warning("dane_wf version-sync check raised unexpectedly, ignoring: %s", exc)
+
     command = (
         f"{license_env}~/bioinformatics-tools/.venv/bin/dane_wf {dispatch_tokens}"
         f" input: {genome_path} output_dir: {output_dir}{selected_tools_arg}{full_operon_map_arg}{resume_arg}"

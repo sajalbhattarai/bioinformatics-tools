@@ -15,6 +15,7 @@ API usage:
 """
 import io
 import logging
+import os
 import shlex
 import threading
 import time
@@ -27,6 +28,9 @@ LOGGER = logging.getLogger(__name__)
 # BACKEND_REPO_URL there so the bootstrap below and a laptop's `./margie.sh`
 # provision an identical checkout.
 _DANE_WF_REPO_URL = 'https://github.com/sajalbhattarai/bioinformatics-tools.git'
+# Branch a hosted deployment's users' remote checkouts should track. Override
+# with BSP_REMOTE_DANE_WF_REF if this API is ever deployed from a different branch.
+_DANE_WF_REF = os.getenv('BSP_REMOTE_DANE_WF_REF', 'master')
 
 # ---------------------------------------------------------------------------
 # Connection pool.
@@ -250,5 +254,71 @@ test -x "$HOME/bioinformatics-tools/.venv/bin/dane_wf"
         raise RuntimeError(
             f'Could not provision dane_wf on the remote account (exit {exit_code}): {output or "(no output)"}'
         )
+
+
+def sync_remote_dane_wf(conn: SSHConnection, *, ref: str = _DANE_WF_REF, timeout: float = 30.0) -> str:
+    """
+    Best-effort check for whether this user's ~/bioinformatics-tools is behind
+    `ref` on origin, and if so (and only if the checkout has no local changes),
+    fast-forwards it with `git reset --hard` + `uv sync`.
+
+    Deliberately cheap in the common case: a `git fetch` plus a SHA comparison,
+    not a full uv sync every call -- job launches must not pay the multi-second
+    (or worse) cost profiled for `uvx --from` (see ensure_remote_dane_wf's
+    docstring) on every single run. The heavier reset+sync only happens on the
+    rare call where a real deployment has actually landed since this user's
+    last job.
+
+    Never raises: a missing checkout, a non-git install (e.g. one placed by
+    margie.sh's archive-download fallback), a dirty tree, or any SSH hiccup is
+    logged and skipped so a sync-check problem never blocks an actual job.
+    Returns a short status string for logging/telemetry: 'unprovisioned',
+    'not-a-git-checkout', 'up-to-date', 'dirty-skipped', 'updated', or
+    'error: <detail>'.
+    """
+    command = f'''cd "$HOME/bioinformatics-tools" 2>/dev/null || {{ echo NO_CHECKOUT; exit 0; }}
+[ -d .git ] || {{ echo NOT_GIT; exit 0; }}
+git fetch origin {shlex.quote(ref)} --quiet 2>&1
+local_sha=$(git rev-parse HEAD 2>/dev/null)
+remote_sha=$(git rev-parse origin/{shlex.quote(ref)} 2>/dev/null)
+if [ -z "$remote_sha" ] || [ "$local_sha" = "$remote_sha" ]; then
+    echo UP_TO_DATE
+    exit 0
+fi
+if [ -n "$(git status --porcelain)" ]; then
+    echo DIRTY_SKIPPED
+    exit 0
+fi
+git checkout {shlex.quote(ref)} --quiet 2>/dev/null || true
+git reset --hard "$remote_sha" --quiet
+export PATH="$HOME/.local/bin:$PATH"
+uv sync --quiet
+echo "UPDATED $remote_sha"
+'''
+    try:
+        ssh = conn.connect()
+        _, stdout, stderr = ssh.exec_command(command, timeout=timeout)
+        stdout.channel.settimeout(timeout)
+        exit_code = stdout.channel.recv_exit_status()
+        output = (stdout.read().decode(errors='replace') + stderr.read().decode(errors='replace')).strip()
+    except Exception as exc:
+        LOGGER.warning('dane_wf version-sync check raised, skipping: %s', exc)
+        return f'error: {exc}'
+
+    if exit_code != 0:
+        LOGGER.warning('dane_wf version-sync check failed (exit %s): %s', exit_code, output)
+        return f'error: exit {exit_code}: {output}'
+
+    if 'NO_CHECKOUT' in output:
+        return 'unprovisioned'
+    if 'NOT_GIT' in output:
+        return 'not-a-git-checkout'
+    if 'DIRTY_SKIPPED' in output:
+        LOGGER.info('Remote ~/bioinformatics-tools has local changes; skipped auto-update.')
+        return 'dirty-skipped'
+    if 'UPDATED' in output:
+        LOGGER.info('Updated remote ~/bioinformatics-tools: %s', output)
+        return 'updated'
+    return 'up-to-date'
 
 
