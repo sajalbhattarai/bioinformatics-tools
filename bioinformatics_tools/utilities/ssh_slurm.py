@@ -85,7 +85,7 @@ DRIVER_ACCOUNT = None          # None -> let SLURM pick the default account
 # uses, not what it asked for, so a generous limit costs nothing but a slightly
 # harder backfill -- and with one CPU that is easy to place. Runs measured so
 # far take one to three hours; this is a wide margin, not a prediction.
-DRIVER_TIME = '3-00:00:00'
+DRIVER_TIME = '7-00:00:00'
 DRIVER_CPUS = 2                # Snakemake plus the shell that waits on it
 DRIVER_MEM_MB = 8000
 

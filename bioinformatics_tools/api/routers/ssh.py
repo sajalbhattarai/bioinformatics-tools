@@ -1921,6 +1921,28 @@ def cancel_job(job_id: str, current_user: dict = Depends(get_current_user)):
         ssh_slurm.cancel_slurm_jobs(slurm_ids, connection=conn)
         LOGGER.info("Cancelled %d SLURM jobs for job %s", len(slurm_ids), job_id)
 
+    # Belt-and-braces sweep. slurm_ids is only what the GUI parsed from the log,
+    # so a worker submitted since the last poll -- or one orphaned when the
+    # driver died without cancelling its children -- would survive the stop and
+    # keep holding a node (exactly the leftover worker seen running hours after
+    # its run ended). Every worker shares the run's work_dir, so cancel any
+    # still-active job there that the tracked list missed. The driver lives in
+    # $HOME, not work_dir, so this never touches it or another run.
+    work_dir = job.get("work_dir") if job is not None else row.get("work_dir")
+    swept_ids: list[str] = []
+    if work_dir:
+        try:
+            stragglers = ssh_slurm.find_active_jobs_in_workdir(
+                work_dir, current_user["cluster_username"], connection=conn,
+            )
+        except Exception as exc:
+            LOGGER.warning("Work_dir sweep failed for %s: %s", job_id, exc)
+            stragglers = []
+        swept_ids = [m["job_id"] for m in stragglers if m["job_id"] not in slurm_ids]
+        if swept_ids:
+            ssh_slurm.cancel_slurm_jobs(swept_ids, connection=conn)
+            LOGGER.info("Cancelled %d untracked work_dir jobs for %s", len(swept_ids), job_id)
+
     # Only for runs with no driver job -- ones started before the driver moved
     # into SLURM, which really do have a dane_wf on the login node. Skipped
     # otherwise because this is a pkill by name across the whole account: with
@@ -1941,7 +1963,7 @@ def cancel_job(job_id: str, current_user: dict = Depends(get_current_user)):
     return {
         "success": True,
         "message": f"Cancelled job {job_id}",
-        "slurm_jobs_cancelled": len(slurm_ids)
+        "slurm_jobs_cancelled": len(slurm_ids) + len(swept_ids)
     }
 
 
