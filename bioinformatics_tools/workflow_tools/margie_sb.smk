@@ -112,6 +112,7 @@ GTDBTK_RESULTS = f"{GENOME_PREFIX}gtdbtk/gtdbtk_results.tsv"
 # which needs the genome's real NCBI genetic code, not a user-facing result.
 GTDBTK_TRANSLATION_TABLE = f"{GENOME_PREFIX}gtdbtk/translation_table.tsv"
 GTDBTK_TOKEN = f"{GENOME_PREFIX}gtdbtk/gtdbtk_db.tkn"
+GTDBTK_COMPUTE_TOKEN = f"{GENOME_PREFIX}gtdbtk/gtdbtk_compute.tkn"
 
 # Batch-only staging/aggregation paths for GTDB-Tk. The container is far
 # more efficient when it sees the whole genome set once (shared DB/index
@@ -136,6 +137,7 @@ GTDBTK_BATCH_DONE = f"{GTDBTK_BATCH_PREFIX}/gtdbtk_batch.done"
 # depends on by name).
 RASTTK_RESULTS = f"{GENOME_PREFIX}rasttk/rast.tsv"
 RASTTK_TOKEN = f"{GENOME_PREFIX}rasttk/rasttk_db.tkn"
+RASTTK_COMPUTE_TOKEN = f"{GENOME_PREFIX}rasttk/rasttk_compute.tkn"
 RASTTK_FAA = f"{GENOME_PREFIX}rasttk/rast.faa"
 RASTTK_GFF = f"{GENOME_PREFIX}rasttk/rast.gff"
 
@@ -162,6 +164,7 @@ PHASE4_TOOLS = [
 ]
 PHASE4_RESULTS = {t: f"{GENOME_PREFIX}{t}/{t}_results.tsv" for t in PHASE4_TOOLS}
 PHASE4_TOKENS = {t: f"{GENOME_PREFIX}{t}/{t}_db.tkn" for t in PHASE4_TOOLS}
+PHASE4_COMPUTE_TOKENS = {t: f"{GENOME_PREFIX}{t}/{t}_compute.tkn" for t in PHASE4_TOOLS}
 # geneprop's --tigrfam-domtbl needs tigrfam's raw (untouched) hmmscan
 # domtblout, not its own normalised processed/tigrfam_results.tsv. Still
 # lives in output_dir (not container_outputs) since it's a real input: to
@@ -227,6 +230,7 @@ INTERPRO_PERDB_TOKEN_PATTERN = f"{GENOME_PREFIX}interpro/interpro_{{db}}_db.tkn"
 # all (no -d flag in its entrypoint), unlike every phase4 tool.
 OPERON_RESULTS = f"{GENOME_PREFIX}operon/operon_results.tsv"
 OPERON_TOKEN = f"{GENOME_PREFIX}operon/operon_db.tkn"
+OPERON_COMPUTE_TOKEN = f"{GENOME_PREFIX}operon/operon_compute.tkn"
 
 # Phase6 (per workflow_registry.py's authoritative phase numbers, not just
 # file order): phobius + tmbed. Envelope-independent localization/topology
@@ -238,6 +242,7 @@ OPERON_TOKEN = f"{GENOME_PREFIX}operon/operon_db.tkn"
 # deliberately not wired here yet.
 PHOBIUS_RESULTS = f"{GENOME_PREFIX}phobius/phobius_results.tsv"
 PHOBIUS_TOKEN = f"{GENOME_PREFIX}phobius/phobius_db.tkn"
+PHOBIUS_COMPUTE_TOKEN = f"{GENOME_PREFIX}phobius/phobius_compute.tkn"
 # Per-protein summary (one row per protein) alongside the per-topology-
 # segment PHOBIUS_RESULTS -- plumbing, not loaded to db, same role as
 # GTDBTK_TRANSLATION_TABLE/ENVELOPE_SUMMARY.
@@ -251,6 +256,7 @@ PHOBIUS_TOP1 = f"{GENOME_PREFIX}phobius/phobius_top1.tsv"
 # CPU inference too slow.
 TMBED_RESULTS = f"{GENOME_PREFIX}tmbed/tmbed_results.tsv"
 TMBED_TOKEN = f"{GENOME_PREFIX}tmbed/tmbed_db.tkn"
+TMBED_COMPUTE_TOKEN = f"{GENOME_PREFIX}tmbed/tmbed_compute.tkn"
 
 # SignalP 6.0: also phase6 (registry: "HPC module, no envelope dependency"),
 # but no build-here container exists -- it's an HPC environment module
@@ -262,6 +268,7 @@ TMBED_TOKEN = f"{GENOME_PREFIX}tmbed/tmbed_db.tkn"
 # user-supplied filesystem path (config: signalp6.process_script).
 SIGNALP6_RESULTS = f"{GENOME_PREFIX}signalp6/signalp6_results.tsv"
 SIGNALP6_TOKEN = f"{GENOME_PREFIX}signalp6/signalp6_db.tkn"
+SIGNALP6_COMPUTE_TOKEN = f"{GENOME_PREFIX}signalp6/signalp6_compute.tkn"
 SIGNALP6_PROCESS_SCRIPT = rc('signalp6.process_script', '', config=config)
 
 # Phase7: envelope type inference (monoderm vs diderm). Different shape:
@@ -274,6 +281,7 @@ SIGNALP6_PROCESS_SCRIPT = rc('signalp6.process_script', '', config=config)
 # raw/+processed/ directly with no organism-name subdirectory.
 ENVELOPE_RESULTS = f"{GENOME_PREFIX}envelope/envelope_results.tsv"
 ENVELOPE_TOKEN = f"{GENOME_PREFIX}envelope/envelope_db.tkn"
+ENVELOPE_COMPUTE_TOKEN = f"{GENOME_PREFIX}envelope/envelope_compute.tkn"
 # Genome-level diderm/monoderm decision -- always exactly one row, even
 # when envelope_results.tsv has zero marker-hit rows. Plumbing for phase8's
 # envelope-dependent localization tools (psortb, deepsig, signalp4), not a
@@ -290,6 +298,7 @@ ENVELOPE_SUMMARY = f"{GENOME_PREFIX}envelope/envelope_summary.tsv"
 # param, ready for whenever that's added.
 DEEPSIG_RESULTS = f"{GENOME_PREFIX}deepsig/deepsig_results.tsv"
 DEEPSIG_TOKEN = f"{GENOME_PREFIX}deepsig/deepsig_db.tkn"
+DEEPSIG_COMPUTE_TOKEN = f"{GENOME_PREFIX}deepsig/deepsig_compute.tkn"
 
 # PSORTb v3: same envelope-dependent phase8 shape as deepsig, but -k uses
 # single-letter codes (n|p|a) instead of GRAM-/GRAM+/ARCH. PSORTb itself
@@ -298,6 +307,7 @@ DEEPSIG_TOKEN = f"{GENOME_PREFIX}deepsig/deepsig_db.tkn"
 # call), so no extra handling needed on this side.
 PSORTB_RESULTS = f"{GENOME_PREFIX}psortb/psortb_results.tsv"
 PSORTB_TOKEN = f"{GENOME_PREFIX}psortb/psortb_db.tkn"
+PSORTB_COMPUTE_TOKEN = f"{GENOME_PREFIX}psortb/psortb_compute.tkn"
 
 # SignalP4: also phase8 (envelope-dependent), also no build-here container
 # (envmodules: biocontainers/default + signalp4/4.1 -- real command after
@@ -309,6 +319,7 @@ PSORTB_TOKEN = f"{GENOME_PREFIX}psortb/psortb_db.tkn"
 # (config: signalp4.process_script), same as signalp6.
 SIGNALP4_RESULTS = f"{GENOME_PREFIX}signalp4/signalp4_results.tsv"
 SIGNALP4_TOKEN = f"{GENOME_PREFIX}signalp4/signalp4_db.tkn"
+SIGNALP4_COMPUTE_TOKEN = f"{GENOME_PREFIX}signalp4/signalp4_compute.tkn"
 SIGNALP4_PROCESS_SCRIPT = rc('signalp4.process_script', SIGNALP4_SCRIPT, config=config)
 
 # Phase9 (consolidation): modular pipeline of scripts under
@@ -2042,7 +2053,6 @@ rule run_gtdbtk_batch:
         results=GTDBTK_BATCH_RESULTS,
         translation_table=GTDBTK_BATCH_TRANSLATION_TABLE,
         done=GTDBTK_BATCH_DONE
-    group: "gtdbtk"
     threads: rc('margie_sb.gtdbtk.threads', rc('gtdbtk.threads', 64, config=config), config=config)
     resources:
         mem_mb=rc('margie_sb.gtdbtk.mem_mb',
@@ -2141,7 +2151,8 @@ rule split_gtdbtk_batch_per_genome:
         done=GTDBTK_BATCH_DONE
     output:
         results=GTDBTK_RESULTS,
-        translation_table=GTDBTK_TRANSLATION_TABLE
+        translation_table=GTDBTK_TRANSLATION_TABLE,
+        tkn=GTDBTK_COMPUTE_TOKEN
     run:
         import csv
         from pathlib import Path
@@ -2217,6 +2228,8 @@ rule split_gtdbtk_batch_per_genome:
             writer.writeheader()
             writer.writerow(row)
 
+        Path(output.tkn).write_text(f"gtdbtk split complete for {genome}\n")
+
 
 rule load_gtdbtk_to_db:
     """Load GTDB-Tk classification results into SQLite database. Not
@@ -2282,8 +2295,8 @@ rule run_rasttk:
     output:
         results=RASTTK_RESULTS,
         faa=RASTTK_FAA,
-        gff=RASTTK_GFF
-    group: "rasttk"
+        gff=RASTTK_GFF,
+        tkn=RASTTK_COMPUTE_TOKEN
     threads: rc('rasttk.threads', 8, config=config)
     resources:
         mem_mb=rc('rasttk.mem_mb', 8000, config=config),
@@ -2332,6 +2345,7 @@ rule run_rasttk:
         cp $(find {params.output_dir} -name "genome.faa") {output.faa}
         cp $(find {params.output_dir} -name "genome.gff") {output.gff}
         cp $(find {params.output_dir} -type d -name gene_calls -print -quit)/* $(dirname {output.results})/ || true
+        echo "rasttk complete for {wildcards.genome}" > {output.tkn}
         """
 
 
@@ -2341,7 +2355,6 @@ rule load_rasttk_to_db:
         results=RASTTK_RESULTS
     output:
         tkn=RASTTK_TOKEN
-    group: "rasttk"
     params:
         db=MAIN_DATABASE,
         script=LOAD_SCRIPT
@@ -2360,8 +2373,8 @@ rule run_cog:
         faa=RASTTK_FAA,
         gtdbtk_results=GTDBTK_RESULTS
     output:
-        results=PHASE4_RESULTS['cog']
-    group: "cog"
+        results=PHASE4_RESULTS['cog'],
+        tkn=PHASE4_COMPUTE_TOKENS['cog']
     # Confirmed via a real run's snakemake log: cog/pfam/dbcan/geneprop got
     # zero SLURM submissions across hours of runtime despite being
     # correctly selected and planned, while every other phase4 tool sharing
@@ -2387,6 +2400,7 @@ rule run_cog:
         DOMAIN=$(awk -F'\\t' 'NR==1{{for(i=1;i<=NF;i++) if($i=="GTDBTK_domain") c=i}} NR==2{{print $c}}' {input.gtdbtk_results})
         /usr/local/bin/run -i {input.faa} -o {params.output_dir} -d {params.db} -t {threads} -e {params.evalue} --organism-name {wildcards.genome} --domain "$DOMAIN"
         cp {params.output_dir}/{wildcards.genome}/processed/cog_results.tsv {output.results}
+        echo "cog complete for {wildcards.genome}" > {output.tkn}
         """
 
 
@@ -2396,7 +2410,6 @@ rule load_cog_to_db:
         results=PHASE4_RESULTS['cog']
     output:
         tkn=PHASE4_TOKENS['cog']
-    group: "cog"
     params:
         db=MAIN_DATABASE,
         script=LOAD_SCRIPT
@@ -2413,8 +2426,8 @@ rule run_pfam:
         faa=RASTTK_FAA,
         gtdbtk_results=GTDBTK_RESULTS
     output:
-        results=PHASE4_RESULTS['pfam']
-    group: "pfam"
+        results=PHASE4_RESULTS['pfam'],
+        tkn=PHASE4_COMPUTE_TOKENS['pfam']
     priority: 1  # see run_cog's priority comment -- same scheduler-starvation fix
     threads: rc('pfam.threads', 8, config=config)
     resources:
@@ -2431,6 +2444,7 @@ rule run_pfam:
         DOMAIN=$(awk -F'\\t' 'NR==1{{for(i=1;i<=NF;i++) if($i=="GTDBTK_domain") c=i}} NR==2{{print $c}}' {input.gtdbtk_results})
         /usr/local/bin/run -i {input.faa} -o {params.output_dir} -d {params.db} -t {threads} --organism-name {wildcards.genome} --domain "$DOMAIN"
         cp {params.output_dir}/{wildcards.genome}/processed/pfam_results.tsv {output.results}
+        echo "pfam complete for {wildcards.genome}" > {output.tkn}
         """
 
 
@@ -2440,7 +2454,6 @@ rule load_pfam_to_db:
         results=PHASE4_RESULTS['pfam']
     output:
         tkn=PHASE4_TOKENS['pfam']
-    group: "pfam"
     params:
         db=MAIN_DATABASE,
         script=LOAD_SCRIPT
@@ -2460,8 +2473,8 @@ rule run_tigrfam:
         gtdbtk_results=GTDBTK_RESULTS
     output:
         results=PHASE4_RESULTS['tigrfam'],
-        domtbl=TIGRFAM_DOMTBL
-    group: "tigrfam"
+        domtbl=TIGRFAM_DOMTBL,
+        tkn=PHASE4_COMPUTE_TOKENS['tigrfam']
     threads: rc('tigrfam.threads', 8, config=config)
     resources:
         mem_mb=rc('tigrfam.mem_mb', 4000, config=config),
@@ -2478,6 +2491,7 @@ rule run_tigrfam:
         /usr/local/bin/run -i {input.faa} -o {params.output_dir} -d {params.db} -t {threads} --organism-name {wildcards.genome} --domain "$DOMAIN"
         cp {params.output_dir}/{wildcards.genome}/processed/tigrfam_results.tsv {output.results}
         cp {params.output_dir}/{wildcards.genome}/raw/tigrfam_domtbl.out {output.domtbl}
+        echo "tigrfam complete for {wildcards.genome}" > {output.tkn}
         """
 
 
@@ -2487,7 +2501,6 @@ rule load_tigrfam_to_db:
         results=PHASE4_RESULTS['tigrfam']
     output:
         tkn=PHASE4_TOKENS['tigrfam']
-    group: "tigrfam"
     params:
         db=MAIN_DATABASE,
         script=LOAD_SCRIPT
@@ -2504,8 +2517,8 @@ rule run_merops:
         faa=RASTTK_FAA,
         gtdbtk_results=GTDBTK_RESULTS
     output:
-        results=PHASE4_RESULTS['merops']
-    group: "merops"
+        results=PHASE4_RESULTS['merops'],
+        tkn=PHASE4_COMPUTE_TOKENS['merops']
     threads: rc('merops.threads', 8, config=config)
     resources:
         mem_mb=rc('merops.mem_mb', 4000, config=config),
@@ -2522,6 +2535,7 @@ rule run_merops:
         DOMAIN=$(awk -F'\\t' 'NR==1{{for(i=1;i<=NF;i++) if($i=="GTDBTK_domain") c=i}} NR==2{{print $c}}' {input.gtdbtk_results})
         /usr/local/bin/run -i {input.faa} -o {params.output_dir} -d {params.db} -t {threads} -e {params.evalue} --organism-name {wildcards.genome} --domain "$DOMAIN"
         cp {params.output_dir}/{wildcards.genome}/processed/merops_results.tsv {output.results}
+        echo "merops complete for {wildcards.genome}" > {output.tkn}
         """
 
 
@@ -2531,7 +2545,6 @@ rule load_merops_to_db:
         results=PHASE4_RESULTS['merops']
     output:
         tkn=PHASE4_TOKENS['merops']
-    group: "merops"
     params:
         db=MAIN_DATABASE,
         script=LOAD_SCRIPT
@@ -2548,8 +2561,8 @@ rule run_tcdb:
         faa=RASTTK_FAA,
         gtdbtk_results=GTDBTK_RESULTS
     output:
-        results=PHASE4_RESULTS['tcdb']
-    group: "tcdb"
+        results=PHASE4_RESULTS['tcdb'],
+        tkn=PHASE4_COMPUTE_TOKENS['tcdb']
     threads: rc('tcdb.threads', 8, config=config)
     resources:
         mem_mb=rc('tcdb.mem_mb', 4000, config=config),
@@ -2567,6 +2580,7 @@ rule run_tcdb:
         DOMAIN=$(awk -F'\\t' 'NR==1{{for(i=1;i<=NF;i++) if($i=="GTDBTK_domain") c=i}} NR==2{{print $c}}' {input.gtdbtk_results})
         /usr/local/bin/run -i {input.faa} -o {params.output_dir} -d {params.db} -t {threads} -e {params.evalue} --id {params.pct_id} --organism-name {wildcards.genome} --domain "$DOMAIN"
         cp {params.output_dir}/{wildcards.genome}/processed/tcdb_results.tsv {output.results}
+        echo "tcdb complete for {wildcards.genome}" > {output.tkn}
         """
 
 
@@ -2576,7 +2590,6 @@ rule load_tcdb_to_db:
         results=PHASE4_RESULTS['tcdb']
     output:
         tkn=PHASE4_TOKENS['tcdb']
-    group: "tcdb"
     params:
         db=MAIN_DATABASE,
         script=LOAD_SCRIPT
@@ -2593,8 +2606,8 @@ rule run_uniprot:
         faa=RASTTK_FAA,
         gtdbtk_results=GTDBTK_RESULTS
     output:
-        results=PHASE4_RESULTS['uniprot']
-    group: "uniprot"
+        results=PHASE4_RESULTS['uniprot'],
+        tkn=PHASE4_COMPUTE_TOKENS['uniprot']
     threads: rc('uniprot.threads', 8, config=config)
     resources:
         mem_mb=rc('uniprot.mem_mb', 4000, config=config),
@@ -2612,6 +2625,7 @@ rule run_uniprot:
         DOMAIN=$(awk -F'\\t' 'NR==1{{for(i=1;i<=NF;i++) if($i=="GTDBTK_domain") c=i}} NR==2{{print $c}}' {input.gtdbtk_results})
         /usr/local/bin/run -i {input.faa} -o {params.output_dir} -d {params.db} -t {threads} -e {params.evalue} --id {params.pct_id} --organism-name {wildcards.genome} --domain "$DOMAIN"
         cp {params.output_dir}/{wildcards.genome}/processed/uniprot_results.tsv {output.results}
+        echo "uniprot complete for {wildcards.genome}" > {output.tkn}
         """
 
 
@@ -2621,7 +2635,6 @@ rule load_uniprot_to_db:
         results=PHASE4_RESULTS['uniprot']
     output:
         tkn=PHASE4_TOKENS['uniprot']
-    group: "uniprot"
     params:
         db=MAIN_DATABASE,
         script=LOAD_SCRIPT
@@ -2638,8 +2651,8 @@ rule run_kegg:
         faa=RASTTK_FAA,
         gtdbtk_results=GTDBTK_RESULTS
     output:
-        results=PHASE4_RESULTS['kegg']
-    group: "kegg"
+        results=PHASE4_RESULTS['kegg'],
+        tkn=PHASE4_COMPUTE_TOKENS['kegg']
     threads: rc('kegg.threads', 8, config=config)
     resources:
         mem_mb=rc('kegg.mem_mb', 16000, config=config),
@@ -2655,6 +2668,7 @@ rule run_kegg:
         DOMAIN=$(awk -F'\\t' 'NR==1{{for(i=1;i<=NF;i++) if($i=="GTDBTK_domain") c=i}} NR==2{{print $c}}' {input.gtdbtk_results})
         /usr/local/bin/run -i {input.faa} -o {params.output_dir} -d {params.db} -t {threads} --organism-name {wildcards.genome} --domain "$DOMAIN"
         cp {params.output_dir}/{wildcards.genome}/processed/kegg_results.tsv {output.results}
+        echo "kegg complete for {wildcards.genome}" > {output.tkn}
         """
 
 
@@ -2664,7 +2678,6 @@ rule load_kegg_to_db:
         results=PHASE4_RESULTS['kegg']
     output:
         tkn=PHASE4_TOKENS['kegg']
-    group: "kegg"
     params:
         db=MAIN_DATABASE,
         script=LOAD_SCRIPT
@@ -2681,8 +2694,8 @@ rule run_eggnog:
         faa=RASTTK_FAA,
         gtdbtk_results=GTDBTK_RESULTS
     output:
-        results=PHASE4_RESULTS['eggnog']
-    group: "eggnog"
+        results=PHASE4_RESULTS['eggnog'],
+        tkn=PHASE4_COMPUTE_TOKENS['eggnog']
     threads: rc('eggnog.threads', 8, config=config)
     resources:
         mem_mb=rc('eggnog.mem_mb', 64000, config=config),
@@ -2698,6 +2711,7 @@ rule run_eggnog:
         DOMAIN=$(awk -F'\\t' 'NR==1{{for(i=1;i<=NF;i++) if($i=="GTDBTK_domain") c=i}} NR==2{{print $c}}' {input.gtdbtk_results})
         /usr/local/bin/run -i {input.faa} -o {params.output_dir} -d {params.db} -t {threads} --organism-name {wildcards.genome} --domain "$DOMAIN"
         cp {params.output_dir}/{wildcards.genome}/processed/eggnog_results.tsv {output.results}
+        echo "eggnog complete for {wildcards.genome}" > {output.tkn}
         """
 
 
@@ -2707,7 +2721,6 @@ rule load_eggnog_to_db:
         results=PHASE4_RESULTS['eggnog']
     output:
         tkn=PHASE4_TOKENS['eggnog']
-    group: "eggnog"
     params:
         db=MAIN_DATABASE,
         script=LOAD_SCRIPT
@@ -2724,8 +2737,8 @@ rule run_dbcan:
         faa=RASTTK_FAA,
         gtdbtk_results=GTDBTK_RESULTS
     output:
-        results=PHASE4_RESULTS['dbcan']
-    group: "dbcan"
+        results=PHASE4_RESULTS['dbcan'],
+        tkn=PHASE4_COMPUTE_TOKENS['dbcan']
     priority: 1  # see run_cog's priority comment -- same scheduler-starvation fix
     threads: rc('dbcan.threads', 8, config=config)
     resources:
@@ -2742,6 +2755,7 @@ rule run_dbcan:
         DOMAIN=$(awk -F'\\t' 'NR==1{{for(i=1;i<=NF;i++) if($i=="GTDBTK_domain") c=i}} NR==2{{print $c}}' {input.gtdbtk_results})
         /usr/local/bin/run -i {input.faa} -o {params.output_dir} -d {params.db} -t {threads} --organism-name {wildcards.genome} --domain "$DOMAIN"
         cp {params.output_dir}/{wildcards.genome}/processed/dbcan_results.tsv {output.results}
+        echo "dbcan complete for {wildcards.genome}" > {output.tkn}
         """
 
 
@@ -2751,7 +2765,6 @@ rule load_dbcan_to_db:
         results=PHASE4_RESULTS['dbcan']
     output:
         tkn=PHASE4_TOKENS['dbcan']
-    group: "dbcan"
     params:
         db=MAIN_DATABASE,
         script=LOAD_SCRIPT
@@ -2768,8 +2781,8 @@ rule run_pgap:
         faa=RASTTK_FAA,
         gtdbtk_results=GTDBTK_RESULTS
     output:
-        results=PHASE4_RESULTS['pgap']
-    group: "pgap"
+        results=PHASE4_RESULTS['pgap'],
+        tkn=PHASE4_COMPUTE_TOKENS['pgap']
     threads: rc('pgap.threads', 8, config=config)
     resources:
         mem_mb=rc('pgap.mem_mb', 12000, config=config),
@@ -2785,6 +2798,7 @@ rule run_pgap:
         DOMAIN=$(awk -F'\\t' 'NR==1{{for(i=1;i<=NF;i++) if($i=="GTDBTK_domain") c=i}} NR==2{{print $c}}' {input.gtdbtk_results})
         /usr/local/bin/run -i {input.faa} -o {params.output_dir} -d {params.db} -t {threads} --organism-name {wildcards.genome} --domain "$DOMAIN"
         cp {params.output_dir}/{wildcards.genome}/processed/pgap_results.tsv {output.results}
+        echo "pgap complete for {wildcards.genome}" > {output.tkn}
         """
 
 
@@ -2794,7 +2808,6 @@ rule load_pgap_to_db:
         results=PHASE4_RESULTS['pgap']
     output:
         tkn=PHASE4_TOKENS['pgap']
-    group: "pgap"
     params:
         db=MAIN_DATABASE,
         script=LOAD_SCRIPT
@@ -2823,8 +2836,8 @@ rule run_interpro:
         gtdbtk_results=GTDBTK_RESULTS
     output:
         results=PHASE4_RESULTS['interpro'],
-        perdb=list(INTERPRO_PERDB_RESULTS.values())
-    group: "interpro"
+        perdb=list(INTERPRO_PERDB_RESULTS.values()),
+        tkn=PHASE4_COMPUTE_TOKENS['interpro']
     threads: rc('interpro.threads', 32, config=config)
     resources:
         mem_mb=rc('interpro.mem_mb', 48000, config=config),
@@ -2871,6 +2884,7 @@ rule run_interpro:
                 touch "$OUT_DIR/interpro_${{db}}_results.tsv"
             fi
         done
+        echo "interpro complete for {wildcards.genome}" > {output.tkn}
         """
 
 
@@ -2885,7 +2899,6 @@ rule load_interpro_to_db:
         results=PHASE4_RESULTS['interpro']
     output:
         tkn=PHASE4_TOKENS['interpro']
-    group: "interpro"
     resources:
         mem_mb=rc('interpro.load_mem_mb', 2000, config=config)
     params:
@@ -2910,7 +2923,6 @@ rule load_interpro_perdb_to_db:
         tkn=INTERPRO_PERDB_TOKEN_PATTERN
     wildcard_constraints:
         db="|".join(INTERPRO_DB_BASENAMES)
-    group: "interpro"
     resources:
         mem_mb=rc('interpro.load_mem_mb', 2000, config=config)
     params:
@@ -2934,8 +2946,8 @@ rule run_geneprop:
         gtdbtk_results=GTDBTK_RESULTS,
         tigrfam_domtbl=TIGRFAM_DOMTBL
     output:
-        results=PHASE4_RESULTS['geneprop']
-    group: "geneprop"
+        results=PHASE4_RESULTS['geneprop'],
+        tkn=PHASE4_COMPUTE_TOKENS['geneprop']
     priority: 1  # see run_cog's priority comment -- same scheduler-starvation fix
     threads: rc('geneprop.threads', 4, config=config)
     resources:
@@ -2952,6 +2964,7 @@ rule run_geneprop:
         DOMAIN=$(awk -F'\\t' 'NR==1{{for(i=1;i<=NF;i++) if($i=="GTDBTK_domain") c=i}} NR==2{{print $c}}' {input.gtdbtk_results})
         /usr/local/bin/run -i {input.faa} -o {params.output_dir} -d {params.db} -t {threads} --tigrfam-domtbl {input.tigrfam_domtbl} --organism-name {wildcards.genome} --domain "$DOMAIN"
         cp {params.output_dir}/{wildcards.genome}/processed/geneprop_results.tsv {output.results}
+        echo "geneprop complete for {wildcards.genome}" > {output.tkn}
         """
 
 
@@ -2961,7 +2974,6 @@ rule load_geneprop_to_db:
         results=PHASE4_RESULTS['geneprop']
     output:
         tkn=PHASE4_TOKENS['geneprop']
-    group: "geneprop"
     params:
         db=MAIN_DATABASE,
         script=LOAD_SCRIPT
@@ -2984,8 +2996,8 @@ rule run_operon:
         gff=RASTTK_GFF,
         gtdbtk_results=GTDBTK_RESULTS
     output:
-        results=OPERON_RESULTS
-    group: "operon"
+        results=OPERON_RESULTS,
+        tkn=OPERON_COMPUTE_TOKEN
     threads: rc('operon.threads', 4, config=config)
     resources:
         mem_mb=rc('operon.mem_mb', 2000, config=config),
@@ -2999,6 +3011,7 @@ rule run_operon:
         DOMAIN=$(awk -F'\\t' 'NR==1{{for(i=1;i<=NF;i++) if($i=="GTDBTK_domain") c=i}} NR==2{{print $c}}' {input.gtdbtk_results})
         /usr/local/bin/run -i {input.faa} -g {input.gff} -o {params.output_dir} -t {threads} --organism-name {wildcards.genome} --domain "$DOMAIN"
         cp {params.output_dir}/{wildcards.genome}/processed/operon_results.tsv {output.results}
+        echo "operon complete for {wildcards.genome}" > {output.tkn}
         """
 
 
@@ -3008,7 +3021,6 @@ rule load_operon_to_db:
         results=OPERON_RESULTS
     output:
         tkn=OPERON_TOKEN
-    group: "operon"
     params:
         db=MAIN_DATABASE,
         script=LOAD_SCRIPT
@@ -3028,8 +3040,8 @@ rule run_phobius:
         faa=RASTTK_FAA
     output:
         results=PHOBIUS_RESULTS,
-        top1=PHOBIUS_TOP1
-    group: "phobius"
+        top1=PHOBIUS_TOP1,
+        tkn=PHOBIUS_COMPUTE_TOKEN
     threads: rc('phobius.threads', 4, config=config)
     resources:
         mem_mb=rc('phobius.mem_mb', 2000, config=config),
@@ -3043,6 +3055,7 @@ rule run_phobius:
         /usr/local/bin/run -i {input.faa} -o {params.output_dir} -t {threads} --organism-name {wildcards.genome}
         cp {params.output_dir}/{wildcards.genome}/processed/phobius_results.tsv {output.results}
         cp {params.output_dir}/{wildcards.genome}/processed/phobius_top1.tsv {output.top1}
+        echo "phobius complete for {wildcards.genome}" > {output.tkn}
         """
 
 
@@ -3052,7 +3065,6 @@ rule load_phobius_to_db:
         results=PHOBIUS_RESULTS
     output:
         tkn=PHOBIUS_TOKEN
-    group: "phobius"
     params:
         db=MAIN_DATABASE,
         script=LOAD_SCRIPT
@@ -3083,8 +3095,8 @@ rule run_tmbed:
     input:
         faa=RASTTK_FAA
     output:
-        results=TMBED_RESULTS
-    group: "tmbed"
+        results=TMBED_RESULTS,
+        tkn=TMBED_COMPUTE_TOKEN
     threads: rc('tmbed.threads', 4, config=config)
     resources:
         mem_mb=rc('margie_sb.tmbed.mem_mb', rc('tmbed.mem_mb', 32000, config=config), config=config),
@@ -3102,6 +3114,7 @@ rule run_tmbed:
             {params.sif} \
             /usr/local/bin/run -i {input.faa} -o {params.output_dir} -t {threads} --organism-name {wildcards.genome}
         cp {params.output_dir}/{wildcards.genome}/processed/tmbed_results.tsv {output.results}
+        echo "tmbed complete for {wildcards.genome}" > {output.tkn}
         """
 
 
@@ -3111,7 +3124,6 @@ rule load_tmbed_to_db:
         results=TMBED_RESULTS
     output:
         tkn=TMBED_TOKEN
-    group: "tmbed"
     params:
         db=MAIN_DATABASE,
         script=LOAD_SCRIPT
@@ -3146,8 +3158,8 @@ rule run_signalp6:
     input:
         faa=RASTTK_FAA
     output:
-        results=SIGNALP6_RESULTS
-    group: "signalp6"
+        results=SIGNALP6_RESULTS,
+        tkn=SIGNALP6_COMPUTE_TOKEN
     threads: rc('signalp6.threads', 8, config=config)
     resources:
         mem_mb=rc('signalp6.mem_mb', 5000, config=config),
@@ -3176,6 +3188,7 @@ rule run_signalp6:
             --input-path {input.faa} \
             --output-path "$RAW_DIR"
         cp "$PROCESSED_DIR/signalp6_results.tsv" {output.results}
+        echo "signalp6 complete for {wildcards.genome}" > {output.tkn}
         """
 
 
@@ -3185,7 +3198,6 @@ rule load_signalp6_to_db:
         results=SIGNALP6_RESULTS
     output:
         tkn=SIGNALP6_TOKEN
-    group: "signalp6"
     params:
         db=MAIN_DATABASE,
         script=LOAD_SCRIPT
@@ -3211,8 +3223,8 @@ rule run_envelope:
         gtdbtk_results=GTDBTK_RESULTS
     output:
         results=ENVELOPE_RESULTS,
-        summary=ENVELOPE_SUMMARY
-    group: "envelope"
+        summary=ENVELOPE_SUMMARY,
+        tkn=ENVELOPE_COMPUTE_TOKEN
     threads: rc('envelope.threads', 1, config=config)
     resources:
         mem_mb=rc('envelope.mem_mb', 1000, config=config),
@@ -3228,6 +3240,7 @@ rule run_envelope:
         /usr/local/bin/run -i {params.input_dir} -o {params.output_dir} -t {threads} --organism-name {wildcards.genome} --domain "$DOMAIN"
         cp {params.output_dir}/processed/envelope_results.tsv {output.results}
         cp {params.output_dir}/processed/envelope_summary.tsv {output.summary}
+        echo "envelope complete for {wildcards.genome}" > {output.tkn}
         """
 
 
@@ -3237,7 +3250,6 @@ rule load_envelope_to_db:
         results=ENVELOPE_RESULTS
     output:
         tkn=ENVELOPE_TOKEN
-    group: "envelope"
     params:
         db=MAIN_DATABASE,
         script=LOAD_SCRIPT
@@ -3257,8 +3269,8 @@ rule run_deepsig:
         faa=RASTTK_FAA,
         envelope_summary=ENVELOPE_SUMMARY
     output:
-        results=DEEPSIG_RESULTS
-    group: "deepsig"
+        results=DEEPSIG_RESULTS,
+        tkn=DEEPSIG_COMPUTE_TOKEN
     threads: rc('deepsig.threads', 4, config=config)
     resources:
         mem_mb=rc('deepsig.mem_mb', 2000, config=config),
@@ -3280,6 +3292,7 @@ rule run_deepsig:
         echo "[deepsig] envelope_type=$ENVTYPE -> -k $ORGCLASS"
         /usr/local/bin/run -i {input.faa} -o {params.output_dir} -t {threads} -k "$ORGCLASS" --organism-name {wildcards.genome}
         cp {params.output_dir}/{wildcards.genome}/processed/deepsig_results.tsv {output.results}
+        echo "deepsig complete for {wildcards.genome}" > {output.tkn}
         """
 
 
@@ -3300,7 +3313,6 @@ rule load_deepsig_to_db:
         envelope_summary=ENVELOPE_SUMMARY
     output:
         tkn=DEEPSIG_TOKEN
-    group: "deepsig"
     params:
         db=MAIN_DATABASE,
         script=LOAD_SCRIPT,
@@ -3320,8 +3332,8 @@ rule run_psortb:
         faa=RASTTK_FAA,
         envelope_summary=ENVELOPE_SUMMARY
     output:
-        results=PSORTB_RESULTS
-    group: "psortb"
+        results=PSORTB_RESULTS,
+        tkn=PSORTB_COMPUTE_TOKEN
     threads: rc('psortb.threads', 4, config=config)
     resources:
         mem_mb=rc('psortb.mem_mb', 2000, config=config),
@@ -3343,6 +3355,7 @@ rule run_psortb:
         echo "[psortb] envelope_type=$ENVTYPE -> -k $GRAMCLASS"
         /usr/local/bin/run -i {input.faa} -o {params.output_dir} -t {threads} -k "$GRAMCLASS" --organism-name {wildcards.genome}
         cp {params.output_dir}/{wildcards.genome}/processed/psortb_results.tsv {output.results}
+        echo "psortb complete for {wildcards.genome}" > {output.tkn}
         """
 
 
@@ -3356,7 +3369,6 @@ rule load_psortb_to_db:
         envelope_summary=ENVELOPE_SUMMARY
     output:
         tkn=PSORTB_TOKEN
-    group: "psortb"
     params:
         db=MAIN_DATABASE,
         script=LOAD_SCRIPT,
@@ -3378,8 +3390,8 @@ rule run_signalp4:
         faa=RASTTK_FAA,
         envelope_summary=ENVELOPE_SUMMARY
     output:
-        results=SIGNALP4_RESULTS
-    group: "signalp4"
+        results=SIGNALP4_RESULTS,
+        tkn=SIGNALP4_COMPUTE_TOKEN
     threads: rc('signalp4.threads', 2, config=config)
     resources:
         mem_mb=rc('signalp4.mem_mb', 2000, config=config),
@@ -3416,6 +3428,7 @@ rule run_signalp4:
             --input-path {input.faa} \
             --output-path "$RAW_DIR"
         cp "$PROCESSED_DIR/signalp4_results.tsv" {output.results}
+        echo "signalp4 complete for {wildcards.genome}" > {output.tkn}
         """
 
 
@@ -3429,7 +3442,6 @@ rule load_signalp4_to_db:
         envelope_summary=ENVELOPE_SUMMARY
     output:
         tkn=SIGNALP4_TOKEN
-    group: "signalp4"
     params:
         db=MAIN_DATABASE,
         script=LOAD_SCRIPT,

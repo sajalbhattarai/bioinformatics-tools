@@ -618,7 +618,8 @@ class WorkflowBase(ProgramBase):
     @staticmethod
     def _gtdbtk_split_paths(genome: str, smk_config: dict) -> list[str]:
         prefix = get_workflow_prefix_for(genome, smk_config)
-        return [f"{prefix}gtdbtk/gtdbtk_results.tsv", f"{prefix}gtdbtk/translation_table.tsv"]
+        return [f"{prefix}gtdbtk/gtdbtk_results.tsv", f"{prefix}gtdbtk/translation_table.tsv",
+                f"{prefix}gtdbtk/gtdbtk_db.tkn"]
 
     @staticmethod
     def _rasttk_paths(genome: str, smk_config: dict) -> list[str]:
@@ -656,7 +657,7 @@ class WorkflowBase(ProgramBase):
         result_header, result_rows = None, []
         translation_header, translation_rows = None, []
         for genome in genome_files:
-            results_path, translation_path = WorkflowBase._gtdbtk_split_paths(genome, smk_config)
+            results_path, translation_path, _token_path = WorkflowBase._gtdbtk_split_paths(genome, smk_config)
             r_header, *r_rows = Path(results_path).read_text().splitlines()
             t_header, *t_rows = Path(translation_path).read_text().splitlines()
             result_header, translation_header = r_header, t_header
@@ -690,7 +691,7 @@ class WorkflowBase(ProgramBase):
         # cache-restored output too -- cascading into a real (and possibly
         # failing) RASTtk/BV-BRC call for a genome that was already cached.
         for genome in genome_files:
-            results_path, translation_path = WorkflowBase._gtdbtk_split_paths(genome, smk_config)
+            results_path, translation_path, _token_path = WorkflowBase._gtdbtk_split_paths(genome, smk_config)
             Path(results_path).touch()
             Path(translation_path).touch()
 
@@ -806,6 +807,10 @@ class WorkflowBase(ProgramBase):
         restored: dict[str, dict[str, bool]] = {}
         rasttk_restored: dict[str, bool] = {}
         gtdbtk_batch_hit = False
+        # Genomes whose GTDB-Tk outputs are already committed to output_cache
+        # this run -- tracked separately from RASTtk so GTDB-Tk caches the
+        # moment its own per-genome outputs exist, not when RASTtk finishes.
+        gtdbtk_stored: set[str] = set()
         if db_path:
             # Phase4+ cache restore is deferred to just before each genome's
             # Stage 2 (see the per-genome restore below). Restoring here, before
@@ -904,13 +909,28 @@ class WorkflowBase(ProgramBase):
         progress_memo: dict[str, tuple[int, int]] = {}  # genome -> completeness, for most-complete-first ordering
 
         while pending or queue:
+            # Cache each genome's GTDB-Tk outputs the moment its OWN db token
+            # (gtdbtk_db.tkn, written by load_gtdbtk_to_db after the DB insert
+            # -- now part of _gtdbtk_split_paths) exists, decoupled from
+            # RASTtk: GTDB-Tk is the expensive highmem phase, and a downstream
+            # RASTtk failure must not leave its already-loaded work uncached
+            # (which previously forced a full GTDB-Tk rerun on the next run).
+            if db_path and not gtdbtk_batch_hit:
+                for genome in genome_files:
+                    if genome in gtdbtk_stored:
+                        continue
+                    if all(Path(p).exists() for p in self._gtdbtk_split_paths(genome, smk_config)):
+                        store(db_path, genome_files[genome], 'gtdbtk', self._gtdbtk_split_paths(genome, smk_config))
+                        gtdbtk_stored.add(genome)
+
             for genome in list(pending):
                 if Path(_rasttk_token_path(genome)).exists():
                     pending.discard(genome)
                     queue.append(genome)
                     if db_path:
-                        if not gtdbtk_batch_hit:
+                        if not gtdbtk_batch_hit and genome not in gtdbtk_stored:
                             store(db_path, genome_files[genome], 'gtdbtk', self._gtdbtk_split_paths(genome, smk_config))
+                            gtdbtk_stored.add(genome)
                         if not rasttk_restored.get(genome, False):
                             store(db_path, genome_files[genome], 'rasttk', self._rasttk_paths(genome, smk_config))
 
@@ -996,7 +1016,44 @@ class WorkflowBase(ProgramBase):
                                                     compute_config=compute_config, extra_resources=extra_resources,
                                                     rerun_triggers=rerun_triggers, target=stage2_target)
             LOGGER.info('Starting Stage 2 (%s) for %s: %s', stage2_target, genome, ' '.join(stage2_command))
-            proc = self._run_subprocess(stage2_command)
+            stage2_proc = self._start_background_subprocess(stage2_command)
+
+            # Per-tool cache-store, polled WHILE Stage 2 is still running: each
+            # tool's own db token (e.g. cog_db.tkn) is written by its
+            # load_<tool>_to_db rule right after that tool's DB insert
+            # succeeds, so as soon as every one of a tool's declared output
+            # paths exists (results file(s) + that token, written last) it is
+            # safe to cache -- independent of whether some OTHER phase4-12
+            # tool for this same genome later fails. This is what keeps one
+            # tool's failure from discarding every other tool's already-loaded
+            # work for the genome (previously all caching waited on the whole
+            # Stage 2 subprocess exiting 0).
+            genome_cache_map = cache_map_fn(genome)
+            genome_restored = restored.get(genome, {})
+            genome_stored: set[str] = set()
+
+            def _store_ready_tools():
+                if not db_path:
+                    return
+                for tool, paths in genome_cache_map.items():
+                    if tool in genome_stored or genome_restored.get(tool, False):
+                        continue
+                    if all(Path(p).exists() for p in paths):
+                        store(db_path, genome_files[genome], tool, paths)
+                        genome_stored.add(tool)
+                        LOGGER.info('Cached %s for %s as soon as its own db token appeared '
+                                    '(Stage 2 still running)', tool, genome)
+
+            if stage2_proc is None:
+                proc = None
+            else:
+                while stage2_proc.poll() is None:
+                    _store_ready_tools()
+                    time.sleep(10)
+                _store_ready_tools()  # final catch-up for tokens written right before exit
+                proc = subprocess.CompletedProcess(
+                    args=stage2_command, returncode=stage2_proc.proc.returncode,
+                    stdout='\n'.join(stage2_proc.stdout_lines), stderr='\n'.join(stage2_proc.stderr_lines))
             last_proc = proc
 
             if proc is None or proc.returncode != 0:
@@ -1013,14 +1070,12 @@ class WorkflowBase(ProgramBase):
                 return rc or 1
 
             if db_path:
-                genome_cache_map = cache_map_fn(genome)
-                genome_restored = restored.get(genome, {})
                 tools_to_store = {tool: paths for tool, paths in genome_cache_map.items()
-                                  if not genome_restored.get(tool, False)}
+                                  if tool not in genome_stored and not genome_restored.get(tool, False)}
                 if tools_to_store:
                     store_all(db_path, genome_files[genome], tools_to_store)
                 else:
-                    LOGGER.info('All outputs were cache hits for %s — skipping redundant storage', genome)
+                    LOGGER.info('All outputs were already cached incrementally or were cache hits for %s', genome)
                 log_workflow_run(db_path, run_id, genome_files[genome], key_name,
                                  self._build_result(key_name, proc)['rules_summary'].get('completed', 0), status='success')
 
