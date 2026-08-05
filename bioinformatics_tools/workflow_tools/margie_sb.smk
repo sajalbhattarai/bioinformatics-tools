@@ -271,7 +271,6 @@ SIGNALP6_TOKEN = f"{GENOME_PREFIX}signalp6/signalp6_db.tkn"
 SIGNALP6_COMPUTE_TOKEN = f"{GENOME_PREFIX}signalp6/signalp6_compute.tkn"
 SIGNALP6_PROCESS_SCRIPT = rc('signalp6.process_script', SIGNALP6_SCRIPT, config=config)
 
-
 # Phase7: envelope type inference (monoderm vs diderm). Different shape:
 # -i takes a whole directory and its entrypoint recursively searches it for
 # <tool>/.../processed/*.tsv across four phase4 tools (tigrfam, pgap, pfam,
