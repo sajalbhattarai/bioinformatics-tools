@@ -1416,10 +1416,16 @@ class WorkflowBase(ProgramBase):
             config_overrides[_tool_to_run_flag.get(tool_key, f'run_{tool_key}')] = False
 
         # margie_sb.selected_tools: comma-joined tool keys, set by the API from
-        # the caller's phase selection. Missing/empty means "use production
-        # defaults" (stop at scoring). When given, selected tools are enabled
-        # and unselected tools are disabled explicitly.
-        selected_tools_raw = self.conf.get('margie_sb', {}).get('selected_tools', '')
+        # the caller's per-run phase selection. When absent, fall back to the
+        # operator-configured margie_sb.default_selected_tools (config file /
+        # per-user config). Only when BOTH are missing/empty do we use the
+        # built-in production defaults (stop at scoring). When either is given,
+        # selected tools are enabled and unselected tools are disabled explicitly.
+        _margie_sb_conf = self.conf.get('margie_sb', {})
+        selected_tools_raw = (
+            _margie_sb_conf.get('selected_tools', '')
+            or _margie_sb_conf.get('default_selected_tools', '')
+        )
         sif_files_override = None
         if selected_tools_raw:
             selected_tool_keys = {t.strip() for t in selected_tools_raw.split(',') if t.strip()}
