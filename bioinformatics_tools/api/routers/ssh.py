@@ -16,7 +16,7 @@ import re
 import shlex
 import threading
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pandas as pd
 import yaml
@@ -1507,6 +1507,39 @@ def _load_job_for_action(job_id: str, current_user: dict, conn) -> dict:
 
 _TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 _POTENTIALLY_STALE_STATUSES = {"pending", "running", "snakemake"}
+
+# A run that is still being submitted (status "running", phase "Submitting via
+# SSH") has no .rc sentinel, no driver process yet, and no SLURM jobs -- which
+# is byte-for-byte the same signature the reconcilers otherwise read as
+# "interrupted / driver stopped". That race mislabelled brand-new jobs as
+# cancelled on the history page while they were still on their way to the
+# cluster. Give a freshly-touched row this grace window before ever calling it
+# dead: submission has time to spawn the driver and queue its SLURM jobs, at
+# which point the normal alive-checks keep it running on their own merits.
+_SUBMIT_GRACE_SECONDS = 300
+
+
+def _row_age_seconds(row: dict) -> float | None:
+    """Seconds since this history row was last touched, or None if it has no
+    parseable timestamp. Prefers updated_at (bumped when the row entered the
+    submitting state) and falls back to created_at."""
+    stamp = row.get("updated_at") or row.get("created_at")
+    if not stamp:
+        return None
+    try:
+        ts = datetime.fromisoformat(stamp)
+    except (TypeError, ValueError):
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - ts).total_seconds()
+
+
+def _within_submit_grace(row: dict) -> bool:
+    """True while a row is too young to be judged interrupted -- it is almost
+    certainly still submitting (no driver/SLURM visible yet)."""
+    age = _row_age_seconds(row)
+    return age is not None and age < _SUBMIT_GRACE_SECONDS
 # States that mean "this job still occupies the cluster". COMPLETING belongs
 # here: a job tearing down is emphatically not finished, and leaving it out
 # made a workflow read as dead whenever a poll happened to land while its
@@ -1671,9 +1704,21 @@ def get_job_status(
                     }
                     for m in enriched
                 ]
+        elif _within_submit_grace(row):
+            # No active SLURM jobs yet, but this row was touched moments ago:
+            # it is still being submitted, not interrupted. Leave its status
+            # alone -- marking it cancelled here is the very bug that made
+            # not-yet-submitted jobs show up as cancelled.
+            result["still_active"] = True
+            result["status_note"] = (
+                "This run is still being submitted to the cluster -- "
+                "live updates will appear once its jobs are queued."
+            )
         else:
-            # Persisted status said non-terminal but there are no active jobs.
-            # Normalize so this job no longer appears as running forever.
+            # Persisted status said non-terminal but there are no active jobs
+            # and the row is old enough that submission would have surfaced
+            # them by now. Normalize so this job no longer appears as running
+            # forever.
             result["status"] = "cancelled"
             result["phase"] = "Interrupted (no active jobs)"
             try:
@@ -1753,6 +1798,12 @@ def _reconcile_running(conn, main_db: str, rows: list[dict]) -> None:
                 ok = rc.strip() == "0"
                 status, phase = ("completed", "Done") if ok else ("failed", f"Exited {rc.strip()}")
             elif drv_n > 0 or slurm_n > 0:     # genuinely still going
+                continue
+            elif _within_submit_grace(row):    # too young -- still submitting
+                # A run mid-submission has no sentinel, no driver and no SLURM
+                # jobs yet: identical to an interrupted run. Don't call a
+                # freshly-touched row dead, or a job still on its way to the
+                # cluster shows up as cancelled in history.
                 continue
             else:                              # no sentinel, no driver, no jobs
                 status, phase = "cancelled", "Interrupted (driver stopped)"
