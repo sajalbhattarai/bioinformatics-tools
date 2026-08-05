@@ -2165,7 +2165,8 @@ rule split_gtdbtk_batch_per_genome:
         target = Path(output.results)
         target.parent.mkdir(parents=True, exist_ok=True)
         with target.open('w', newline='') as out_fh:
-            writer = csv.DictWriter(out_fh, fieldnames=list(row.keys()), delimiter='\t')
+            # lineterminator='\n': csv defaults to CRLF, which breaks awk header matches downstream
+            writer = csv.DictWriter(out_fh, fieldnames=list(row.keys()), delimiter='\t', lineterminator='\n')
             writer.writeheader()
             writer.writerow(row)
 
@@ -2211,7 +2212,8 @@ rule split_gtdbtk_batch_per_genome:
         target = Path(output.translation_table)
         target.parent.mkdir(parents=True, exist_ok=True)
         with target.open('w', newline='') as out_fh:
-            writer = csv.DictWriter(out_fh, fieldnames=list(row.keys()), delimiter='\t')
+            # lineterminator='\n': csv defaults to CRLF, which breaks awk header matches downstream
+            writer = csv.DictWriter(out_fh, fieldnames=list(row.keys()), delimiter='\t', lineterminator='\n')
             writer.writeheader()
             writer.writerow(row)
 
@@ -2304,7 +2306,7 @@ rule run_rasttk:
         # (margie_sb.smk's run_gtdbtk_batch comment documents exactly this
         # kind of silent-wrong-genetic-code failure mode from before the
         # ANI-only fast path was disabled).
-        GCODE=$(awk -F'\t' 'NR==1{{for(i=1;i<=NF;i++) if($i=="translation_table") c=i}} NR>1{{gsub(/\r/,"",$c); if(c && $c!=""){{print $c; exit}}}}' {input.translation_table})
+        GCODE=$(awk -F'\t' 'NR==1{{for(i=1;i<=NF;i++){{gsub(/\r/,"",$i); if($i=="translation_table") c=i}}}} NR>1{{gsub(/\r/,"",$c); if(c && $c!=""){{print $c; exit}}}}' {input.translation_table})
         if [[ -z "$GCODE" ]]; then
             echo "ERROR: could not read a genetic code for {wildcards.genome} from {input.translation_table} -- refusing to guess" >&2
             exit 1
