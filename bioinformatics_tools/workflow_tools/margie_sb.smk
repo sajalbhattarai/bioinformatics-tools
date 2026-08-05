@@ -264,12 +264,13 @@ TMBED_COMPUTE_TOKEN = f"{GENOME_PREFIX}tmbed/tmbed_compute.tkn"
 # pre-built Apptainer image, hence envmodules: instead of container: in
 # run_signalp6 below. --format none is required: --format txt (the default)
 # crashes with "OSError: File name too long" writing a per-protein plot file
-# named after the entire FASTA header. The output-processing script is a
-# user-supplied filesystem path (config: signalp6.process_script).
+# named after the entire FASTA header. The output-processing script defaults
+# to the bundled one below but is overridable (config: signalp6.process_script).
 SIGNALP6_RESULTS = f"{GENOME_PREFIX}signalp6/signalp6_results.tsv"
 SIGNALP6_TOKEN = f"{GENOME_PREFIX}signalp6/signalp6_db.tkn"
 SIGNALP6_COMPUTE_TOKEN = f"{GENOME_PREFIX}signalp6/signalp6_compute.tkn"
-SIGNALP6_PROCESS_SCRIPT = rc('signalp6.process_script', '', config=config)
+SIGNALP6_PROCESS_SCRIPT = rc('signalp6.process_script', SIGNALP6_SCRIPT, config=config)
+
 
 # Phase7: envelope type inference (monoderm vs diderm). Different shape:
 # -i takes a whole directory and its entrypoint recursively searches it for
@@ -315,8 +316,8 @@ PSORTB_COMPUTE_TOKEN = f"{GENOME_PREFIX}psortb/psortb_compute.tkn"
 # supports euk/gram+/gram- -- no archaea option at all -- so archaea
 # genomes get mapped to gram- in run_signalp4 below (the same conservative
 # default used elsewhere when there's no real answer, not a biological
-# claim). The output-processing script is a user-supplied filesystem path
-# (config: signalp4.process_script), same as signalp6.
+# claim). The output-processing script defaults to the bundled one below
+# but is overridable (config: signalp4.process_script), same as signalp6.
 SIGNALP4_RESULTS = f"{GENOME_PREFIX}signalp4/signalp4_results.tsv"
 SIGNALP4_TOKEN = f"{GENOME_PREFIX}signalp4/signalp4_db.tkn"
 SIGNALP4_COMPUTE_TOKEN = f"{GENOME_PREFIX}signalp4/signalp4_compute.tkn"
