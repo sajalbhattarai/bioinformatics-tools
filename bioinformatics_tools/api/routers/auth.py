@@ -27,7 +27,7 @@ from bioinformatics_tools.api.models import (
     UserProfile,
     UserRegister,
 )
-from bioinformatics_tools.utilities.ssh_connection import make_user_connection
+from bioinformatics_tools.utilities.ssh_connection import ensure_remote_dane_wf, make_user_connection
 
 LOGGER = logging.getLogger(__name__)
 
@@ -91,6 +91,18 @@ def register(body: UserRegister):
                 'Check your host, username, and private key, and make sure you have added '
                 'the BSP public key to your ~/.ssh/authorized_keys on the cluster.'
             )
+        )
+
+    try:
+        ensure_remote_dane_wf(conn)
+    except Exception as exc:
+        LOGGER.warning(
+            'dane_wf provisioning failed for %s@%s during registration: %s',
+            body.cluster_username, body.cluster_host, exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f'Connected, but could not set up the workflow environment on the cluster: {exc}'
         )
 
     created_at = datetime.now(timezone.utc).isoformat()
@@ -230,6 +242,20 @@ def update_credentials(body: UpdateClusterCredentials, current_user: dict = Depe
                 f'Could not connect to {new_host} as {new_username}. '
                 'Check your host, username, and private key.'
             )
+        )
+
+    # New host/username/key may point at an account that has never run a job
+    # here before -- make sure dane_wf is ready there too.
+    try:
+        ensure_remote_dane_wf(conn)
+    except Exception as exc:
+        LOGGER.warning(
+            'dane_wf provisioning failed for %s@%s during credential update: %s',
+            new_username, new_host, exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f'Connected, but could not set up the workflow environment on the cluster: {exc}'
         )
 
     # Update database

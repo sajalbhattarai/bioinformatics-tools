@@ -15,12 +15,18 @@ API usage:
 """
 import io
 import logging
+import shlex
 import threading
 import time
 
 import paramiko
 
 LOGGER = logging.getLogger(__name__)
+
+# Same fork margie.sh clones for a local dev launch -- kept in sync with
+# BACKEND_REPO_URL there so the bootstrap below and a laptop's `./margie.sh`
+# provision an identical checkout.
+_DANE_WF_REPO_URL = 'https://github.com/sajalbhattarai/bioinformatics-tools.git'
 
 # ---------------------------------------------------------------------------
 # Connection pool.
@@ -203,5 +209,46 @@ def make_user_connection(
     """
     pkey = load_private_key(private_key_str)
     return SSHConnection(host=cluster_host, username=cluster_username, pkey=pkey)
+
+
+def ensure_remote_dane_wf(conn: SSHConnection, *, repo_url: str = _DANE_WF_REPO_URL, timeout: float = 300.0) -> None:
+    """
+    Make sure this user's cluster account has a working `dane_wf` before their
+    first job is submitted. Clones bioinformatics-tools into
+    ~/bioinformatics-tools and runs `uv sync` only when a built dane_wf isn't
+    already there -- an existing checkout (including a single-developer setup
+    where it's a symlink into a live dev checkout, see main.py's
+    _ensure_remote_deployment_symlink) is never touched.
+
+    Mirrors the same clone/uv-sync bootstrap margie.sh performs for a local
+    dev launch, so a hosted deployment's first-login path and a laptop's
+    `./margie.sh` provision the exact same thing. Raises RuntimeError with the
+    remote output on failure -- callers decide how to surface that to the user.
+    """
+    command = f'''set -e
+if [ ! -x "$HOME/bioinformatics-tools/.venv/bin/dane_wf" ]; then
+    if [ ! -d "$HOME/bioinformatics-tools" ]; then
+        git clone {shlex.quote(repo_url)} "$HOME/bioinformatics-tools"
+    fi
+    cd "$HOME/bioinformatics-tools"
+    [ -f pyproject.toml ]
+    export PATH="$HOME/.local/bin:$PATH"
+    if ! command -v uv >/dev/null 2>&1; then
+        curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1 || true
+    fi
+    command -v uv >/dev/null 2>&1
+    uv sync
+fi
+test -x "$HOME/bioinformatics-tools/.venv/bin/dane_wf"
+'''
+    ssh = conn.connect()
+    _, stdout, stderr = ssh.exec_command(command, timeout=timeout)
+    stdout.channel.settimeout(timeout)
+    exit_code = stdout.channel.recv_exit_status()
+    output = (stdout.read().decode(errors='replace') + stderr.read().decode(errors='replace')).strip()
+    if exit_code != 0:
+        raise RuntimeError(
+            f'Could not provision dane_wf on the remote account (exit {exit_code}): {output or "(no output)"}'
+        )
 
 
