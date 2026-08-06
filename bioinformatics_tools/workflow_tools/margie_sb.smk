@@ -99,13 +99,19 @@ def runtime_min(key: str, default: int, config=None) -> int:
 # whenever a new run's local-storage cache is staged from an older run's
 # directory, so a brand new run could be born already seeing a stale lock as
 # freshly-held -- confirmed live on 2026-08-05 (two new runs both stuck
-# behind a lock time-stamped hours before either run directory existed). A
-# fixed, account-wide path also correctly serializes BV-BRC submissions
-# across multiple concurrent margie_sb invocations, not just genomes within
-# one of them.
+# behind a lock time-stamped hours before either run directory existed). Also
+# deliberately NOT under $HOME: the rasttk.sif apptainer invocation only
+# binds a couple of narrow subpaths of /home (not the whole tree), so a lock
+# under ~/.cache is invisible/read-only from inside the container and the
+# mkdir in run_rasttk's shell block fails silently forever -- confirmed live
+# on 2026-08-06 (every rasttk job hung in the wait loop with zero CPU usage,
+# never producing outputs). /depot (like /scratch) IS auto-bind-mounted into
+# the container by the site apptainer config, same as every other depot-
+# resident shared path in this file (SCORING_HISTORICAL_PATH etc. above), so
+# it's the one location both the host driver and the container can see.
 RASTTK_BVBRC_LOCK = _resolve_shared_dir(
     'rasttk.bvbrc_lock_dir', 'rasttk_bvbrc_lock_dir',
-    os.path.join(os.path.expanduser('~'), '.cache', 'bioinformatics-tools', 'rasttk_bvbrc.lock'),
+    '/depot/lindems/data/margie/rasttk_bvbrc.lock',
 )
 os.makedirs(os.path.dirname(RASTTK_BVBRC_LOCK), exist_ok=True)
 
