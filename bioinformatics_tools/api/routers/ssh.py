@@ -1566,6 +1566,21 @@ _ACTIVE_SLURM_STATES = ("RUNNING", "PENDING", "COMPLETING", "CONFIGURING",
 _REATTACH_LOCK = threading.Lock()
 
 
+def _has_active_workdir_jobs(conn, work_dir: str, cluster_username: str) -> bool:
+    """True if squeue reports any RUNNING/PENDING/etc job under work_dir.
+
+    Best-effort: an SSH/squeue failure here must never cause a live run to
+    be misdiagnosed as dead, so it counts as "can't tell, assume alive"
+    rather than "not found".
+    """
+    try:
+        matches = ssh_slurm.find_active_jobs_in_workdir(work_dir, cluster_username, connection=conn)
+    except Exception as exc:
+        LOGGER.warning("work_dir SLURM check failed for %s: %s", work_dir, exc)
+        return True
+    return any(m["state"] in _ACTIVE_SLURM_STATES for m in matches)
+
+
 def _try_reattach(job_id: str, row: dict, conn, main_db: str | None,
                   current_user: dict) -> dict | None:
     """Take a still-running job back over after a dane-api restart.
@@ -1753,7 +1768,7 @@ def get_job_status(
     return result
 
 
-def _reconcile_running(conn, main_db: str, rows: list[dict]) -> None:
+def _reconcile_running(conn, main_db: str, rows: list[dict], cluster_username: str) -> None:
     """Correct rows that claim to be running but are not.
 
     Workflow runs are detached (setsid + nohup) so they survive the GUI closing.
@@ -1763,8 +1778,18 @@ def _reconcile_running(conn, main_db: str, rows: list[dict]) -> None:
     its driver was stopped.
 
     A run is considered alive if ANY of these hold:
-      * its .rc sentinel is absent AND a driver process for it exists, or
-      * it has SLURM jobs still queued/running.
+      * its .rc sentinel is absent AND a driver process for it exists,
+      * its own SLURM job id is still queued/running, or
+      * ANY worker sub-job squeue reports under this work_dir is still
+        queued/running.
+    The last check matters because the driver's own SLURM job is often gone
+    long before its workers are: it can finish submitting and exit while
+    dozens of Snakemake rule jobs it queued keep running for hours. Checking
+    only the driver (as this used to) reads that completely healthy run as
+    interrupted the moment the driver itself is no longer in squeue, which is
+    exactly what happened after a laptop woke up from sleep to find every
+    still-running job's history row stamped "cancelled" while squeue showed
+    them all alive.
     If the sentinel exists, the run finished and its exit code decides the
     status. If neither, it is interrupted.
 
@@ -1790,32 +1815,53 @@ def _reconcile_running(conn, main_db: str, rows: list[dict]) -> None:
             # Keep matching strict: substring matches produced false positives
             # and left finished jobs marked as running.
             escaped = re.escape(jid)
+            stem = ssh_slurm.run_file_stem(jid)
+            # drv: legacy fallback for runs whose driver still lives directly on
+            # the login node (in_slurm=False). dj/ds: the current path -- the
+            # driver's OWN SLURM job id (written to <stem>.jobid by
+            # build_driver_launch) and its live squeue state. Checking squeue by
+            # job NAME here used to compare against the bare job_id, but the
+            # driver's job name is "margie-<stem>" (see build_driver_launch) and
+            # it runs on a compute node, not the login node -- so neither that
+            # name check nor this pgrep ever matched a SLURM-hosted driver, and
+            # every such run older than the submit grace window was stamped
+            # "cancelled" here on its very next history-page view even though it
+            # was still running fine on the cluster.
             probe = (
                 f'rc=$(cat $HOME/.local/share/bsp/jobs/{jid}.rc 2>/dev/null); '
                 f'drv=$(pgrep -u $USER -f "dane_wf.*{escaped}" 2>/dev/null | wc -l); '
-                f'slurm=$(squeue -u $USER -h -o %j 2>/dev/null | grep -c "^{escaped}$"); '
-                f'echo "${{rc:--}}|$drv|$slurm"'
+                f'dj=$(cat $HOME/.local/share/bsp/jobs/{stem}.jobid 2>/dev/null); '
+                f'ds=$(squeue -h -j "${{dj:-0}}" -o %T 2>/dev/null | head -1); '
+                f'echo "${{rc:--}}|$drv|${{ds:--}}"'
             )
             _in, out, _err = ssh.exec_command(probe)
             reply = (out.read().decode() or "").strip().splitlines()
             if not reply:
                 continue
-            rc, drv, slurm = (reply[-1].split("|") + ["-", "0", "0"])[:3]
+            rc, drv, ds = (reply[-1].split("|") + ["-", "0", "-"])[:3]
             try:
-                drv_n, slurm_n = int(drv), int(slurm)
+                drv_n = int(drv)
             except ValueError:
                 continue
 
             if rc != "-":                      # finished: the sentinel decides
                 ok = rc.strip() == "0"
                 status, phase = ("completed", "Done") if ok else ("failed", f"Exited {rc.strip()}")
-            elif drv_n > 0 or slurm_n > 0:     # genuinely still going
+            elif drv_n > 0 or ds.strip() in _ACTIVE_SLURM_STATES:  # genuinely still going
                 continue
             elif _within_submit_grace(row):    # too young -- still submitting
                 # A run mid-submission has no sentinel, no driver and no SLURM
                 # jobs yet: identical to an interrupted run. Don't call a
                 # freshly-touched row dead, or a job still on its way to the
                 # cluster shows up as cancelled in history.
+                continue
+            elif row.get("work_dir") and _has_active_workdir_jobs(
+                conn, row["work_dir"], cluster_username):
+                # The driver itself is gone, but its workers aren't: a driver
+                # that finished submitting and exited looks identical to a
+                # stopped one from the drv/ds check above alone. Sub-jobs
+                # sharing this work_dir are the real signal of whether the
+                # run is still occupying the cluster.
                 continue
             else:                              # no sentinel, no driver, no jobs
                 status, phase = "cancelled", "Interrupted (driver stopped)"
@@ -1864,7 +1910,7 @@ def list_jobs(
         owner_cluster_username=current_user["cluster_username"],
     )
     # Verify anything claiming to be running before reporting it as such.
-    _reconcile_running(conn, main_db, rows)
+    _reconcile_running(conn, main_db, rows, current_user["cluster_username"])
     total_pages = max((total_jobs + page_size - 1) // page_size, 1)
 
     return {
