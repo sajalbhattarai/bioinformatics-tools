@@ -71,7 +71,16 @@ TCOL = dict(TIER)
 # Matches FLAG in gen_genome_viewer.py.
 REVIEW_COL = "#b32b1e"
 GAP_DEG = 4.0                 # angular gap between replicons/contigs (the "unknown" wedge)
+GAP_BUDGET_DEG = 40.0         # TOTAL angle spent on gaps, however many contigs there are.
+                              # A fixed per-contig gap only works for a finished genome: a
+                              # 420-contig draft assembly would want 420*4 = 1680 deg of gap
+                              # alone, the sequence budget goes negative, every arc falls to
+                              # the floor, and the drawing wraps the circle nine times over.
 MIN_SPAN_DEG = 4.0            # floor so a tiny plasmid/contig is still visible
+MAX_LABELLED = 12             # past this the map is a SHAPE, not an index -- per-contig
+                              # captions become an unreadable wall and the clickable
+                              # FINAL_GENOME_VIEWER.html is where identities belong
+TICK_MIN_SPAN_DEG = 2.0       # don't hang Mb ticks off a hairline arc
 START_DEG = 90.0             # 12 o'clock origin, genome runs clockwise
 INK = "#000000"
 
@@ -129,19 +138,26 @@ def main():
     order = sorted(contigs, key=lambda c: -contigs[c]["len"])   # largest first
     total_len = sum(contigs[c]["len"] for c in order)
     n_gap = len(order)
-    span_total = 360.0 - n_gap * GAP_DEG                        # angle available for sequence
+    # Gaps share a FIXED total budget, so the sequence budget stays positive at any
+    # contig count: a finished genome keeps the full 4 deg wedge, a fragmented draft
+    # gets proportionally thinner ones and the gaps still read as ~11% of the circle.
+    gap_deg = min(GAP_DEG, GAP_BUDGET_DEG / n_gap)
+    span_total = 360.0 - n_gap * gap_deg                        # angle available for sequence
 
-    # angular span per contig, proportional to length but with a floor for tiny ones
-    floored = [c for c in order if span_total * contigs[c]["len"] / total_len < MIN_SPAN_DEG]
-    fixed = len(floored) * MIN_SPAN_DEG
+    # angular span per contig, proportional to length but with a floor for tiny ones.
+    # The floor is capped at half the per-contig share, so even if EVERY contig is
+    # floored the leftover stays positive and the arcs still close at exactly 360.
+    min_span = min(MIN_SPAN_DEG, 0.5 * span_total / n_gap)
+    floored = [c for c in order if span_total * contigs[c]["len"] / total_len < min_span]
+    fixed = len(floored) * min_span
     big_len = sum(contigs[c]["len"] for c in order if c not in floored) or 1
-    rest = max(span_total - fixed, MIN_SPAN_DEG)
-    spans = {c: (MIN_SPAN_DEG if c in floored else rest * contigs[c]["len"] / big_len) for c in order}
+    rest = max(span_total - fixed, 0.0)
+    spans = {c: (min_span if c in floored else rest * contigs[c]["len"] / big_len) for c in order}
 
     # assign each contig a start angle going clockwise from START_DEG
     layout, cur = {}, START_DEG
     for c in order:
-        cur -= GAP_DEG                                          # gap precedes each contig
+        cur -= gap_deg                                          # gap precedes each contig
         layout[c] = (cur, spans[c])                            # start angle (high), span (deg)
         cur -= spans[c]
 
@@ -221,8 +237,14 @@ def main():
     ax.add_collection(PatchCollection(bb, facecolor="#000000", edgecolor="none"))
     for c in order:
         L = contigs[c]["len"]
+        if spans[c] < TICK_MIN_SPAN_DEG:
+            continue          # hairline arc: a tick is noise, not a coordinate
         step = 1_000_000 if L > 3_000_000 else 500_000
-        show_nums = L >= 250_000
+        # Same threshold as the replicon captions: on a draft assembly every
+        # contig restarts its coordinates at zero, so the numerals degenerate
+        # into a ring of "0.0" that says nothing. Ticks alone carry the scale
+        # there; the centre block carries the total.
+        show_nums = L >= 250_000 and len(order) <= MAX_LABELLED
         p = 0
         while p <= L:
             a = ang(c, p)
@@ -233,8 +255,13 @@ def main():
                 ax.text(xt, yt, f"{p/1e6:.1f}", ha="center", va="center", fontsize=7.5, color="#000000")
             p += step
 
-    # replicon labels (only when >1), with simple radial anti-collision
-    if len(order) > 1:
+    # Replicon labels: only for a finished-ish genome (>1 replicon but few enough to
+    # caption). A draft assembly's contig names carry no information a reader can use
+    # at this scale -- they are looked up by CLICKING the accompanying
+    # FINAL_GENOME_VIEWER.html, which carries per-gene and per-operon identity.
+    # Printing all of them here buries the map: the anti-collision loop pushes captions
+    # out to absurd radii and bbox_inches="tight" then shrinks the figure to a dot.
+    if 1 < len(order) <= MAX_LABELLED:
         placed = []                                            # (angle, radius) already used
         for c in order:
             mid = layout[c][0] - layout[c][1] / 2
@@ -252,7 +279,10 @@ def main():
     n_flag = sum(1 for r in rows if col(r, "NEEDS_REVIEW?").strip().lower() == "yes")
     ax.text(0, 0.05, f"{total_len/1e6:.2f} Mb · {len(rows):,} genes", ha="center", va="center",
             fontsize=13, color="#000000")
-    ax.text(0, -0.05, f"{len(order)} replicon{'s' if len(order) > 1 else ''} · "
+    # a genome carved into hundreds of pieces is a draft assembly -- call those contigs,
+    # not replicons, since only a handful of them are real replicating molecules
+    unit = "contig" if len(order) > MAX_LABELLED else "replicon"
+    ax.text(0, -0.05, f"{len(order)} {unit}{'s' if len(order) > 1 else ''} · "
             f"{n_flag:,} flagged for review", ha="center", va="center", fontsize=11.5, color="#000000")
 
     # tier legend (bottom), only tiers actually present
@@ -271,7 +301,7 @@ def main():
     out = Path(out); out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, dpi=300, bbox_inches="tight", facecolor="white")
     plt.close(fig)
-    print(f"wrote {out.name}  ({organism}: {len(rows)} genes, {len(order)} replicons, {n_flag} flagged)")
+    print(f"wrote {out.name}  ({organism}: {len(rows)} genes, {len(order)} {unit}s, {n_flag} flagged)")
 
 
 if __name__ == "__main__":

@@ -89,6 +89,38 @@ DRIVER_TIME = '7-00:00:00'
 DRIVER_CPUS = 2                # Snakemake plus the shell that waits on it
 DRIVER_MEM_MB = 8000
 
+# The six shapes sbatch --time accepts. Anything else makes sbatch refuse the
+# submission outright, and since this value now comes from a user-editable
+# config field ("3 days", "72h", a stray space) that refusal would surface as a
+# failed start with no obvious cause. Validate here and fall back instead.
+_SLURM_TIME_RE = re.compile(
+    r'^(?:\d+'                       # minutes
+    r'|\d+:\d{1,2}'                  # minutes:seconds
+    r'|\d+:\d{1,2}:\d{1,2}'          # hours:minutes:seconds
+    r'|\d+-\d{1,2}'                  # days-hours
+    r'|\d+-\d{1,2}:\d{1,2}'          # days-hours:minutes
+    r'|\d+-\d{1,2}:\d{1,2}:\d{1,2}'  # days-hours:minutes:seconds
+    r')$'
+)
+
+
+def _valid_driver_time(value: str | None) -> str | None:
+    """Return *value* if sbatch would accept it as --time, else None.
+
+    None means "caller should use the default" -- a bad value must never be
+    passed through to sbatch, and must never be silently treated as unlimited.
+    """
+    if value is None:
+        return None
+    candidate = str(value).strip()
+    if not candidate:
+        return None
+    if not _SLURM_TIME_RE.match(candidate):
+        LOGGER.warning('Ignoring invalid driver walltime %r (expected D-HH:MM:SS or HH:MM:SS); '
+                       'falling back to %s', value, DRIVER_TIME)
+        return None
+    return candidate
+
 
 def probe_run(job_id: str, connection: SSHConnection) -> dict:
     """One SSH round-trip answering: is this detached run's log worth tailing?
@@ -261,6 +293,7 @@ def submit_ssh_job(
     in_slurm: bool = True,
     driver_account: str | None = None,
     driver_partition: str | None = None,
+    driver_time: str | None = None,
 ):
     '''Run a workflow command on the login node, DETACHED, and stream its log.
 
@@ -310,6 +343,7 @@ def submit_ssh_job(
                 cmd, base, safe, log, rcf, jobidf, driversh,
                 partition=(driver_partition or DRIVER_PARTITION),
                 account=(driver_account if driver_account is not None else DRIVER_ACCOUNT),
+                time_limit=(_valid_driver_time(driver_time) or DRIVER_TIME),
             )
             _in, _out, _err = ssh.exec_command(launch)
             driver_job = ''

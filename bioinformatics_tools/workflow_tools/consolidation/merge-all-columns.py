@@ -185,6 +185,49 @@ def aggregate_shared_interpro_columns(interpro_tables: list[ToolTable], fid: str
     return merged
 
 
+def assert_shared_feature_namespace(all_tables: list[ToolTable]) -> None:
+    """Abort if any tool's feature_ids live in a different namespace to RASTtk's.
+
+    Every phase4-8 tool is fed rast.faa, so its feature_ids can only be RASTtk's
+    own. A table sharing NOTHING with rasttk is therefore not a tool that found
+    no hits (that table would be empty) -- it is a table computed against a
+    DIFFERENT RASTtk submission, whose fig|6666666.<job>.peg.<n> namespace does
+    not overlap this run's.
+
+    That must be fatal, because the merge below unions feature_ids: a foreign
+    table does not fail to join, it silently ADDS its genes as extra rows. The
+    result looks superficially fine -- roughly double the row count -- but every
+    scored gene has no coordinates and every coordinate-bearing gene has no
+    annotation, which then flows into scoring, the circular map and the viewer
+    as confidently-presented nonsense. A loud stop here is the whole point.
+    """
+    by_tool = {t.tool_name: t for t in all_tables}
+    rast = by_tool.get("rasttk")
+    if not rast or not rast.rows_by_feature:
+        return                                  # nothing to anchor against
+    spine = set(rast.rows_by_feature)
+    foreign = []
+    for t in all_tables:
+        if t.tool_name == "rasttk" or not t.rows_by_feature:
+            continue
+        fids = set(t.rows_by_feature)
+        if not (fids & spine):
+            foreign.append((t.tool_name, len(fids), sorted(fids)[0]))
+    if not foreign:
+        return
+    print("[merge-all-columns] ERROR: feature_id namespace mismatch — refusing to merge.",
+          file=sys.stderr)
+    print(f"    rasttk defines {len(spine)} feature_ids, e.g. {sorted(spine)[0]}", file=sys.stderr)
+    for name, n, example in foreign:
+        print(f"    {name:14s} has {n} feature_ids sharing NONE of them, e.g. {example}",
+              file=sys.stderr)
+    print("    These tables were computed against a different RASTtk submission "
+          "(BV-BRC mints a new 6666666.<job> id per submission).", file=sys.stderr)
+    print("    Delete the stale per-tool outputs above and re-run so they are "
+          "recomputed against this run's rasttk.", file=sys.stderr)
+    raise SystemExit(1)
+
+
 def build_merged_rows(
     all_tables: list[ToolTable],
     organism_name_override: str,
@@ -192,6 +235,8 @@ def build_merged_rows(
 ) -> tuple[list[dict], list[str]]:
     by_tool: dict[str, ToolTable] = {t.tool_name: t for t in all_tables}
     rast = by_tool.get("rasttk")
+
+    assert_shared_feature_namespace(all_tables)
 
     all_fids: set[str] = set()
     for t in all_tables:

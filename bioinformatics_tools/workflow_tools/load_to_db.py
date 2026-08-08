@@ -94,7 +94,14 @@ CREATE TABLE IF NOT EXISTS run_log (
 );
 """
 
-_RUN_LOG_NEW_COLS = [("fasta_hash", "TEXT"), ("pipeline_version", "TEXT")]
+_RUN_LOG_NEW_COLS = [("fasta_hash", "TEXT"), ("pipeline_version", "TEXT"),
+                     # organism_name is what the DATA tables are keyed by, but a
+                     # genome's identity is its fasta_hash -- the same sequence can
+                     # be submitted under a new display name. Recording the name
+                     # alongside the hash is what lets a reload find and clear the
+                     # rows it wrote under any EARLIER name for the same genome
+                     # (see _organism_names_for_fasta).
+                     ("organism_name", "TEXT")]
 
 
 def _compute_file_hash(file_path: str) -> str:
@@ -182,15 +189,56 @@ def is_already_processed(db_path: str, fasta_hash: str,
     return _retry_operation(_check)
 
 
+def _organism_names_for_fasta(db_path: str, fasta_hash: str) -> set[str]:
+    """Every organism_name this FASTA has ever been loaded under.
+
+    A genome's identity is its sequence, not its label. When the same FASTA is
+    re-run under a new name, the data tables still hold the rows written under
+    the OLD name -- and those rows are keyed only by organism_name, so a delete
+    scoped to the new name cannot see them.
+    """
+    if not fasta_hash:
+        return set()
+
+    def _query() -> set[str]:
+        conn = _get_connection(db_path)
+        try:
+            _ensure_run_log(conn)
+            rows = conn.execute(
+                "SELECT DISTINCT organism_name FROM run_log "
+                "WHERE fasta_hash = ? AND organism_name IS NOT NULL AND organism_name != ''",
+                (fasta_hash,),
+            ).fetchall()
+            return {r[0] for r in rows}
+        finally:
+            conn.close()
+
+    try:
+        return _retry_operation(_query)
+    except sqlite3.OperationalError:
+        return set()
+
+
 def _delete_stale_organism_rows(db_path: str, table_name: str,
-                                organism_name: str) -> int:
-    """Delete all existing rows for organism_name from table_name before reloading.
+                                organism_name: str,
+                                fasta_hash: str | None = None) -> int:
+    """Delete existing rows for THIS GENOME from table_name before reloading.
 
     Called only when _already_loaded() returned False, so this is always safe:
     either the organism is new (0 rows deleted) or it exists at a stale/unversioned
     version (old rows cleared before fresh insert).  Handles pre-versioning data
     in margie.db that has no fasta_hash in run_log.
+
+    Scoped by genome IDENTITY, not display name. Deleting only *organism_name*
+    silently leaves a full duplicate copy of the same genome behind whenever it
+    is re-run under a different label: the delete matches nothing, the insert
+    adds a second set, and the DB ends up holding one genome twice under two
+    names. That is reachable on every --force load (scoring does one each run),
+    so the alias sweep below is what actually keeps the tables unique.
     """
+    targets = {organism_name} | _organism_names_for_fasta(db_path, fasta_hash)
+    targets = {t for t in targets if t}
+
     def _do_delete() -> int:
         conn = _get_connection(db_path)
         try:
@@ -200,9 +248,13 @@ def _delete_stale_organism_rows(db_path: str, table_name: str,
             ).fetchone()
             if not exists:
                 return 0
+            cols = {row[1] for row in conn.execute(f'PRAGMA table_info("{table_name}")')}
+            if "organism_name" not in cols:
+                return 0
+            placeholders = ",".join("?" * len(targets))
             cursor = conn.execute(
-                f'DELETE FROM "{table_name}" WHERE organism_name = ?',
-                (organism_name,),
+                f'DELETE FROM "{table_name}" WHERE organism_name IN ({placeholders})',
+                tuple(sorted(targets)),
             )
             deleted = cursor.rowcount
             if deleted:
@@ -211,12 +263,19 @@ def _delete_stale_organism_rows(db_path: str, table_name: str,
         finally:
             conn.close()
 
+    if not targets:
+        return 0
+    if len(targets) > 1:
+        print(f"Note: {table_name} — this FASTA was previously loaded as "
+              f"{sorted(targets - {organism_name})}; clearing those rows too so the "
+              f"same genome is not stored twice under different names.")
     return _retry_operation(_do_delete)
 
 
 def _record_load(db_path: str, input_hash: str, tool: str,
                  input_path: str, row_count: int,
-                 fasta_hash: str | None = None) -> None:
+                 fasta_hash: str | None = None,
+                 organism_name: str | None = None) -> None:
     """Record a successful annotation load in the run_log table."""
     def _insert() -> None:
         conn = _get_connection(db_path)
@@ -225,11 +284,11 @@ def _record_load(db_path: str, input_hash: str, tool: str,
             conn.execute(
                 "INSERT OR IGNORE INTO run_log "
                 "(run_id, input_hash, tool, input_path, row_count, rules_completed, "
-                " status, loaded_at, fasta_hash, pipeline_version) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " status, loaded_at, fasta_hash, pipeline_version, organism_name) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (str(uuid.uuid4()), input_hash, tool, input_path, row_count, 0, 'success',
                  datetime.now(timezone.utc).isoformat(),
-                 fasta_hash, PIPELINE_VERSION if fasta_hash else None),
+                 fasta_hash, PIPELINE_VERSION if fasta_hash else None, organism_name),
             )
             conn.commit()
         finally:
@@ -529,7 +588,8 @@ def main():
     # Safe because _already_loaded() above would have returned True and exited
     # if current-version rows were already present.
     if organism_name:
-        deleted = _delete_stale_organism_rows(args.db_path, label, organism_name)
+        deleted = _delete_stale_organism_rows(args.db_path, label, organism_name,
+                                              fasta_hash=fasta_hash)
         if deleted:
             print(f"Deleted {deleted} stale rows from {label} (pre-delete before reload)")
 
@@ -542,7 +602,7 @@ def main():
         n = load_csv_to_db(args.input_file, args.db_path, args.table_name)
 
     _record_load(args.db_path, input_hash, label, args.input_file, n,
-                 fasta_hash=fasta_hash)
+                 fasta_hash=fasta_hash, organism_name=organism_name)
     print(f"Loaded {n} rows from {label} into {args.db_path}")
 
     if args.token:

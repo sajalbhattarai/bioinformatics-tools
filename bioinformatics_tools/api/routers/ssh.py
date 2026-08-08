@@ -1213,6 +1213,7 @@ def _launch_job(
     selected_tools: list[str] | None, current_user: dict, conn, main_db: str | None,
     slurm_account: str | None = None,
     slurm_partition: str | None = None,
+    slurm_walltime: str | None = None,
     relaunched_from: str | None = None,
     copy_from_work_dir: str | None = None,
     run_full_operon_map: bool = False,
@@ -1308,6 +1309,7 @@ def _launch_job(
         connection=conn,
         driver_account=slurm_account,
         driver_partition=slurm_partition,
+        driver_time=slurm_walltime,
     )
 
     return {"success": True, "job_id": job_id, "output_dir": output_dir, "message": "Job submitted successfully"}
@@ -1362,6 +1364,8 @@ def run_workflow(genome_data: GenomeSend, current_user: dict = Depends(get_curre
     slurm_account = str(account).strip() if account else None
     partition = user_config.get('compute', {}).get('cluster_default', {}).get('partition')
     slurm_partition = str(partition).strip() if partition else None
+    walltime = user_config.get('compute', {}).get('cluster_default', {}).get('driver_walltime')
+    slurm_walltime = str(walltime).strip() if walltime else None
 
     if missing_fields:
         raise HTTPException(
@@ -1440,6 +1444,7 @@ def run_workflow(genome_data: GenomeSend, current_user: dict = Depends(get_curre
         base_output_dir=base_dir, selected_tools=genome_data.selected_tools,
         current_user=current_user, conn=conn, main_db=main_db,
         slurm_account=slurm_account, slurm_partition=slurm_partition,
+        slurm_walltime=slurm_walltime,
         run_full_operon_map=effective_full_operon_map,
     )
 
@@ -2100,6 +2105,7 @@ def resume_job(job_id: str, current_user: dict = Depends(get_current_user)):
     main_db, user_config = _main_db_for(current_user, conn)
     slurm_account = str(user_config.get('compute', {}).get('cluster_default', {}).get('account', '')).strip() or None
     slurm_partition = str(user_config.get('compute', {}).get('cluster_default', {}).get('partition', '')).strip() or None
+    slurm_walltime = str(user_config.get('compute', {}).get('cluster_default', {}).get('driver_walltime', '')).strip() or None
     if not slurm_account:
         raise HTTPException(
             status_code=400,
@@ -2115,6 +2121,7 @@ def resume_job(job_id: str, current_user: dict = Depends(get_current_user)):
         base_output_dir=_base_output_dir_from(work_dir), selected_tools=selected_tools,
         current_user=current_user, conn=conn, main_db=main_db,
         slurm_account=slurm_account, slurm_partition=slurm_partition,
+        slurm_walltime=slurm_walltime,
         relaunched_from=job_id, copy_from_work_dir=work_dir,
     )
 
@@ -2139,6 +2146,7 @@ def restart_job(job_id: str, current_user: dict = Depends(get_current_user)):
     main_db, user_config = _main_db_for(current_user, conn)
     slurm_account = str(user_config.get('compute', {}).get('cluster_default', {}).get('account', '')).strip() or None
     slurm_partition = str(user_config.get('compute', {}).get('cluster_default', {}).get('partition', '')).strip() or None
+    slurm_walltime = str(user_config.get('compute', {}).get('cluster_default', {}).get('driver_walltime', '')).strip() or None
     if not slurm_account:
         raise HTTPException(
             status_code=400,
@@ -2154,6 +2162,7 @@ def restart_job(job_id: str, current_user: dict = Depends(get_current_user)):
         base_output_dir=_base_output_dir_from(base_for_dir), selected_tools=selected_tools,
         current_user=current_user, conn=conn, main_db=main_db,
         slurm_account=slurm_account, slurm_partition=slurm_partition,
+        slurm_walltime=slurm_walltime,
         relaunched_from=job_id,
     )
 

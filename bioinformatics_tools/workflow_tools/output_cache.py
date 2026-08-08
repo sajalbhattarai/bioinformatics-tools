@@ -12,6 +12,7 @@ with it — no separate cache directory needed.
 import hashlib
 import logging
 import os
+import re
 import sqlite3
 import time
 from datetime import datetime, timezone
@@ -195,6 +196,86 @@ def restore(db_path: str, input_file: str, tool_name: str,
         LOGGER.info("Restored from cache: %s", path)
 
     return True
+
+
+# ─────────────────── RASTtk genome-id realignment ─────────────────── #
+
+# BV-BRC/RASTtk stamps every feature it calls with the id of the SUBMISSION that
+# called it: fig|6666666.<job>.peg.<n>. The job number is minted per submission,
+# so the same FASTA submitted twice yields two different namespaces for what are
+# byte-for-byte the same genes.
+_RAST_GENOME_ID_RE = re.compile(rb"6666666\.(\d+)")
+
+
+def current_rast_genome_id(rasttk_file: str) -> str | None:
+    """Return the ``6666666.<job>`` id this run's RASTtk actually produced.
+
+    Reads it out of a rasttk output (rast.gff / rast.tsv). Returns None if the
+    file is missing or carries no id, which the caller must treat as "don't
+    touch anything" rather than "no id".
+    """
+    try:
+        blob = Path(rasttk_file).read_bytes()
+    except OSError:
+        return None
+    ids = {m.group(1) for m in _RAST_GENOME_ID_RE.finditer(blob)}
+    if len(ids) != 1:
+        if ids:
+            LOGGER.warning("rasttk output %s carries %d genome ids (%s) — cannot pin one",
+                           rasttk_file, len(ids), sorted(i.decode() for i in ids))
+        return None
+    return ids.pop().decode()
+
+
+def realign_rast_genome_id(paths: list[str], current_id: str) -> dict[str, str]:
+    """Rewrite cache-restored files onto THIS run's RASTtk genome id.
+
+    output_cache keys on the input FASTA's content hash, so a hit means the
+    restored outputs were computed from byte-identical sequence. RASTtk is
+    deterministic under that condition -- for the same FASTA the peg numbering,
+    gene_id, strand and coordinates come back identical -- and the ONLY thing
+    that differs between two submissions is the 6666666.<job> prefix.
+
+    That prefix is what every downstream table joins on. When rasttk itself is
+    a cache MISS (its restore is gated behind a full GTDB-Tk batch hit) while
+    its dependents are HITs, the restored tables still carry the old job's
+    namespace and every join against the fresh rasttk output finds nothing --
+    consolidation then unions two disjoint feature sets instead of joining
+    them, doubling the row count and leaving every scored gene without
+    coordinates and every coordinate-bearing gene without a score. Rewriting
+    the prefix here is what keeps a cache hit meaningful instead of poisonous.
+
+    Only rewrites a file that carries EXACTLY ONE genome id. A file holding
+    several is cross-organism (or already mixed) and is left alone with a
+    warning -- guessing which id is "this genome" there would corrupt it.
+
+    Returns ``{path: "<old>->      <new>"}`` for the files actually rewritten.
+    """
+    changed: dict[str, str] = {}
+    want = current_id.encode()
+    for path in paths:
+        p = Path(path)
+        try:
+            blob = p.read_bytes()
+        except OSError:
+            continue
+        ids = {m.group(1) for m in _RAST_GENOME_ID_RE.finditer(blob)}
+        if not ids or ids == {want}:
+            continue
+        if len(ids) > 1:
+            LOGGER.warning(
+                "Not realigning %s: it carries %d RAST genome ids (%s). A cached "
+                "per-genome output should carry exactly one.",
+                path, len(ids), sorted(i.decode() for i in ids))
+            continue
+        old = ids.pop()
+        try:
+            p.write_bytes(blob.replace(b"6666666." + old, b"6666666." + want))
+        except OSError as exc:
+            LOGGER.warning("Could not realign %s: %s", path, exc)
+            continue
+        changed[path] = f"{old.decode()} -> {current_id}"
+    return changed
 
 
 def cached_tools(db_path: str, input_file: str) -> set:

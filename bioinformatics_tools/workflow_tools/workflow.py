@@ -18,7 +18,10 @@ from bioinformatics_tools.file_classes.base_classes import command
 from bioinformatics_tools.workflow_tools.bapptainer import (
     CacheSifError, cache_sif_files, locate_local_sif_files)
 from bioinformatics_tools.workflow_tools.models import WorkflowKey
-from bioinformatics_tools.workflow_tools.output_cache import cached_tools, log_workflow_run, restore, restore_all, store, store_all
+from bioinformatics_tools.workflow_tools.output_cache import (
+    cached_tools, current_rast_genome_id, log_workflow_run, realign_rast_genome_id,
+    restore, restore_all, store, store_all,
+)
 from bioinformatics_tools.workflow_tools.load_to_db import is_already_processed, PIPELINE_VERSION, compute_fasta_hash
 from bioinformatics_tools.workflow_tools.programs import ProgramBase
 from bioinformatics_tools.workflow_tools.workflow_helpers import (
@@ -975,9 +978,33 @@ class WorkflowBase(ProgramBase):
             # files materialized on disk (only Stage 1's rasttk output would
             # land), which is exactly the "restores only up to rasttk" bug.
             if db_path:
-                genome_restored = restore_all(db_path, genome_files[genome], cache_map_fn(genome))
+                genome_cache_map_now = cache_map_fn(genome)
+                genome_restored = restore_all(db_path, genome_files[genome], genome_cache_map_now)
                 restored[genome] = genome_restored
                 LOGGER.info('Phase4+ cache restore for %s: %s', genome, genome_restored)
+
+                # Put every restored table into THIS run's RASTtk namespace.
+                # rasttk is restored only behind a full GTDB-Tk batch hit, so it
+                # routinely recomputes while its dependents come back from cache
+                # -- and a fresh RASTtk submission mints a new 6666666.<job> id.
+                # Left alone, the restored tables join against nothing and
+                # consolidation silently unions two disjoint feature sets (see
+                # realign_rast_genome_id). Same FASTA hash keyed the hit, so the
+                # peg numbering underneath is identical; only the prefix moves.
+                rast_ref = f"{get_workflow_prefix_for(genome, smk_config)}rasttk/rast.gff"
+                current_id = current_rast_genome_id(rast_ref)
+                if current_id:
+                    hit_paths = [p for tool, hit in genome_restored.items() if hit
+                                 for p in genome_cache_map_now.get(tool, [])]
+                    realigned = realign_rast_genome_id(hit_paths, current_id)
+                    if realigned:
+                        LOGGER.warning(
+                            'Realigned %d cache-restored file(s) for %s onto RASTtk genome id %s '
+                            '(cached under a different submission): %s',
+                            len(realigned), genome, current_id, sorted(realigned.values())[:1])
+                else:
+                    LOGGER.warning('No single RASTtk genome id readable from %s — skipping '
+                                   'cache realignment for %s', rast_ref, genome)
 
             # Skip Stage 2 COMPUTE only when this genome is already at the
             # current PIPELINE_VERSION AND every SELECTED step was actually

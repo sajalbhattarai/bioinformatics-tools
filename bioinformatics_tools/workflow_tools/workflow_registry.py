@@ -43,6 +43,27 @@ REQUIRED_SYSTEM_PARAMS = [
         'description': 'Maximum number of concurrent SLURM jobs',
         'type': 'int'
     },
+    {
+        # The DRIVER job -- the one Snakemake itself runs in, which then queues
+        # every per-rule job. Distinct from default_runtime above, which caps
+        # those individual rule jobs. The driver has to outlive all of them, so
+        # it asks for a wide margin.
+        #
+        # Adjustable because a generous limit is normally free (SLURM charges
+        # what a job uses, and the cpu partition is MaxTime=UNLIMITED) but
+        # stops being free during a maintenance reservation: SLURM refuses to
+        # start anything that cannot finish before the outage begins, so a
+        # 7-day request simply sits PENDING with
+        # "ReqNodeNotAvail, Reserved for maintenance" for the whole week
+        # leading up to one. Lowering it to fit the remaining gap is the fix,
+        # and that is a per-site/per-week judgement, not something to hardcode.
+        'param': 'compute.cluster_default.driver_walltime',
+        'default': '3-00:00:00',
+        'description': ('SLURM walltime for the workflow driver job (D-HH:MM:SS or HH:MM:SS). '
+                        'Must exceed the whole run. Lower it to fit before a maintenance '
+                        'outage, otherwise the job stays PENDING until the outage ends.'),
+        'type': 'string'
+    },
 ]
 
 
