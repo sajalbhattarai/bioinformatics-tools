@@ -44,6 +44,39 @@ LOGGER = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/ssh", tags=["ssh"])
 
+# compute.cluster_default.* defaults, taken straight from the registry that also
+# builds the default config.yaml and renders the Profile form -- one source of
+# truth for what a setting means when the file does not mention it.
+_CLUSTER_DEFAULTS: dict[str, object] = {
+    p['param'].split('.')[-1]: p.get('default')
+    for p in REQUIRED_SYSTEM_PARAMS
+    if p['param'].startswith('compute.cluster_default.')
+}
+
+
+def _cluster_default(user_config: dict, key: str) -> str | None:
+    """Read compute.cluster_default.<key>, falling back to the registry default.
+
+    A config.yaml written before <key> was introduced simply does not contain
+    it. Reading that absence as "unset" pins every existing install to whatever
+    hardcoded constant sits behind the call site, which is how installs kept
+    getting a 7-day driver walltime after driver_walltime was added -- the new
+    setting only reached anyone who happened to re-save their Profile.
+
+    Falling back to the registry instead means a newly added setting takes
+    effect on upgrade with no file surgery, while any value the user has
+    actually written still wins.
+    """
+    value = (user_config.get('compute', {})
+                        .get('cluster_default', {})
+                        .get(key))
+    if value is None or str(value).strip() == '':
+        value = _CLUSTER_DEFAULTS.get(key)
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
 # Workflows visible on the frontend but not yet implemented.
 STUB_WORKFLOWS: set[str] = {"custom_microbiome"}
 
@@ -1364,8 +1397,7 @@ def run_workflow(genome_data: GenomeSend, current_user: dict = Depends(get_curre
     slurm_account = str(account).strip() if account else None
     partition = user_config.get('compute', {}).get('cluster_default', {}).get('partition')
     slurm_partition = str(partition).strip() if partition else None
-    walltime = user_config.get('compute', {}).get('cluster_default', {}).get('driver_walltime')
-    slurm_walltime = str(walltime).strip() if walltime else None
+    slurm_walltime = _cluster_default(user_config, 'driver_walltime')
 
     if missing_fields:
         raise HTTPException(
@@ -2105,7 +2137,7 @@ def resume_job(job_id: str, current_user: dict = Depends(get_current_user)):
     main_db, user_config = _main_db_for(current_user, conn)
     slurm_account = str(user_config.get('compute', {}).get('cluster_default', {}).get('account', '')).strip() or None
     slurm_partition = str(user_config.get('compute', {}).get('cluster_default', {}).get('partition', '')).strip() or None
-    slurm_walltime = str(user_config.get('compute', {}).get('cluster_default', {}).get('driver_walltime', '')).strip() or None
+    slurm_walltime = _cluster_default(user_config, 'driver_walltime')
     if not slurm_account:
         raise HTTPException(
             status_code=400,
@@ -2146,7 +2178,7 @@ def restart_job(job_id: str, current_user: dict = Depends(get_current_user)):
     main_db, user_config = _main_db_for(current_user, conn)
     slurm_account = str(user_config.get('compute', {}).get('cluster_default', {}).get('account', '')).strip() or None
     slurm_partition = str(user_config.get('compute', {}).get('cluster_default', {}).get('partition', '')).strip() or None
-    slurm_walltime = str(user_config.get('compute', {}).get('cluster_default', {}).get('driver_walltime', '')).strip() or None
+    slurm_walltime = _cluster_default(user_config, 'driver_walltime')
     if not slurm_account:
         raise HTTPException(
             status_code=400,
