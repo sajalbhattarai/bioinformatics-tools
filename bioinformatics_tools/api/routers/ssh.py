@@ -37,6 +37,7 @@ from bioinformatics_tools.workflow_tools.workflow_registry import (
     MARGIE_SB_PHASED_TOOLS,
     WORKFLOWS,
     REQUIRED_SYSTEM_PARAMS,
+    resolve_user_paths,
     workflow_path_params,
 )
 
@@ -815,7 +816,7 @@ def _detect_delimiter(path: str, header: str) -> str:
     return "\t" if "\t" in header else ","
 
 
-def _get_available_workflows() -> list[dict]:
+def _get_available_workflows(cluster_username: str | None = None) -> list[dict]:
     """
     Build the list of available workflows from WORKFLOWS registry.
     Returns detailed metadata for each workflow including tools, params, etc.
@@ -846,7 +847,9 @@ def _get_available_workflows() -> list[dict]:
             include_db_root=wf_key.supports_db_root,
             supports_batch_input=wf_key.supports_batch_input,
         )
-        wf_dict['configurable_params'] = REQUIRED_SYSTEM_PARAMS + path_params + (wf_key.configurable_params or [])
+        wf_dict['configurable_params'] = resolve_user_paths(
+            REQUIRED_SYSTEM_PARAMS + path_params + (wf_key.configurable_params or []),
+            cluster_username)
 
         workflows.append(wf_dict)
 
@@ -971,13 +974,20 @@ def _default_params_for_workflow(workflow_id: str, workflow) -> list[dict]:
     return unique
 
 
-def _build_default_config_payload() -> dict:
+def _build_default_config_payload(cluster_username: str | None = None) -> dict:
+    """Build the default config.yaml contents.
+
+    cluster_username scopes the writable accumulating stores (OCC reference,
+    fingerprint databases, genome pool, historical archive) to this user --
+    see workflow_registry.resolve_user_paths. Passing None keeps the legacy
+    shared paths, which is only correct for callers with no user context.
+    """
     config: dict = {
         'main_database': '~/.local/share/bioinformatics-tools/my-db.db',
         'compute': {'cluster_default': {}},
     }
 
-    for param in REQUIRED_SYSTEM_PARAMS:
+    for param in resolve_user_paths(REQUIRED_SYSTEM_PARAMS, cluster_username):
         if param['param'].startswith('compute.cluster_default.'):
             key = param['param'].split('.')[-1]
             default_value = param.get('default')
@@ -989,7 +999,7 @@ def _build_default_config_payload() -> dict:
             continue
 
         section: dict = {}
-        for param in _ordered_workflow_params(workflow_id, params):
+        for param in resolve_user_paths(_ordered_workflow_params(workflow_id, params), cluster_username):
             parts = param['param'].split('.')
 
             # Params are usually namespaced (e.g. "margie_sb.sif_path").
@@ -1017,8 +1027,13 @@ def _build_default_config_text(config: dict) -> str:
 
 @router.get("/workflows")
 def list_workflows(current_user: dict = Depends(get_current_user)):
-    """Return the list of user-facing workflows with detailed metadata."""
-    return _get_available_workflows()
+    """Return the list of user-facing workflows with detailed metadata.
+
+    Path defaults are resolved for THIS user, so the Profile form offers
+    /depot/.../users/<their account>/... rather than a shared path they would
+    otherwise write into alongside everyone else.
+    """
+    return _get_available_workflows(current_user.get("cluster_username"))
 
 
 @router.get("/health")
@@ -1110,7 +1125,7 @@ def create_default_config(current_user: dict = Depends(get_current_user)):
     conn = _build_connection(current_user)
     path = _config_path(current_user["home_dir"])
 
-    default_config = _build_default_config_payload()
+    default_config = _build_default_config_payload(current_user.get("cluster_username"))
     default_config_text = _build_default_config_text(default_config)
 
     try:

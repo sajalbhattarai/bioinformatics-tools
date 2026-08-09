@@ -5,8 +5,55 @@ Defines all Snakemake workflows that can be executed via the dane_wf CLI.
 Each workflow is registered as a WorkflowKey with metadata for execution,
 frontend display, and configuration.
 """
+import logging
+
 from bioinformatics_tools.workflow_tools.models import WorkflowKey
 from bioinformatics_tools.workflow_tools.workflow_helpers import WORKFLOW_PATH_DEFAULTS
+
+LOGGER = logging.getLogger(__name__)
+
+# Root for the accumulating, WRITABLE stores a run appends to -- the OCC operon
+# reference, the fingerprint databases, the genome pool, the historical scoring
+# archive. These are per-user by nature: two people running different genome
+# sets into one file both corrupt it and race on the lock. They used to default
+# to one shared path per store, which meant every new user silently inherited
+# (and wrote into) whatever the previous user had built.
+#
+# {user} is substituted by resolve_user_paths() with the cluster username at the
+# moment a config is generated or shown. Read-only reference data (db/, the tool
+# databases, sif images) is deliberately NOT under here -- that is genuinely
+# shared and duplicating it per user would waste terabytes.
+MARGIE_DEPOT_ROOT = '/depot/lindems/data/margie'
+MARGIE_USER_ROOT = f'{MARGIE_DEPOT_ROOT}/users/{{user}}'
+
+
+def resolve_user_paths(params: list[dict], username: str | None) -> list[dict]:
+    """Return *params* with {user} in path defaults filled in for *username*.
+
+    Callers pass the CLUSTER username (the account the run executes as), not the
+    web login, so the path matches what the user sees on the filesystem.
+
+    Without a username the {user} placeholder cannot be resolved; rather than
+    emit a literal "{user}" directory that would then be created for real, the
+    legacy shared root is used. That reproduces the pre-per-user behaviour --
+    wrong, but wrong in the familiar way, and loudly logged.
+    """
+    if not params:
+        return params
+    if username:
+        target = f'{MARGIE_DEPOT_ROOT}/users/{username}'
+    else:
+        LOGGER.warning('No cluster username available to resolve per-user store paths; '
+                       'falling back to the shared depot root')
+        target = MARGIE_DEPOT_ROOT
+    token = f'{MARGIE_DEPOT_ROOT}/users/{{user}}'
+    out = []
+    for p in params:
+        d = p.get('default')
+        if isinstance(d, str) and token in d:
+            p = {**p, 'default': d.replace(token, target)}
+        out.append(p)
+    return out
 
 
 # System-wide required parameters for cluster execution
@@ -475,43 +522,43 @@ WORKFLOWS: dict[str, WorkflowKey] = {
             },
             {
                 'param': 'margie_sb.operon_database.occ_reference_pkl',
-                'default': '/depot/lindems/data/margie/operon-database/occ_reference.pkl',
+                'default': MARGIE_USER_ROOT + '/operon-database/occ_reference.pkl',
                 'description': 'Shared cross-run OCC reference pickle path for C3 scoring updates',
                 'type': 'path'
             },
             {
                 'param': 'margie_sb.fingerprint_database.path',
-                'default': '/depot/lindems/data/margie/fingerprint-database/fingerprint-database.tsv',
+                'default': MARGIE_USER_ROOT + '/fingerprint-database/fingerprint-database.tsv',
                 'description': 'Shared cross-run gene fingerprint database TSV',
                 'type': 'path'
             },
             {
                 'param': 'margie_sb.genome_pool.path',
-                'default': '/depot/lindems/data/margie/genome-pool',
+                'default': MARGIE_USER_ROOT + '/genome-pool',
                 'description': 'Shared genome pool root (contains fna/ and faa/ subfolders)',
                 'type': 'path'
             },
             {
                 'param': 'margie_sb.scoring_results_historical.path',
-                'default': '/depot/lindems/data/margie/scoring-results-historical',
+                'default': MARGIE_USER_ROOT + '/scoring-results-historical',
                 'description': 'Archive root for per-run historical FINAL scoring tables',
                 'type': 'path'
             },
             {
                 'param': 'margie_sb.final_tables_depot.path',
-                'default': '/depot/lindems/data/margie/final-tables',
+                'default': MARGIE_USER_ROOT + '/final-tables',
                 'description': 'Reviewer-facing per-organism final table export root',
                 'type': 'path'
             },
             {
                 'param': 'margie_sb.report_figures.operon_db',
-                'default': '/depot/lindems/data/margie/fingerprint-database/operon-fingerprint-database-label-ordered.tsv',
+                'default': MARGIE_USER_ROOT + '/fingerprint-database/operon-fingerprint-database-label-ordered.tsv',
                 'description': 'Operon fingerprint database used by downstream report figure scripts',
                 'type': 'path'
             },
             {
                 'param': 'margie_sb.sqlite_pipeline_snapshot.path',
-                'default': '/depot/lindems/data/margie/sqlite/pipeline-version',
+                'default': MARGIE_USER_ROOT + '/sqlite/pipeline-version',
                 'description': 'Destination root for versioned sqlite snapshot queueing',
                 'type': 'path'
             },
