@@ -1,0 +1,62 @@
+# Local stuff
+*.code-workspace
+*-VALIDATED*
+uv.lock
+
+# Testing and mock
+*_mock*/
+data/
+
+# Reference data (regenerable OCC pickle -- rebuilt by score_occ.py build)
+reference_data/
+
+# AI / Claude
+settings.local.json
+.claude/*
+
+# Documentation
+## mkdocs
+site/
+
+# Snakemake
+.snakemake*/
+
+
+# Byte-compiled / optimized / DLL files
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.DS_Store
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Personal
+
+# Environment secrets
+.env
+
+# Kubernetes secrets (never commit these!)
+k8s/**/secret.yaml
+k8s/**/*-secret.yaml

@@ -1,0 +1,3 @@
+#!/bin/sh
+# Stand-in for SLURM's scancel on a laptop used as its own cluster (see _slurm.py).
+exec python3 "$(dirname "$0")/_slurm.py" scancel "$@"

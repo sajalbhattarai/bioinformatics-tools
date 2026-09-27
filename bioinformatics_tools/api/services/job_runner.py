@@ -1,0 +1,339 @@
+"""
+Job execution and monitoring.
+
+Contains the core SSH task runner that streams remote output, parses logs
+for SLURM job IDs, Snakemake progress, and container metadata, and the
+SLURM status checker daemon thread.
+
+The `connection` parameter threads a per-user SSHConnection through from the
+API router all the way to the SLURM status checker daemon, so every SSH call
+hits the correct cluster and account.
+"""
+import asyncio
+import json
+import logging
+from pathlib import PurePosixPath
+import re
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+from bioinformatics_tools.utilities import ssh_slurm
+from bioinformatics_tools.utilities.ssh_connection import SSHConnection
+from bioinformatics_tools.api.services.job_store import job_store
+
+LOGGER = logging.getLogger(__name__)
+
+# Thread pool for background SSH tasks
+executor = ThreadPoolExecutor(max_workers=4)
+
+# Regex patterns for parsing Snakemake/SLURM log output
+# For a grouped rule (e.g. "group_rasttk_load_rasttk_to_db_run_rasttk/", see
+# margie_sb.smk's group: directives) only the group's short name is captured.
+SLURM_SUBMIT_RE = re.compile(r'SLURM jobid (\d+) \(log: (.*?)\)\.?$')
+RULE_NAME_FROM_LOG_PATH_RE = re.compile(r'/slurm_logs/(?:rule_(\w+)|group_([^_]+)_\w+)/')
+SLURM_SUBMIT_FALLBACK_RE = re.compile(r'SLURM jobid (\d+)')
+# The genome is the directory between the rule and the log file in
+# .../slurm_logs/rule_<name>/<genome>/<slurm_id>.log; batch rules have no such
+# directory, so they correctly get an empty genome.
+GENOME_FROM_LOG_PATH_RE = re.compile(r'/slurm_logs/[^/]+/([^/]+)/[^/]+$')
+STEPS_PROGRESS_RE = re.compile(r'(\d+) of (\d+) steps \((\d+)%\) done')
+CACHE_HIT_RE = re.compile(r'Cache HIT for (\w+) \(genome=([^)]+)\)')
+RESTORED_FROM_CACHE_RE = re.compile(r'Restored from cache:\s+(.+)$')
+# Snakemake's --verbose "wildcards: genome=..." line, read into last_genome as a
+# fallback genome source; the sequential orchestrator has one genome in flight.
+WILDCARDS_GENOME_RE = re.compile(r'wildcards:.*\bgenome=([^\s,]+)')
+# Per-genome progress from the sequential orchestrator (workflow.py's
+# _run_pipeline_batch_sequential), whose per-genome "X of Y steps" resets each time.
+SEQUENTIAL_GENOME_RE = re.compile(r'SEQUENTIAL: genome (\d+)/(\d+)')
+
+
+def _slurm_status_checker(job_id: str, connection: SSHConnection):
+    """Daemon thread that periodically checks SLURM job statuses."""
+    while job_store.get_status(job_id) == "running":
+        slurm_jobs = job_store.get_slurm_jobs(job_id)
+        active_ids = [sj["job_id"] for sj in slurm_jobs if sj["status"] not in ("COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "CACHED")]
+        if active_ids:
+            try:
+                statuses = ssh_slurm.check_multiple_slurm_jobs(active_ids, connection=connection)
+                for sj in slurm_jobs:
+                    if sj["job_id"] in statuses:
+                        sj["status"] = statuses[sj["job_id"]]["state"]
+                        sj["time"] = statuses[sj["job_id"]]["time"]
+            except Exception as e:
+                LOGGER.warning("SLURM status check failed: %s", e)
+
+        # Fallback genome backfill for jobs whose genome was not found in the
+        # live log; retried every cycle, and always empty for batch rules.
+        for sj in slurm_jobs:
+            if not sj.get("genome") and sj.get("log_path"):
+                # The log path is checked first: free, and it cannot race log cleanup.
+                path_match = GENOME_FROM_LOG_PATH_RE.search(sj["log_path"])
+                if path_match:
+                    sj["genome"] = path_match.group(1)
+                    continue
+                try:
+                    genome = ssh_slurm.get_job_genome(sj["log_path"], connection=connection)
+                    if genome:
+                        sj["genome"] = genome
+                except Exception as e:
+                    LOGGER.warning("Genome backfill failed for job %s: %s", sj["job_id"], e)
+
+        # Persists this cycle's in-place status changes (throttled inside checkpoint()).
+        job_store.checkpoint(job_id)
+
+        # Wait 15 seconds between checks
+        for _ in range(15):
+            if job_store.get_status(job_id) != "running":
+                break
+            time.sleep(1)
+
+
+def run_ssh_task(job_id: str, command: str, connection: SSHConnection,
+                 reattach: bool = False, in_slurm: bool = True,
+                 driver_account: str | None = None,
+                 driver_partition: str | None = None,
+                 driver_time: str | None = None):
+    """Runs an SSH command, parsing its log for SLURM jobs, containers and progress.
+
+    reattach=True replays the log of a run already going (after a dane-api
+    restart) without launching anything; logs is reset first so lines are not doubled.
+    """
+    job_store.update(job_id, status="running", logs="",
+                     phase="Reattaching to running job" if reattach else "Submitting via SSH")
+
+    # Start SLURM status checker daemon thread (passes the same connection through)
+    checker = threading.Thread(
+        target=_slurm_status_checker,
+        args=(job_id, connection),
+        daemon=True
+    )
+    checker.start()
+
+    def register_cached_job(rule_name: str, genome_name: str) -> None:
+        job_store.add_slurm_job(job_id, "—", rule_name, genome=genome_name, source="from cache")
+        for sj in job_store.get_slurm_jobs(job_id):
+            if sj["job_id"] == "—" and sj["rule"] == rule_name and sj.get("genome") == genome_name:
+                sj["status"] = "CACHED"
+
+    exit_code = 0  # Track command exit code
+    last_genome = ""  # Most recently seen "wildcards: genome=..." value
+    saw_snakemake_syntax_error = False
+
+    try:
+        # job_id names the detached run's log/sentinel files, so a reconnect can replay them.
+        detached = False
+        launched = False
+        for line in ssh_slurm.submit_ssh_job(cmd=command, connection=connection,
+                                             job_id=job_id, reattach=reattach,
+                                             in_slurm=in_slurm,
+                                             driver_account=driver_account,
+                                             driver_partition=driver_partition,
+                                             driver_time=driver_time):
+            # The workflow is now running on the cluster; later errors only affect watching it.
+            if line == "__LAUNCHED__":
+                launched = True
+                continue
+
+            # Watching stopped but the run did not, so the job's state is left unchanged.
+            if line == "__DETACHED__":
+                detached = True
+                LOGGER.info("Stopped streaming job %s; it continues on the cluster", job_id)
+                break
+
+            # Detect exit code metadata from submit_ssh_job
+            if line.startswith("__EXIT_CODE__:"):
+                try:
+                    exit_code = int(line.split(":", 1)[1])
+                    LOGGER.info("Captured exit code: %d", exit_code)
+                except (ValueError, IndexError):
+                    LOGGER.warning("Failed to parse exit code from: %s", line)
+                continue
+
+            # Detect structured Report metadata from workflow
+            if line.startswith("__REPORT__:"):
+                try:
+                    report_json = line.split(":", 1)[1]
+                    report_data = json.loads(report_json)
+                    job_store.update(job_id, report=report_data)
+                    LOGGER.info("Captured structured report: status=%s", report_data.get('status', {}).get('code'))
+                except (json.JSONDecodeError, IndexError) as e:
+                    LOGGER.warning("Failed to parse report JSON: %s", e)
+                continue
+
+            # Detect work_dir metadata from submit_ssh_job
+            if line.startswith("__WORKDIR__:"):
+                job_store.update(job_id, work_dir=line.split(":", 1)[1])
+                continue
+
+            # Parse container metadata from bapptainer log lines
+            if "__CONTAINER__:" in line:
+                try:
+                    container_json = line.split("__CONTAINER__:", 1)[1]
+                    job_store.add_container(job_id, json.loads(container_json))
+                except (json.JSONDecodeError, IndexError):
+                    pass
+
+            job_store.append_log(job_id, line)
+
+            # Parses cache-restored rules (output_cache.py "Cache HIT for <tool> (genome=...)").
+            cache_match = CACHE_HIT_RE.search(line)
+            if cache_match:
+                rule_name, cache_genome = cache_match.groups()
+                register_cached_job(rule_name, cache_genome)
+
+            # Per-file restores ("Restored from cache: .../<genome>/<tool>/<file>")
+            # become cache rows, so cache vs fresh provenance shows without a Cache HIT line.
+            restored_match = RESTORED_FROM_CACHE_RE.search(line)
+            if restored_match:
+                restored_path = restored_match.group(1).strip()
+                parts = PurePosixPath(restored_path).parts
+                if len(parts) >= 3:
+                    cache_tool = parts[-2]
+                    cache_genome = parts[-3]
+                    if cache_tool and cache_genome:
+                        register_cached_job(cache_tool, cache_genome)
+
+            # Snakemake's --verbose "wildcards: genome=..." line, printed just before submission.
+            wildcards_match = WILDCARDS_GENOME_RE.search(line)
+            if wildcards_match:
+                last_genome = wildcards_match.group(1)
+
+            # Parses SLURM job IDs as they appear; log_path is kept for the
+            # checker's fallback genome backfill.
+            match = SLURM_SUBMIT_RE.search(line)
+            if match:
+                slurm_id, log_path = match.groups()
+                rule_match = RULE_NAME_FROM_LOG_PATH_RE.search(log_path)
+                ungrouped_rule_name, group_name = rule_match.groups() if rule_match else (None, None)
+                # The path is the primary genome source (GENOME_FROM_LOG_PATH_RE);
+                # last_genome is the fallback.
+                path_genome_match = GENOME_FROM_LOG_PATH_RE.search(log_path)
+                genome = (path_genome_match.group(1) if path_genome_match else "") or last_genome
+                job_store.add_slurm_job(job_id, slurm_id, ungrouped_rule_name or group_name or "unknown", genome=genome, log_path=log_path)
+            elif SLURM_SUBMIT_FALLBACK_RE.search(line):
+                fallback = SLURM_SUBMIT_FALLBACK_RE.search(line)
+                slurm_id = fallback.group(1)
+                job_store.add_slurm_job(job_id, slurm_id, "unknown", genome=last_genome)
+
+            # Parse Snakemake step progress (e.g. "2 of 4 steps (50%) done")
+            progress_match = STEPS_PROGRESS_RE.search(line)
+            if progress_match:
+                done, total, pct = progress_match.groups()
+                job_store.update(job_id, steps_done=int(done), steps_total=int(total), progress=int(pct))
+
+            # The wrapper may report "success" even when Snakemake fails to parse
+            # the snakefile; such runs are never finalized as completed.
+            if "SyntaxError in file" in line or "Unexpected keyword" in line and "rule definition" in line:
+                saw_snakemake_syntax_error = True
+
+            # Parses the sequential orchestrator's genome-transition marker.
+            genome_match = SEQUENTIAL_GENOME_RE.search(line)
+            if genome_match:
+                genome_index, genome_total = genome_match.groups()
+                job_store.update(job_id, genome_index=int(genome_index), genome_total=int(genome_total))
+
+            # Update phase based on output
+            if "snakemake" in line.lower():
+                job_store.update(job_id, phase="Running Snakemake")
+
+        # Detached means watching stopped, not the run; exit_code is still 0, so
+        # finalizing here would report a live run as completed.
+        if detached:
+            job_store.append_log(
+                job_id,
+                "\n\n=== Stopped streaming output. The run continues on the "
+                "cluster; reopen this job to reattach. ===")
+            job_store.update(job_id, phase="Running (detached)")
+            LOGGER.info("Job %s left running detached", job_id)
+        # Check exit code and mark as failed if non-zero
+        elif exit_code != 0:
+            job_store.append_log(job_id, f"\n\n=== Command exited with code {exit_code} ===")
+            job_store.finalize(job_id, status="failed", phase="Failed")
+            LOGGER.error("Job %s failed with exit code %d", job_id, exit_code)
+        elif saw_snakemake_syntax_error:
+            job_store.append_log(job_id, "\n\n=== Snakemake syntax validation failed ===")
+            job_store.finalize(job_id, status="failed", phase="Failed (Snakemake syntax error)")
+            LOGGER.error("Job %s failed due to Snakemake syntax error despite zero wrapper exit code", job_id)
+        else:
+            job_store.finalize(job_id, status="completed", phase="Done")
+    except Exception as e:
+        # After launch the run is detached, so an exception here is a failure to
+        # watch, not of the analysis (which reports via __EXIT_CODE__). The status
+        # is left untouched and the checker thread keeps updating known SLURM jobs.
+        if launched:
+            LOGGER.warning("Lost the log stream for job %s (%s); it continues on the cluster", job_id, e)
+            job_store.append_log(
+                job_id,
+                f"\n\n=== Lost the connection carrying this log ({e}). "
+                "The run itself is unaffected and continues on the cluster; "
+                "reopen this job to reattach. ===")
+            job_store.update(job_id, phase="Running (detached)")
+            # force: nothing else writes provenance if the API stops before the next checker cycle.
+            job_store.checkpoint(job_id, force=True)
+        else:
+            job_store.append_log(job_id, f"\nError: {str(e)}")
+            job_store.finalize(job_id, status="failed", phase="Error")
+
+
+def submit_job(job_id: str, command: str, connection: SSHConnection,
+               reattach: bool = False, in_slurm: bool = True,
+               driver_account: str | None = None,
+               driver_partition: str | None = None,
+               driver_time: str | None = None):
+    """Submits a job to the thread pool executor.
+
+    in_slurm=False keeps the run on the login node, for the quick self-test workflows.
+    """
+    executor.submit(
+        run_ssh_task,
+        job_id,
+        command,
+        connection,
+        reattach,
+        in_slurm,
+        driver_account,
+        driver_partition,
+        driver_time,
+    )
+
+
+async def job_status_generator(job_id: str):
+    """Generator that yields SSE events with job status updates."""
+    last_state = None
+    last_update_time = 0
+    start_time = asyncio.get_event_loop().time()
+
+    while True:
+        try:
+            status = ssh_slurm.check_slurm_job_status(job_id)
+            current_state = status['state']
+            elapsed = status['elapsed_time']
+
+            current_time = asyncio.get_event_loop().time()
+            check_duration = int(current_time - start_time)
+
+            should_send = (
+                current_state != last_state or
+                (current_time - last_update_time) >= 7
+            )
+
+            if should_send:
+                message = f"Job {current_state.lower()} (elapsed: {elapsed}, checking for: {check_duration}s)"
+                data = {'state': current_state, 'elapsed': elapsed, 'message': message}
+                yield f"data: {json.dumps(data)}\n\n"
+                last_state = current_state
+                last_update_time = current_time
+
+            if current_state in ['COMPLETED', 'FAILED', 'CANCELLED', 'TIMEOUT', 'NOT_FOUND']:
+                data = {'state': current_state, 'elapsed': elapsed, 'done': True}
+                yield f"data: {json.dumps(data)}\n\n"
+                break
+
+            await asyncio.sleep(10)
+
+        except Exception as e:
+            LOGGER.exception("Error checking job status")
+            data = {'error': f'Error checking status: {str(e)}'}
+            yield f"data: {json.dumps(data)}\n\n"
+            break

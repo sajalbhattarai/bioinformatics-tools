@@ -1,0 +1,21 @@
+#!/bin/sh
+# Stand-in for Linux's setsid(1), which macOS does not have.
+#
+# The API starts a detached run on the login node as `nohup setsid bash -c ...`
+# (bioinformatics_tools/utilities/ssh_slurm.py). Without setsid the run dies on
+# the spot and the API waits for a log that never appears. Like util-linux's
+# setsid, this runs the command in a new session, forking only when the caller
+# already leads its process group (setsid() refuses a group leader) -- so in the
+# usual case the pid the API records is the command's own.
+exec python3 - "$@" <<'PY'
+import os, sys
+if not sys.argv[1:]:
+    sys.exit("usage: setsid program [arguments]")
+try:
+    os.setsid()
+except PermissionError:
+    if os.fork():
+        os._exit(0)
+    os.setsid()
+os.execvp(sys.argv[1], sys.argv[1:])
+PY

@@ -1,0 +1,35 @@
+site_name: Bioinformatics Supercomputing Platform
+site_author: Dane Deemer
+docs_dir: docs
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: teal
+      accent: teal
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - tables
+  - attr_list
+
+exclude_docs: |
+  task-runner-sftp-changes.md
+
+nav:
+  - Getting Started: quick-start.md
+  - User Guide:
+      - Programs: user-guide/programs.md
+      - Workflows: user-guide/workflows.md
+      - Databases: user-guide/databases.md
+      - GUI: user-guide/gui.md
+  - Configuration: configuration.md
+  - Logging: logging.md
+  - Extensions: extensions.md
+  - Help: help.md

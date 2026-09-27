@@ -1,0 +1,125 @@
+"""
+API-side client for job_history.py, which owns the job history database on the cluster.
+Runs job_history in-process when the API sits beside the database, otherwise over SSH.
+Errors are logged and ignored so a history failure never stops a job.
+"""
+import json
+import logging
+import os
+
+from bioinformatics_tools.api.services import job_history
+from bioinformatics_tools.utilities.ssh_connection import SSHConnection, runs_here
+
+LOGGER = logging.getLogger(__name__)
+
+_REMOTE_MODULE = "bioinformatics_tools.api.services.job_history"
+_REMOTE_PYTHON = "~/bioinformatics-tools/.venv/bin/python"
+
+
+def _here(connection: SSHConnection, db_path: str | None) -> bool:
+    """Returns True when this API runs on the cluster as the user with the database in reach,
+    so calls skip SSH and open the file directly."""
+    return bool(db_path) and runs_here(connection) and os.path.exists(os.path.expanduser(db_path))
+
+
+def _run(connection: SSHConnection, action: str, payload: dict):
+    """Runs one job_history action, in-process or via SSH, and returns its JSON result or None."""
+    if _here(connection, payload.get("db_path")):
+        try:
+            return job_history.dispatch(action, payload)
+        except Exception as exc:
+            LOGGER.warning("job_history %s failed in-process: %s", action, exc)
+            return None
+    ssh = connection.connect()
+    try:
+        stdin, stdout, stderr = ssh.exec_command(f"{_REMOTE_PYTHON} -m {_REMOTE_MODULE} {action}")
+        stdin.write(json.dumps(payload))
+        stdin.channel.shutdown_write()
+        out = stdout.read().decode()
+        exit_code = stdout.channel.recv_exit_status()
+        if exit_code != 0:
+            err = stderr.read().decode()
+            LOGGER.warning("job_history %s failed (exit %d): %s", action, exit_code, err)
+            return None
+        out = out.strip()
+        return json.loads(out) if out else None
+    except Exception as exc:
+        LOGGER.warning("job_history %s failed: %s", action, exc)
+        return None
+    finally:
+        pass  # pooled client: closing it would break concurrent requests
+
+
+def record_job_created(connection: SSHConnection, db_path: str, job_id: str, workflow: str,
+                        genome_path: str | None, output_dir: str | None,
+                        owner_username: str | None = None,
+                        owner_cluster_username: str | None = None,
+                        selected_tools: str | None = None,
+                        relaunched_from: str | None = None) -> None:
+    _run(connection, "create", {
+        "db_path": db_path, "job_id": job_id, "workflow": workflow,
+        "genome_path": genome_path, "output_dir": output_dir,
+        "owner_username": owner_username,
+        "owner_cluster_username": owner_cluster_username,
+        "selected_tools": selected_tools, "relaunched_from": relaunched_from,
+    })
+
+
+def record_job_updated(connection: SSHConnection, db_path: str, job_id: str, **fields) -> None:
+    _run(connection, "update", {"db_path": db_path, "job_id": job_id, "fields": fields})
+
+
+def get_job(connection: SSHConnection, db_path: str, job_id: str,
+            owner_username: str | None = None,
+            owner_cluster_username: str | None = None) -> dict | None:
+    return _run(connection, "get", {
+        "db_path": db_path,
+        "job_id": job_id,
+        "owner_username": owner_username,
+        "owner_cluster_username": owner_cluster_username,
+    })
+
+
+def list_jobs(connection: SSHConnection, db_path: str, workflow: str | None = None,
+              limit: int = 100, offset: int = 0,
+              owner_username: str | None = None,
+              owner_cluster_username: str | None = None) -> list[dict]:
+    result = _run(connection, "list", {
+        "db_path": db_path,
+        "workflow": workflow,
+        "limit": limit,
+        "offset": offset,
+        "owner_username": owner_username,
+        "owner_cluster_username": owner_cluster_username,
+    })
+    return result if result is not None else []
+
+
+def list_jobs_and_count(connection: SSHConnection, db_path: str, workflow: str | None = None,
+                        limit: int = 100, offset: int = 0,
+                        owner_username: str | None = None,
+                        owner_cluster_username: str | None = None) -> tuple[list[dict], int]:
+    """Returns (jobs, total) in one call."""
+    result = _run(connection, "list_and_count", {
+        "db_path": db_path,
+        "workflow": workflow,
+        "limit": limit,
+        "offset": offset,
+        "owner_username": owner_username,
+        "owner_cluster_username": owner_cluster_username,
+    })
+    if result is None:
+        return [], 0
+    return result.get("jobs", []), result.get("total", 0)
+
+
+def count_jobs(connection: SSHConnection, db_path: str, workflow: str | None = None,
+               owner_username: str | None = None,
+               owner_cluster_username: str | None = None) -> int:
+    result = _run(connection, "count", {
+        "db_path": db_path,
+        "workflow": workflow,
+        "owner_username": owner_username,
+        "owner_cluster_username": owner_cluster_username,
+    })
+    return result if result is not None else 0

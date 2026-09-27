@@ -1,0 +1,70 @@
+from typing import Optional
+
+from pydantic import BaseModel, Field
+
+
+class GenericRequest(BaseModel):
+    '''generic request base model. Inherit from here to extend'''
+    file_path: str = Field(..., description="path to file")
+
+
+class GenericResponse(BaseModel):
+    '''generic response base model. Inherit from here to expand'''
+    status: str
+    data: dict
+    message: Optional[str] = None
+
+
+class DaneEntry(BaseModel):
+    value: str
+
+
+class SlurmSend(BaseModel):
+    script: str
+
+
+class GenomeSend(BaseModel):
+    genome_path: str | None = None  # file or folder; falls back to the user's input_path config if omitted
+    output_dir: str | None = None  # base path; timestamp appended server-side; falls back to output_path config
+    workflow: str = 'margie_sb'
+    selected_tools: list[str] | None = None  # tool keys to run (see MARGIE_SB_PHASED_TOOLS); omit/None runs everything
+    # File names within genome_path to run when only part of a folder is wanted;
+    # None runs the whole folder (see ssh_sftp.stage_selected_genomes).
+    genomes: list[str] | None = None
+    run_full_operon_map: bool = False  # opt-in: full per-genome operon atlas (heavy), downstream of the report figures
+
+
+# --- Auth models -------------------------------------------------------------
+
+class UserRegister(BaseModel):
+    username: str
+    password: str
+    # Required unless the API runs in local mode (see api/local_mode.py).
+    cluster_host: str | None = None
+    cluster_username: str | None = None
+    private_key: str | None = None   # plaintext SSH private key — encrypted before storage, never returned
+
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str   # always "bearer"
+
+
+class UserProfile(BaseModel):
+    user_id: int
+    username: str
+    cluster_host: str
+    cluster_username: str
+    home_dir: str
+    created_at: str
+
+
+class UpdateClusterCredentials(BaseModel):
+    cluster_host: str | None = None
+    cluster_username: str | None = None
+    private_key: str | None = None   # plaintext SSH private key — encrypted before storage
