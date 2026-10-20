@@ -23,8 +23,7 @@ _KEPT_COLUMNS = [
     "RAST_feature_type", "RAST_strand",
 ]
 
-# Fixed slot order (same as assign-canonical-label.py's trust hierarchy); each
-# tool gives an id and a description slot, kept even when empty.
+# Slot order follows assign-canonical-label.py's trust hierarchy; empty slots stay.
 _ALL_IDS_DESC_TOOLS = [
     "PGAP", "TIGRFAM", "HAMAP", "NCBIFAM", "PIRSF", "UNIPROT", "PFAM",
     "CDD", "KEGG", "EGGNOG", "COG", "MEROPS", "TCDB", "DBCAN",

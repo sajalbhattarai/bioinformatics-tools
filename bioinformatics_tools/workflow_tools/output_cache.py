@@ -170,7 +170,7 @@ def restore(db_path: str, input_file: str, tool_name: str,
     conn = _get_connection(db_path)
     try:
         _ensure_table(conn)
-        # The sequence-hash entry when there is one; an older byte-hash one otherwise.
+        # Prefers the sequence-hash entry; falls back to the older byte-hash one.
         rows = []
         for input_hash in (current, legacy):
             rows = conn.execute(
@@ -218,8 +218,7 @@ def restore(db_path: str, input_file: str, tool_name: str,
 
 # ---- RASTtk genome-id realignment ----
 
-# RASTtk stamps each feature with its submission's id (fig|6666666.<job>.peg.<n>),
-# so the same FASTA submitted twice gets two namespaces for identical genes.
+# RASTtk ids features by submission (6666666.<job>), so resubmits get new namespaces.
 _RAST_GENOME_ID_RE = re.compile(rb"6666666\.(\d+)")
 
 

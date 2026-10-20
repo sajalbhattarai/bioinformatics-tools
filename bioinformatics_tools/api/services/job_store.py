@@ -16,12 +16,10 @@ from bioinformatics_tools.api.services import job_history_client
 
 LOGGER = logging.getLogger(__name__)
 
-# Fields mirrored to history on every update(); slurm_jobs/containers are
-# written by checkpoint() instead.
+# Mirrored to history on update(); checkpoint() writes slurm_jobs/containers.
 _PERSISTED_FIELDS = ("status", "phase", "work_dir")
 
-# Seconds between mid-run provenance writes to history. Each write is an SSH
-# round-trip; this caps the loss if the API stops before finalize().
+# Seconds between mid-run provenance writes; each is an SSH round-trip.
 _CHECKPOINT_MIN_INTERVAL = 30.0
 
 
@@ -30,10 +28,9 @@ class JobStore:
 
     def __init__(self):
         self._jobs: dict[str, dict] = {}
-        # Kept outside self._jobs because job dicts are returned as JSON and an
-        # SSHConnection is not serialisable. Keyed by job_id.
+        # Outside self._jobs since SSHConnection is not JSON-serialisable.
         self._persistence: dict[str, tuple[str, object]] = {}
-        # When each job's provenance was last written, for checkpoint()'s throttle.
+        # Last provenance write per job, for checkpoint()'s throttle.
         self._last_checkpoint: dict[str, float] = {}
 
     def create(self, job_id: str, genome_path: str, user_id: int | None = None,
@@ -131,7 +128,7 @@ class JobStore:
         if not force and now - self._last_checkpoint.get(job_id, 0.0) < _CHECKPOINT_MIN_INTERVAL:
             return False
 
-        # Stamped before the write so a hanging SSH call does not let the next caller through.
+        # Stamped before the write so a hung SSH call still throttles callers.
         self._last_checkpoint[job_id] = now
 
         db_path, connection = self._persistence[job_id]
@@ -185,9 +182,7 @@ class JobStore:
         if job_id not in self._jobs:
             return
         rows = self._jobs[job_id]["slurm_jobs"]
-        # Ignores a job already registered: the workflow log emits every line
-        # twice (two logger handlers). Cache hits share the "—" placeholder id,
-        # so rule+genome identifies those rows.
+        # Skips duplicates: log lines repeat; "—" cache rows key on rule+genome.
         if slurm_id and slurm_id != "—":
             if any(r["job_id"] == slurm_id for r in rows):
                 return
@@ -203,7 +198,7 @@ class JobStore:
             "source": source,
             "log_path": log_path,
         })
-        # Reached only for new rows, so at most one throttled call per submission.
+        # Only new rows reach here: one throttled call per submission.
         self.checkpoint(job_id)
 
     def add_container(self, job_id: str, container_info: dict):

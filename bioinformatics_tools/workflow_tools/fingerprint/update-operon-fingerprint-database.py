@@ -86,7 +86,7 @@ def _do_update(new_operons: dict[str, dict], organism: str, db_tsv: Path, key: s
                     "organisms": set(o for o in row.get("organisms", "").split("|") if o),
                 }
 
-    # Each distinct operon counts once, even when several in one genome share a hash.
+    # Each distinct operon counts once, even when a genome shares a hash.
     for oid, parsed in new_operons.items():
         h = parsed[key]
         members = parsed["members"]

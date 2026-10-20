@@ -48,26 +48,22 @@ def run_file_stem(job_id: str | None) -> str:
     return re.sub(r'[^A-Za-z0-9_.-]', '_', str(job_id or 'run'))
 
 
-# A live run's log is never quiet this long: snakemake logs a status check about every 30s.
+# Snakemake logs status every ~30s, so a live run's log is never quiet this long.
 RUN_STALE_AFTER = 900.0
 
-# How long to wait for the launching shell to echo the detached run's pid (a hang guard).
+# Hang guard on the launching shell echoing the detached run's pid.
 _LAUNCH_ACK_TIMEOUT = 30.0
 
 # ---- Workflow driver hosted in SLURM ----
-# The Snakemake driver runs as its own batch job on a compute node, so login-node
-# reboots or reaping cannot stall a run; compute nodes can call sbatch. The log
-# path and .rc sentinel are unchanged, so tailing and reattach work as before.
+# The driver runs as its own batch job so login-node reboots cannot stall a run.
 DRIVER_PARTITION = 'cpu'
 DRIVER_ACCOUNT = None          # None -> let SLURM pick the default account
-# The cpu partition and normal QOS set no wall-time cap and SLURM charges actual
-# use, so this is a wide margin over the one to three hours runs take.
+# Wide margin over the 1-3 h runs take; SLURM charges actual use, not the cap.
 DRIVER_TIME = '7-00:00:00'
 DRIVER_CPUS = 2                # Snakemake plus the shell that waits on it
 DRIVER_MEM_MB = 8000
 
-# The six --time formats sbatch accepts; a user-edited value is validated here
-# so a typo falls back to the default instead of failing the start.
+# Six sbatch --time formats; a bad user-edited value falls back to the default.
 _SLURM_TIME_RE = re.compile(
     r'^(?:\d+'                       # minutes
     r'|\d+:\d{1,2}'                  # minutes:seconds
@@ -117,7 +113,7 @@ def probe_run(job_id: str, connection: SSHConnection) -> dict:
     stdin, stdout, stderr = ssh.exec_command(probe)
     lines = [ln for ln in stdout.read().decode().strip().splitlines() if ln.strip()]
     parts = lines[-1].split('|') if lines else []
-    # Also accepts the 3-field answer from runs launched before driver jobs existed.
+    # Also accepts the 3-field answer from runs launched before driver jobs.
     if len(parts) not in (3, 4):
         LOGGER.warning('Unreadable run probe for %s: %r', job_id, lines)
         return {"has_log": False, "exit_code": None, "log_idle": float('inf'),
@@ -136,8 +132,7 @@ def probe_run(job_id: str, connection: SSHConnection) -> dict:
     }
 
 
-# squeue states in which the driver will still produce output. COMPLETING is
-# excluded: its log is complete and the log checks judge it correctly.
+# squeue states where the driver still produces output (not COMPLETING).
 _DRIVER_PENDING_STATES = ('PENDING', 'CONFIGURING', 'RUNNING', 'RESIZING',
                           'REQUEUED', 'SUSPENDED')
 
@@ -188,7 +183,7 @@ def build_driver_launch(cmd: str, base: str, safe: str, log: str, rcf: str,
         '#SBATCH --ntasks=1',
         f'#SBATCH --cpus-per-task={cpus}',
         f'#SBATCH --mem={mem_mb}',
-        # The driver's stdout is noise; the workflow's output goes to $log, which the GUI tails.
+        # Driver stdout is noise; the workflow writes $log, which the GUI tails.
         '#SBATCH --output=/dev/null',
         '#SBATCH --error=/dev/null',
     ]
@@ -234,8 +229,7 @@ def submit_ssh_job(
 
     Yields each output line as it arrives, then a final __EXIT_CODE__: line.
     '''
-    # pooled=False: this client is held for the whole run, independent of the
-    # shared pool (see SSHConnection.connect).
+    # pooled=False: held for the whole run, outside the shared pool.
     ssh = connection.connect(pooled=False)
 
     safe = run_file_stem(job_id)
@@ -275,9 +269,7 @@ def submit_ssh_job(
                     f'{err or driver_job or "no job id returned"}')
             LOGGER.info('Driver submitted as SLURM job %s, log %s', driver_job, log)
         else:
-            # setsid detaches from the session so no SIGHUP reaches it; nohup
-            # covers the gap before setsid takes effect. The same shell writes
-            # the exit code and records the pid.
+            # setsid blocks SIGHUP; nohup covers the gap before it takes effect.
             launch = (
                 f'mkdir -p $HOME/.local/share/bsp/jobs && '
                 f'rm -f {rcf} && '
@@ -286,9 +278,7 @@ def submit_ssh_job(
                 f'>/dev/null 2>&1 & echo $! | tee {pidf}'
             )
             _in, _out, _err = ssh.exec_command(launch)
-            # Reads one line with a deadline, never .read() or recv_exit_status():
-            # the backgrounded shell keeps the channel open until the run ends.
-            # A missed pid is survivable (it is also written to $pidf).
+            # Reads one line under a deadline; the shell holds the channel open.
             pid = ''
             _out.channel.settimeout(_LAUNCH_ACK_TIMEOUT)
             try:
@@ -299,12 +289,10 @@ def submit_ssh_job(
                                safe, _LAUNCH_ACK_TIMEOUT, exc)
             LOGGER.info('Detached run started (pid %s), log %s', pid, log)
 
-        # The workflow is now running; job_runner.run_ssh_task uses this marker to
-        # tell a failed start from a lost view of a running job.
+        # job_runner.run_ssh_task uses this marker to tell a failed start apart.
         yield '__LAUNCHED__'
 
-        # Tails from the beginning so a reattach replays everything; -F because
-        # the log may not exist yet.
+        # Tails from the start so a reattach replays; -F as the log may not exist.
         tail_cmd = f'tail -n +1 -F {log} 2>/dev/null'
         t_in, t_out, t_err = ssh.exec_command(tail_cmd)
         chan = t_out.channel
@@ -316,15 +304,14 @@ def submit_ssh_job(
             pass
         raise
 
-    # Completion is detected by stat-ing the sentinel over one long-lived SFTP
-    # session, which stays within sshd's MaxSessions limit.
+    # Stats the sentinel over one long-lived SFTP session (sshd MaxSessions).
     sftp = None
     try:
         sftp = ssh.open_sftp()
     except Exception as exc:
         LOGGER.warning('Could not open SFTP for completion checks: %s', exc)
 
-    # SFTP does not expand `$HOME`, so the sentinel path is given relative to the home directory.
+    # SFTP does not expand $HOME, so the sentinel path is home-relative.
     rcf_sftp = rcf[len('$HOME/'):] if rcf.startswith('$HOME/') else rcf
 
     def _finished():
@@ -395,12 +382,12 @@ def submit_ssh_job(
                 pass
 
     if exit_code is None:
-        # The tail ended without a sentinel: the run is still going, so no exit
-        # code is reported.
+        # No sentinel after the tail ended: the run continues, so no exit code.
         LOGGER.info('Detached from run %s; it continues in the background', safe)
         yield '__DETACHED__'
     else:
         LOGGER.info('Remote execution completed with exit code: %d', exit_code)
+        # Yield exit code as metadata line
         yield f'__EXIT_CODE__:{exit_code}'
 
 

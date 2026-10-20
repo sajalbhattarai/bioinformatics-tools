@@ -12,7 +12,7 @@ from pathlib import Path
 
 csv.field_size_limit(10_000_000)
 
-# tool_name -> (tier_score, tier_name), bucketed from assign-canonical-label.py's order.
+# tool_name -> (tier_score, tier_name), following assign-canonical-label.py.
 HIERARCHY_TIER = {
     "PGAP": (4, "tier1_curated_prokaryote_family"),
     "NCBIFAM": (4, "tier1_curated_prokaryote_family"),

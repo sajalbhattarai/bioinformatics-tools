@@ -101,7 +101,6 @@ def _accumulate_organism(ref, org, org_genes, contig):
             continue
         ref["n_qualifying_operons"] += 1
 
-        # Records which organisms carry each informative descriptor.
         inf_descs = {cln[r["feature_id"]] for r in inf_recs}
         for d in inf_descs:
             ref["present"][d].add(org)

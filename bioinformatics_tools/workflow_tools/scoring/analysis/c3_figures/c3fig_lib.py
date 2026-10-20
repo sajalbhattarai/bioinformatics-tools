@@ -22,8 +22,7 @@ import pandas as pd
 csv.field_size_limit(10_000_000)
 
 # ---- uninformative hit category ----
-# Identical to the gate in scoring/score-c1-tool-coverage.py and
-# labeling/assign-canonical-label.py; the three copies must stay in sync.
+# Kept in sync with score-c1-tool-coverage.py and assign-canonical-label.py.
 _UNINFORMATIVE = frozenset({
     "", "-", ".", "na", "n/a", "none", "null",
     "unknown", "uncharacterized", "uncharacterised", "putative", "predicted",
@@ -99,7 +98,7 @@ def is_uninformative(val: str) -> bool:
 
 
 # ---- descriptor cleaning ----
-# Leading "SOURCE: " tags that the labeling pipeline prepends to the functional text.
+# Leading "SOURCE: " tags the labeling pipeline prepends to the text.
 _SOURCE_PREFIX_RE = re.compile(
     r'^(?:'
     r'JCVI|NCBIFAM|NCBI Protein Cluster \(PRK\)|PRK|TIGR|TIGRFAM|PGAP|HAMAP|'
@@ -166,7 +165,6 @@ def _to_float(v, default=float("nan")):
 def load_organism(organism: str, labeled_path: Path, operon_path: Path,
                   compute_hash: bool = True) -> pd.DataFrame:
     """Joins labeled-genes.tsv with its operon-info TSV on feature_id, one row per gene."""
-    # Operon membership comes from the operon-info file.
     operon = {}
     with open(operon_path, newline="") as fh:
         for row in csv.DictReader(fh, delimiter="\t"):
@@ -180,7 +178,6 @@ def load_organism(organism: str, labeled_path: Path, operon_path: Path,
                 "operon_prob": _to_float(row.get("operon_probability_geometric_mean")),
             }
 
-    # Coordinates, descriptor and sequence come from labeled-genes.tsv.
     records = []
     with open(labeled_path, newline="") as fh:
         for row in csv.DictReader(fh, delimiter="\t"):
@@ -228,8 +225,7 @@ def build_gene_table(labeling_root: Path, compute_hash: bool = True) -> pd.DataF
 
 
 # ---- confidence components ----
-# C1 (tool coverage), C2 (operon probability) and C4 (EC agreement) per gene;
-# C3 is excluded because it derives from the co-occurrence this suite analyses.
+# C3 is excluded: it derives from the co-occurrence this suite analyses.
 COMPONENT_COLS = ["c1_score", "c2_score", "c4_score"]
 COMPONENT_LABELS = {
     "c1_score": "C1 database coverage",
@@ -355,7 +351,6 @@ def build_operon_table(genes: pd.DataFrame) -> pd.DataFrame:
             "mean_aa_length": float(g["aa_length"].mean()),
         })
     op_table = pd.DataFrame.from_records(rows)
-    # Adds per-operon mean C1/C2/C4 when present.
     have = [c for c in COMPONENT_COLS if c in op.columns]
     if have and len(op_table):
         means = (op.groupby(["organism", "operon_id"])[have].mean()
@@ -405,8 +400,7 @@ def build_adjacent_pairs(genes: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---- descriptor co-occurrence inside operons ----
-# Genes are identified by clean_descriptor; uninformative descriptors are left
-# out by default because "hypothetical protein" is not a gene identity.
+# Uninformative descriptors are left out: "hypothetical protein" is no identity.
 from collections import defaultdict as _defaultdict
 from itertools import combinations as _combinations
 
@@ -624,7 +618,7 @@ def _pick_serif():
 SERIF = _pick_serif()
 
 
-# Bright palette used for the default colour cycle and the semantic colours below.
+# Bright palette for the default colour cycle and the semantic colours below.
 BLUE = "#1f77ff"
 ORANGE = "#ff8c00"
 GREEN = "#00b84d"

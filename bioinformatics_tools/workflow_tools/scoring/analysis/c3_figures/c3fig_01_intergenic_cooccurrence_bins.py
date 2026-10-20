@@ -191,8 +191,7 @@ def make(genes, operons, outdir):
     L.boldticks(axB)
     axB.grid(False)
 
-    # ---- (c) by-chance probability per bin ----
-    # Well-populated bins get their own box; sparse far bins are pooled as >=100.
+    # ---- (c) by-chance probability per bin (sparse far bins pooled >=100) ----
     near = ["<0", "0", "1-100"]
     box_data, box_labels, box_cols = [], [], []
     for nm, col in zip(BIN_NAMES, BIN_COLORS):

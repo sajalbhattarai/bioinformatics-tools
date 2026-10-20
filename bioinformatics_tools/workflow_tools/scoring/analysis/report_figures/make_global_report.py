@@ -24,9 +24,7 @@ _RUN_ROOT = None    # set in main(); used by the per-figure sources footer
 _OPERON_DB = None
 
 
-# ---------------------------------------------------------------------------
-# fig01 -- operon-context score by operon size, across the pangenome
-# ---------------------------------------------------------------------------
+# ---- fig01: operon-context score by operon size, across the pangenome ----
 def fig01(genes: pd.DataFrame, outdir: Path, n_org: int) -> None:
     """Draws C3 box plots by operon size bin across all genomes."""
     d = genes[genes["in_operon"]].copy()
@@ -44,9 +42,7 @@ def fig01(genes: pd.DataFrame, outdir: Path, n_org: int) -> None:
                 outdir / "fig01_operon_context_by_size.tsv")
 
 
-# ---------------------------------------------------------------------------
-# fig02 -- most-conserved operons across the pangenome
-# ---------------------------------------------------------------------------
+# ---- fig02: most-conserved operons across the pangenome ----
 def fig02(recurrence: dict, outdir: Path, n_org: int) -> None:
     """Draws gene tracks and tables for the ten named-function operons shared by the most genomes."""
     rows = []
@@ -106,9 +102,7 @@ def fig02(recurrence: dict, outdir: Path, n_org: int) -> None:
     L.write_tsv(top, outdir / "fig02_most_conserved_operons.tsv")
 
 
-# ---------------------------------------------------------------------------
-# fig03 -- operon probability: distribution + relation to operon-context score
-# ---------------------------------------------------------------------------
+# ---- fig03: operon probability distribution vs operon-context score ----
 def fig03(genes: pd.DataFrame, outdir: Path, n_org: int) -> None:
     """Draws the C2 histogram and mean C3 (with IQR) across C2 bins using pandas.cut."""
     d = genes.copy()
@@ -150,9 +144,7 @@ def fig03(genes: pd.DataFrame, outdir: Path, n_org: int) -> None:
                 outdir / "fig03_c3_by_operon_probability.tsv")
 
 
-# ---------------------------------------------------------------------------
-# fig04 -- confidence tiers per organism + pooled
-# ---------------------------------------------------------------------------
+# ---- fig04: confidence tiers per organism + pooled ----
 def fig04(genes: pd.DataFrame, outdir: Path, n_org: int) -> None:
     """Draws stacked confidence-tier shares per genome and pooled tier counts."""
     d = genes[genes["confidence_tier"] != L.NONCODING_TIER].copy()
@@ -195,7 +187,7 @@ def fig04(genes: pd.DataFrame, outdir: Path, n_org: int) -> None:
     L.set_title(axB, "All genomes pooled")
     L.panel_letter(axB, "b")
 
-    # extra band: suptitle + a shared tier legend both sit above the panels
+    # Wider band: the suptitle and shared tier legend both sit above the panels.
     L.finish(fig, f"Annotation confidence across genomes — {n_org} genomes", band=1.95)
     L.draw_sources_footer(fig, _RUN_ROOT, L.global_source_lines(_RUN_ROOT, n_org))
     L.savefig(fig, outdir / "fig04_confidence_tiers_across_genomes.png")
@@ -204,9 +196,7 @@ def fig04(genes: pd.DataFrame, outdir: Path, n_org: int) -> None:
     L.write_tsv(tsv, outdir / "fig04_confidence_tiers_per_genome.tsv")
 
 
-# ---------------------------------------------------------------------------
-# fig05 -- preliminary -> operon-adjusted -> final (relationship surface)
-# ---------------------------------------------------------------------------
+# ---- fig05: preliminary -> operon-adjusted -> final relationship surface ----
 def fig05(genes: pd.DataFrame, outdir: Path, n_org: int) -> None:
     """Draws preliminary vs final confidence as a hexbin, a binned mean curve and a C3-by-preliminary heat map."""
     prelim = pd.to_numeric(genes["preliminary_confidence_c1_c4"], errors="coerce")
@@ -269,9 +259,7 @@ def fig05(genes: pd.DataFrame, outdir: Path, n_org: int) -> None:
                 outdir / "fig05_final_by_preliminary.tsv")
 
 
-# ---------------------------------------------------------------------------
-# fig06 -- PCA of the confidence components (what varies with confidence)
-# ---------------------------------------------------------------------------
+# ---- fig06: PCA of the confidence components ----
 def fig06(genes: pd.DataFrame, outdir: Path, n_org: int) -> None:
     """Draws a PCA (SVD) of C1-C4: explained variance and gene scores with loading arrows."""
     cols = [("C1", "c1_score"), ("C2", "c2_score_from_operon_probability"),
@@ -347,11 +335,10 @@ def main() -> None:
     L.apply_style()
     organisms = L.discover_organisms(run_root)
     genes = L.load_all_genes(run_root, organisms)
-    # Recurrence and the "N genomes" caption use the OCC reference's organisms,
-    # falling back to this run's organisms when the OCC is unreadable.
+    # Recurrence and the caption use the OCC organisms, else this run's organisms.
     occ_pool = L.load_occ_organisms() or set(organisms)
     recurrence = L.load_operon_recurrence(Path(args.operon_db), restrict_to=occ_pool)
-    # The whole pool, without leave-one-out; tallies come from the OCC genome-stats sidecar.
+    # Whole pool, no leave-one-out; tallies from the OCC genome-stats sidecar.
     pool_list = sorted(occ_pool)
     n_org = len(pool_list)
     pstats = L.aggregate_pool_stats(L.load_pool_stats(), pool_list)

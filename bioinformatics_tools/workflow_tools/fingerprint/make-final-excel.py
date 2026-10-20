@@ -18,8 +18,7 @@ from openpyxl.utils import get_column_letter
 
 csv.field_size_limit(10_000_000)
 
-# ── Tier colours, kept in sync with reportfig_lib.CONF_TIER_COLOR and
-#    api/routers/ssh.py. ────────────────────────────────────────────────────────
+# ── Tier colours; kept in sync with reportfig_lib and api/routers/ssh.py ──
 _TIER_BRIGHT = {
     "highest": "1F77FF",   # blue
     "high":    "00B84D",   # green
@@ -198,7 +197,7 @@ def main() -> None:
                         left=_REVIEW_SIDE if ci == 1 else None,
                         right=_REVIEW_SIDE if ci == ncol else None)
 
-            # tally by the row's CONFIDENCE_TIER_HYBRID band (the whole-row colour)
+            # Tallies by CONFIDENCE_TIER_HYBRID band, the whole-row colour.
             band = str(_row_get(row, "confidence_tier_hybrid",
                                 "CONFIDENCE_TIER_hybrid")).strip().lower()
             if band not in _TIER_BRIGHT:

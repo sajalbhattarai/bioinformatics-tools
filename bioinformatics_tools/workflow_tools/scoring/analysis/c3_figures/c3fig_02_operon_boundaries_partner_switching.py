@@ -115,7 +115,7 @@ def make(genes, operons, outdir):
             bin_same[nm][1] += 1
             if cls == "same_operon":
                 bin_same[nm][0] += 1
-        # Per operonic gene: closest neighbour, interior or boundary, fate of separated neighbours.
+        # Closest neighbour, boundary status and separated-neighbour fate per gene.
         for i, gene in enumerate(r):
             if not is_op(org, gene["feature_id"]):
                 continue

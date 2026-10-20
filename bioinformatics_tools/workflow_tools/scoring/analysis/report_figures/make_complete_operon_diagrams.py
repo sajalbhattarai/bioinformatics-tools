@@ -115,8 +115,7 @@ def main() -> None:
     genes = L.load_organism_genes(run_root, args.organism)
     operons = L.build_operons(genes)
 
-    # Pool = the OCC reference's organisms minus this one (leave-one-out), with
-    # tallies from the OCC genome-stats sidecar, as in the standard reports.
+    # Leave-one-out pool: OCC organisms minus this one, as in the standard reports.
     restrict = L.load_occ_organisms() or set(L.discover_organisms(run_root))
     restrict = set(restrict)
     restrict.discard(org_label)
@@ -142,7 +141,6 @@ def main() -> None:
         if int(size) < 2:
             continue
         bin_ops = [r for _, r in ops[ops["size"] == size].iterrows()]
-        # Most-shared operons first, then by id
         bin_ops.sort(key=lambda r: (-k_lookup(r), str(r["operon_id"])))
         heights = [_block_height(_members(r)) for r in bin_ops]
         pages = _paginate(bin_ops, heights)

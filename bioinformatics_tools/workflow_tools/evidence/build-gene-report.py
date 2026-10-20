@@ -84,8 +84,7 @@ def pipe_table(header: list[str], rows: list[list[str]], indent: str = "",
 
 
 # ---- multi-domain field splitting -----------------------------------------
-# Consolidation packs several hits as "ID1: val1; ID2: val2" and a single hit
-# bare; these helpers split both shapes back into one row per domain.
+# Splits packed "ID1: val1; ID2: val2" or bare hits into one row per domain.
 def _parse_id_value_list(s: str) -> list[tuple[str, str]]:
     """Splits "ID: value; ID: value" into (id, value) pairs; bare entries get an empty id."""
     pairs = []
@@ -125,8 +124,7 @@ def split_multi(row: dict, id_col: str, *value_cols: str) -> list[list[str]]:
 
 
 # ---- per-tool row builders --------------------------------------------------
-# Each returns rows in _EVIDENCE_HEADER order; a tool without hits returns one
-# empty row so every tool appears.
+# Rows in _EVIDENCE_HEADER order; a tool without hits returns one empty row.
 def _row(tool, id_="", desc="", domain="", category="", ec="", score="",
          bitscore="", pct_identity="", evalue="", other="") -> list[str]:
     """Returns one evidence-table row in _EVIDENCE_HEADER column order."""
@@ -569,7 +567,7 @@ def build_document(fid: str, df_indexed: dict, org_name: str, confidence_final: 
     row = df_indexed[fid]
     cf = confidence_final.get(fid, {})
 
-    # Includes only the OPERON_WINDOW nearest members on each side, so report size stays bounded.
+    # Only the OPERON_WINDOW nearest members per side, to bound report size.
     op_id = _clean(row.get("OPERON_id"))
     other_members, full_member_count = [], 0
     if op_id and op_id not in _NO_REAL_OPERON:

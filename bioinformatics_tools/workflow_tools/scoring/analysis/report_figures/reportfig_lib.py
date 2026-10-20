@@ -20,7 +20,7 @@ from matplotlib.patches import FancyBboxPatch, Polygon, Rectangle  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-# Uses scoring's c3_lib descriptor cleaning and uninformative gate so gene identity matches scoring.
+# Shares c3_lib's descriptor cleaning so gene identity matches scoring.
 _C3_DIR = Path(__file__).resolve().parent.parent  # .../scoring/analysis
 _SCORING_DIR = _C3_DIR.parent                      # .../scoring
 for _p in (str(_SCORING_DIR), str(_C3_DIR / "c3_figures")):
@@ -65,7 +65,7 @@ DARKRED = "#8b0000"   # "lowered by operon context"
 RAISED, LOWERED = OLIVE, DARKRED
 CATEGORICAL = [BLUE, ORANGE, GREEN, RED, PURPLE, CYAN, AMBER, TEAL, PINK, LIME]
 
-# Confidence tiers, best to worst, with fixed colours; non-coding genes are grey.
+# Confidence tiers, best to worst; non-coding genes are grey.
 CONF_TIER_ORDER = ["highest", "high", "medium", "fair", "low"]
 CONF_TIER_COLOR = {
     "highest": "#1f77ff",
@@ -89,7 +89,7 @@ COMPONENT_LABEL = {
     "C4": "C4  EC-number agreement",
 }
 
-# Serif preference: Times New Roman, then metric-compatible clones, then DejaVu Serif.
+# Serif preference: Times New Roman, metric clones, then DejaVu Serif.
 _SERIF = ["Times New Roman", "Nimbus Roman No9 L", "Nimbus Roman",
           "Liberation Serif", "Tinos", "Times", "DejaVu Serif"]
 
@@ -97,7 +97,7 @@ _SERIF = ["Times New Roman", "Nimbus Roman No9 L", "Nimbus Roman",
 _SANS = ["Helvetica", "Nimbus Sans", "Arial", "Liberation Sans",
          "TeX Gyre Heros", "DejaVu Sans"]
 
-# Font files registered explicitly because matplotlib's default cache omits these directories.
+# Registered explicitly; matplotlib's font cache omits these directories.
 _FONT_FILES = [
     "/usr/share/fonts/urw-base35/NimbusSans-Regular.otf",
     "/usr/share/fonts/urw-base35/NimbusSans-Bold.otf",
@@ -241,8 +241,7 @@ def finish(fig, suptitle: str | None = None, organism: str | None = None,
     if not suptitle and not organism:
         fig.tight_layout(h_pad=h_pad, w_pad=w_pad)
         return
-    # tight_layout(rect=) ignores the band when a gene-track axis is present, so
-    # the band is reserved afterwards with subplots_adjust.
+    # tight_layout(rect=) ignores the band under gene tracks; reserved manually.
     fh = max(fig.get_figheight(), 3.0)
     b = band if band is not None else (1.55 if organism else 1.4)
     if _PROVENANCE:
@@ -271,8 +270,7 @@ def savefig(fig, path: Path, dpi: int = DPI) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     extra = getattr(fig, "_report_extra_artists", None)
     if extra:
-        # bbox_inches="tight" remaps figure-fraction artists, so the crop box is
-        # computed once, including the suptitle that get_tightbbox would drop.
+        # Crop box built once, including the suptitle get_tightbbox would drop.
         r = fig.canvas.get_renderer()
         fig.draw(r)
         arts = list(extra)
@@ -435,8 +433,7 @@ _CONF_FINAL = "scoring/scored-labeled-genes-confidence-final.tsv"
 _LABELED = "labeling/labeled-genes.tsv"
 _NOT_IN_OPERON = "NOT_IN_AN_OPERON"
 
-# reorganize_outputs.py moves scoring/ and labeling/ into per-tool-phased-output/
-# per organism, so a run can hold both layouts; files are resolved in either.
+# Files resolve in both pre- and post-reorganize_outputs.py layouts.
 _PTP = "per-tool-phased-output"
 
 
@@ -626,19 +623,19 @@ def load_operon_recurrence(depot_db: Path, restrict_to=None) -> dict[str, dict]:
                      engine="python")
     for _, r in df.iterrows():
         mio = r.get("members_in_order", "")
-        # Recurrence counts distinct organisms, so duplicates in the DB are dropped.
+        # Recurrence counts distinct organisms; DB duplicates are dropped.
         orgs = sorted({x for x in (r.get("organisms", "") or "").split("|") if x})
         if keep is not None:
             orgs = [o for o in orgs if o in keep]
         n = len(orgs)
         rec = {
-            # A scoped count cannot split the DB-wide frequency, so it uses the organism count.
+            # Scoped: uses organism count; DB-wide frequency cannot be split.
             "label_frequency": (n if keep is not None
                                 else int(r.get("fingerprint_label_frequency", 0) or 0)),
             "organism_count": n,
             "organisms": orgs,
         }
-        # Keeps the record with most organisms when the same text appears under several hashes.
+        # Keeps the record with most organisms when one text has several hashes.
         prev = out.get(mio)
         if prev is None or rec["organism_count"] > prev["organism_count"]:
             out[mio] = rec
@@ -854,7 +851,7 @@ def draw_sources_footer(fig, run_root, sources: list[str], fontsize: float = 6.8
     approx = max(60, int(fw / (0.011 * fontsize)))
     body = "   |   ".join(sources)
     lines = [header] + (textwrap.wrap(body, width=approx) or [body])
-    # Places the footer below the lowest content; savefig's crop extends to include it.
+    # Footer goes below the lowest content; savefig's crop includes it.
     try:
         fig.draw_without_rendering()
         r = fig.canvas.get_renderer()
@@ -979,13 +976,11 @@ def box_by_bin(ax, df, cat_col, value_col, order, color, ylabel, xlabel):
                     patch_artist=True, showfliers=False,
                     medianprops=dict(color=INK, lw=2.0),
                     whiskerprops=dict(color="#555555"), capprops=dict(color="#555555"))
-    # Each bin gets its own colour.
     for i, patch in enumerate(bp["boxes"]):
         patch.set_facecolor(CATEGORICAL[i % len(CATEGORICAL)])
         patch.set_alpha(0.85); patch.set_edgecolor("white"); patch.set_linewidth(1.5)
     medians = [float(np.median(x)) for x in data]
     means = [float(np.mean(x)) for x in data]
-    # Mean overlay: black line with white diamonds.
     ax.plot(xs, means, color=INK, lw=1.6, marker="D", markersize=8, zorder=6,
             markerfacecolor="white", markeredgecolor=INK, markeredgewidth=1.6)
     ax.set_xticks(xs)
@@ -1001,20 +996,20 @@ def box_by_bin(ax, df, cat_col, value_col, order, color, ylabel, xlabel):
 
 
 # ---- gene-track drawing and descriptor index ----
-# Genes are drawn as numbered arrows; full descriptors are listed in a table or index.
+# Genes are numbered arrows; full descriptors go in a table or index.
 def tag_letter(i: int) -> str:
     """Returns the 1-based number used to tag gene i in diagrams and tables."""
     return str(i + 1)
 
 
-# Physical gene-glyph size in inches, converted to data units so every arrow looks the same.
+# Glyph sizes in inches, converted to data units so every arrow looks the same.
 _ARROW_W_IN = 0.74     # total glyph length (horizontal)
 _ARROW_HLEN_IN = 0.16  # head length
 _ARROW_BODY_IN = 0.18  # body thickness (vertical)
 _ARROW_HEAD_IN = 0.36  # head thickness (vertical, wider than body)
 _TRACK_YRANGE = 1.9    # data height of one arrow row (== row_pitch)
 _TRACK_ROW_IN = 1.28   # inches per arrow row; the atlas driver uses the same value
-# Inches per data-y-unit that pin_track_scale() pins every arrow track to after layout.
+# Inches per data-y-unit that pin_track_scale() pins every track to.
 _TRACK_IN_PER_Y = _TRACK_ROW_IN / _TRACK_YRANGE
 
 
@@ -1116,7 +1111,7 @@ def draw_gene_track(ax, members: list[dict], badge_per_operon: dict | None = Non
     tag_y = ht + 0.15                         # gene letter sits just above arrow
     gap_y = -(band_h + 0.20)                  # gap (bp) sits BELOW the operon band
     badge_y = tag_y + 0.30                    # operon-id caption sits above letters
-    # Fixed row height keeps the data range at nrows * row_pitch, so arrow size is constant.
+    # Fixed pitch: data range is nrows * row_pitch, so arrow size is constant.
     row_pitch = _TRACK_YRANGE
 
     def rc(k):
@@ -1124,7 +1119,7 @@ def draw_gene_track(ax, members: list[dict], badge_per_operon: dict | None = Non
         r = k // per
         return r, k - r * per, -r * row_pitch
 
-    # Operon bands over same-operon runs within a row, drawn first so arrows sit on top.
+    # Operon bands per row run, drawn first so arrows sit on top.
     i = 0
     while i < n:
         oid = members[i].get("operon_id") or ""
@@ -1151,7 +1146,6 @@ def draw_gene_track(ax, members: list[dict], badge_per_operon: dict | None = Non
         y_r = -r * row_pitch
         if nrows > 1:
             last_col = (min((r + 1) * per, n) - 1) - r * per
-            # Extends 0.60 on both sides of the row's genes.
             bx0, bx1 = off - 0.60, last_col + off + 0.60
         else:
             bx0, bx1 = x0, x1
@@ -1424,7 +1418,6 @@ def _fit_desc_wrap(members_per, fontsize: float, page_width_in: float,
     reason_nat = max([_wf("review reason", fs)] + [_wf(r, fsn) for r in reasons])
     fixed = (tag_w + loc_w + type_w + c1w + c2w + c3w + c4w + prew + opw + finw + revw
              + 12 * GAP)
-    # Width left for the descriptor after the fixed and reason columns.
     w_desc = (right - left) - fixed - reason_nat
     char_w = 0.60 * fs / 72.0 / Win
     n = int(w_desc / char_w) if char_w > 0 else desc_wrap
@@ -1554,7 +1547,7 @@ def render_gene_table(ax, entries, fontsize: float = 7.6, show_location: bool = 
                 ax.text(x_pre, y0, f"{p:.2f}", va="top", fontsize=fsn, color="#333333")
             if p is not None and op is not None:
                 if full_breakdown:
-                    # Shows the raw boost C2*C3 (adj/hyb), not final - prelim, which hides the clip at 1.
+                    # Raw boost C2*C3; final - prelim would hide the clip at 1.
                     c2v = _fmt_num(score.get("c2"))
                     c3a = _fmt_num(score.get("c3"))
                     c3h = _fmt_num(score.get("c3_hybrid"))
@@ -1601,7 +1594,7 @@ def render_gene_table(ax, entries, fontsize: float = 7.6, show_location: bool = 
 
 
 # ---- operon pages, ported from the genome viewer's operon map ----
-# Mirrors operonFigureSVG in viz/gen_genome_viewer.py, in viewer pixels (1 px = 1/96 in).
+# Mirrors operonFigureSVG (viz/gen_genome_viewer.py); viewer px = 1/96 in.
 VIEWER_TIER_COL = ["#1F77FF", "#00B84D", "#FFCC00", "#FF8C00", "#EE2233"]
 VIEWER_OPERON_CYCLE = ["#1F77FF", "#FF8C00", "#00B84D", "#B65CFF", "#00C2D1", "#EE2233"]
 VIEWER_NONCODE = "#d5d5d5"

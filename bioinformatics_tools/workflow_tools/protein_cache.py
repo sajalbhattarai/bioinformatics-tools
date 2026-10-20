@@ -60,7 +60,7 @@ INTERPRO_ALL_ANALYSES = {
 }
 INTERPRO_DEFAULT_ANALYSES = ["Hamap", "NCBIfam", "CDD", "PIRSF"]
 
-# Tools whose rows depend only on the protein; each tool's first file marks a protein as cached.
+# Tools whose rows depend only on the protein; the first file marks it cached.
 _SIMPLE = ['cog', 'kegg', 'eggnog', 'uniprot', 'pfam', 'merops', 'tcdb', 'dbcan', 'pgap', 'tmbed', 'signalp6']
 TOOLS = _SIMPLE + ['tigrfam', 'phobius', 'interpro']
 
@@ -325,7 +325,7 @@ def store(db: str, faa: str, prefix: str, tool: str, cfg: dict) -> int:
 
 # ---- inside the rule: merging tool rows with cached rows ----
 
-# POSIX sh, since it runs inside each tool's container. Usage: merge.sh PRODUCED DEST PC_DIR FILENAME KIND
+# POSIX sh, run inside the tool's container: merge.sh PRODUCED DEST PC_DIR FILENAME KIND
 MERGE_SH = r'''#!/bin/sh
 # Written by protein_cache.py. The tool's own rows (it ran on the proteins
 # not in the cache), then the cached proteins' rows.

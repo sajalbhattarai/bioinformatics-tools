@@ -13,7 +13,7 @@ Usage:
 import argparse
 import csv
 
-# Tab-separated data columns after ID: Prediction, OTHER, SP, LIPO, TAT, TATLIPO, PILIN, CS Position.
+# Columns after ID: Prediction, OTHER, SP, LIPO, TAT, TATLIPO, PILIN, CS Position.
 _DATA_COLUMNS = (
     "signalp6_prediction", "signalp6_prob_other", "signalp6_prob_sp_sec_spi",
     "signalp6_prob_lipo_sec_spii", "signalp6_prob_tat_spi",

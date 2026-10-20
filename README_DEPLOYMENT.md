@@ -1,6 +1,6 @@
 # BSP Deployment Guide
 
-Clear, step-by-step guides for developing and deploying the Bioinformatics Suite Platform (BSP).
+Clear, step-by-step guides for developing and deploying the Bioinformatics Supercomputing Platform (BSP).
 
 ## 📚 Documentation Structure
 

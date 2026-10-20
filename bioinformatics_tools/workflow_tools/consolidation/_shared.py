@@ -26,8 +26,7 @@ GLOBAL_COLUMNS: frozenset[str] = frozenset({
     "ENVELOPE_envelope_type", "ENVELOPE_inference_basis", "ENVELOPE_evidence_json",
 })
 
-# Identity columns copied straight from rasttk's rows in build_merged_rows();
-# they are GLOBAL_COLUMNS, so they are never prefixed or multi-hit-wrapped.
+# Identity columns copied from rasttk rows; GLOBAL_COLUMNS, so never prefixed.
 RASTTK_IDENTITY_COLUMNS: tuple[str, ...] = (
     "gene_id", "gene_start", "gene_end", "na_length", "aa_length", "na_seq", "aa_seq",
 )
@@ -42,9 +41,7 @@ TOOL_PREFIX_MAP: dict[str, str] = {
     "signalp6_": "SIGNALP6_", "phobius_": "PHOBIUS_", "operon_": "OPERON_",
 }
 
-# Stages excluded from the merge: meta-stages, genome-level tools without a
-# feature_id, and envelope (already folded into deepsig/psortb/signalp4 by
-# enrich_with_envelope.py).
+# Excluded: meta-stages, genome-level tools, and envelope (already folded in).
 ALWAYS_EXCLUDED: frozenset[str] = frozenset({
     "consolidation", "labeling", "fingerprint", "scoring", "scoring_heuristic",
     "fingerprint_database", "synteny", "aai", "ani", "closest_organisms",
@@ -57,8 +54,7 @@ SPECIAL_FILENAME_OVERRIDES: dict[str, str] = {
 
 
 # ─── Per-tool row-key strategy ─────────────────────────────────────────────────
-# Decides how several rows for one gene in one tool's table join into a cell;
-# a gene with a single row keeps bare values without a "key:" prefix.
+# How several rows for one gene join into a cell; single rows keep bare values.
 
 class KeySpec(NamedTuple):
     """Describes how a tool's per-gene row key is formed."""
@@ -82,8 +78,7 @@ ROW_KEY_SPEC: dict[str, KeySpec] = {
     "phobius": KeySpec("range", ("PHOBIUS_segment_start", "PHOBIUS_segment_end")),
     "tmbed":   KeySpec("range", ("TMBED_segment_start", "TMBED_segment_end")),
     "deepsig": KeySpec("range", ("DEEPSIG_start", "DEEPSIG_end")),
-    # geneprop: collapses its (tigrfam_hit, genprop_id, step) rows to one entry
-    # per GENEPROP_id; merge-all-columns.py renders the description specially.
+    # geneprop: one entry per GENEPROP_id; rendered specially downstream.
     "geneprop": _accession_key("GENEPROP"),
     # Tools with exactly one row per gene.
     "psortb": KeySpec("none", ()), "signalp4": KeySpec("none", ()),
@@ -91,8 +86,7 @@ ROW_KEY_SPEC: dict[str, KeySpec] = {
     "rasttk": KeySpec("none", ()),
 }
 
-# Columns rendered as bare deduplicated values, never "key: value"
-# (geneprop's tigrfam_hit is constant per group, like a second key).
+# Rendered as bare deduplicated values, never "key: value".
 BARE_VALUE_COLUMNS: dict[str, set[str]] = {
     "geneprop": {"GENEPROP_tigrfam_hit"},
 }
@@ -207,8 +201,7 @@ def load_tool_table(tool_name: str, source_path: Path) -> ToolTable:
         reader = csv.DictReader(fh, delimiter="\t")
         raw_columns = list(reader.fieldnames or [])
 
-        # Registers columns from the header so a tool with no rows still
-        # contributes its (empty) columns downstream.
+        # Registers header columns so a rowless tool still contributes columns.
         for raw_col in raw_columns:
             if raw_col in COLUMNS_DROPPED:
                 continue
@@ -239,7 +232,7 @@ def load_tool_table(tool_name: str, source_path: Path) -> ToolTable:
 
 
 # ─── Derived-table tool categorization ─────────────────────────────────────────
-# Used by scripts that read merge-all-columns.py's output to count per-tool hits.
+# For scripts counting per-tool hits in merge-all-columns.py output.
 
 IDENTITY_COLUMNS: list[str] = [
     "feature_id", "organism_name", "domain",
@@ -275,8 +268,7 @@ SEGMENT_BASED_TOOLS: dict[str, str] = {
     "DEEPSIG": "DEEPSIG_feature_type",
 }
 
-# tool_name -> (column, value(s) counted as a positive call; None means
-# "any non-empty value counts").
+# tool_name -> (column, positive values; None means any non-empty value).
 SINGLE_ROW_TOOLS: dict[str, tuple[str, frozenset[str] | None]] = {
     "PSORTB": ("PSORTB_localization", None),
     "SIGNALP4": ("SIGNALP4_is_signal_peptide", frozenset({"Y"})),

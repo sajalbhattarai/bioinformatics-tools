@@ -197,7 +197,6 @@ def main() -> None:
     for oid in operon_members:
         operon_members[oid].sort(key=lambda t: t[0])
 
-    # Second pass: writes the enriched rows
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 

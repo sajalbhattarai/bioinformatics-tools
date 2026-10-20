@@ -7,7 +7,7 @@ a hosted deployment never sets it and keeps requiring cluster credentials.
 import getpass
 import os
 
-# Stored as cluster_host for local accounts (the users table's cluster columns are NOT NULL).
+# Placeholder cluster_host for local accounts (cluster columns are NOT NULL).
 LOCAL_CLUSTER_HOST = 'localhost'
 
 

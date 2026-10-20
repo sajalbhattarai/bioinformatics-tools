@@ -1,19 +1,5 @@
 #!/usr/bin/env bash
-#
-# Make this computer its own "cluster", so the API can be developed without HPC.
-#
-# The API does its work by SSHing into a login node, running dane_wf from
-# ~/bioinformatics-tools, and submitting to SLURM. On a laptop all three can be
-# the laptop itself:
-#
-#   ssh        Remote Login (sshd) on, and a key kept only for this, allowed in
-#              to your own account (~/.ssh/authorized_keys, tagged margie-dev)
-#   dane_wf    ~/bioinformatics-tools linked to this checkout -- the same link
-#              the API makes for itself on start (main.py) when it is safe to
-#   SLURM      sbatch / squeue / sacct / scancel from ./bin, on the PATH that
-#              non-interactive SSH commands see (~/.zshenv, tagged margie-dev)
-#
-# Everything it adds is tagged, and --undo takes it all out again.
+# Sets this computer up as its own cluster (sshd, dane_wf link, fake SLURM in ./bin).
 #
 #   ./setup.sh            set it up (idempotent)
 #   ./setup.sh --dry-run  say what it would change, change nothing
@@ -40,7 +26,7 @@ for a in "$@"; do
 done
 
 say()  { printf '  %s\n' "$*"; }
-# In a dry run, prints the action and returns 1 so the following && message is skipped.
+# In a dry run, prints the action and returns 1 so the following && is skipped.
 act()  { if [[ $DRY == yes ]]; then say "would: $*"; return 1; else "$@"; fi; }
 
 # ---- undo ----
@@ -88,7 +74,7 @@ if [[ $DRY == no || -f "$KEY.pub" ]]; then
     fi
 fi
 
-# 3. dane_wf: links ~/bioinformatics-tools to this checkout, never replacing a real folder.
+# 3. dane_wf: links ~/bioinformatics-tools here, never replacing a real folder.
 if [[ -L "$LINK" && "$(readlink "$LINK")" == "$REPO" ]]; then
     say "$LINK -> this checkout (already)"
 elif [[ -e "$LINK" && ! -L "$LINK" ]]; then
@@ -100,7 +86,7 @@ else
 fi
 [[ -x "$REPO/.venv/bin/dane_wf" ]] || { echo "  no .venv/bin/dane_wf in $REPO: run 'uv sync' there first" >&2; exit 1; }
 
-# 4. SLURM: puts the stand-ins on the PATH that non-interactive SSH commands see.
+# 4. SLURM: puts the stand-ins on the PATH non-interactive SSH commands see.
 if [[ -f "$ENVFILE" ]] && grep -q "# >>> $TAG" "$ENVFILE"; then
     say "SLURM stand-ins already on PATH ($ENVFILE)"
 else

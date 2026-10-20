@@ -28,23 +28,18 @@ LOGGER = logging.getLogger(__name__)
 executor = ThreadPoolExecutor(max_workers=4)
 
 # Regex patterns for parsing Snakemake/SLURM log output
-# For a grouped rule (e.g. "group_rasttk_load_rasttk_to_db_run_rasttk/", see
-# margie_sb.smk's group: directives) only the group's short name is captured.
+# Grouped rules capture only the group's short name (see margie_sb.smk).
 SLURM_SUBMIT_RE = re.compile(r'SLURM jobid (\d+) \(log: (.*?)\)\.?$')
 RULE_NAME_FROM_LOG_PATH_RE = re.compile(r'/slurm_logs/(?:rule_(\w+)|group_([^_]+)_\w+)/')
 SLURM_SUBMIT_FALLBACK_RE = re.compile(r'SLURM jobid (\d+)')
-# The genome is the directory between the rule and the log file in
-# .../slurm_logs/rule_<name>/<genome>/<slurm_id>.log; batch rules have no such
-# directory, so they correctly get an empty genome.
+# Genome is the dir between rule and log file; batch rules have none, so empty.
 GENOME_FROM_LOG_PATH_RE = re.compile(r'/slurm_logs/[^/]+/([^/]+)/[^/]+$')
 STEPS_PROGRESS_RE = re.compile(r'(\d+) of (\d+) steps \((\d+)%\) done')
 CACHE_HIT_RE = re.compile(r'Cache HIT for (\w+) \(genome=([^)]+)\)')
 RESTORED_FROM_CACHE_RE = re.compile(r'Restored from cache:\s+(.+)$')
-# Snakemake's --verbose "wildcards: genome=..." line, read into last_genome as a
-# fallback genome source; the sequential orchestrator has one genome in flight.
+# Fallback genome source: Snakemake's --verbose "wildcards: genome=..." line.
 WILDCARDS_GENOME_RE = re.compile(r'wildcards:.*\bgenome=([^\s,]+)')
-# Per-genome progress from the sequential orchestrator (workflow.py's
-# _run_pipeline_batch_sequential), whose per-genome "X of Y steps" resets each time.
+# Sequential orchestrator's per-genome progress; step counts reset per genome.
 SEQUENTIAL_GENOME_RE = re.compile(r'SEQUENTIAL: genome (\d+)/(\d+)')
 
 
@@ -63,11 +58,10 @@ def _slurm_status_checker(job_id: str, connection: SSHConnection):
             except Exception as e:
                 LOGGER.warning("SLURM status check failed: %s", e)
 
-        # Fallback genome backfill for jobs whose genome was not found in the
-        # live log; retried every cycle, and always empty for batch rules.
+        # Backfills genomes missed in the live log; stays empty for batch rules.
         for sj in slurm_jobs:
             if not sj.get("genome") and sj.get("log_path"):
-                # The log path is checked first: free, and it cannot race log cleanup.
+                # Path check first: free and cannot race log cleanup.
                 path_match = GENOME_FROM_LOG_PATH_RE.search(sj["log_path"])
                 if path_match:
                     sj["genome"] = path_match.group(1)
@@ -79,7 +73,7 @@ def _slurm_status_checker(job_id: str, connection: SSHConnection):
                 except Exception as e:
                     LOGGER.warning("Genome backfill failed for job %s: %s", sj["job_id"], e)
 
-        # Persists this cycle's in-place status changes (throttled inside checkpoint()).
+        # Persists this cycle's status changes; checkpoint() throttles.
         job_store.checkpoint(job_id)
 
         # Wait 15 seconds between checks
@@ -114,6 +108,7 @@ def run_ssh_task(job_id: str, command: str, connection: SSHConnection,
         job_store.add_slurm_job(job_id, "—", rule_name, genome=genome_name, source="from cache")
         for sj in job_store.get_slurm_jobs(job_id):
             if sj["job_id"] == "—" and sj["rule"] == rule_name and sj.get("genome") == genome_name:
+                # Immediately mark as CACHED so the checker skips it
                 sj["status"] = "CACHED"
 
     exit_code = 0  # Track command exit code
@@ -121,7 +116,7 @@ def run_ssh_task(job_id: str, command: str, connection: SSHConnection,
     saw_snakemake_syntax_error = False
 
     try:
-        # job_id names the detached run's log/sentinel files, so a reconnect can replay them.
+        # job_id names the log/sentinel files so a reconnect can replay them.
         detached = False
         launched = False
         for line in ssh_slurm.submit_ssh_job(cmd=command, connection=connection,
@@ -130,12 +125,12 @@ def run_ssh_task(job_id: str, command: str, connection: SSHConnection,
                                              driver_account=driver_account,
                                              driver_partition=driver_partition,
                                              driver_time=driver_time):
-            # The workflow is now running on the cluster; later errors only affect watching it.
+            # Run is live on the cluster; later errors only affect watching it.
             if line == "__LAUNCHED__":
                 launched = True
                 continue
 
-            # Watching stopped but the run did not, so the job's state is left unchanged.
+            # Watching stopped, not the run; job state is left unchanged.
             if line == "__DETACHED__":
                 detached = True
                 LOGGER.info("Stopped streaming job %s; it continues on the cluster", job_id)
@@ -176,14 +171,13 @@ def run_ssh_task(job_id: str, command: str, connection: SSHConnection,
 
             job_store.append_log(job_id, line)
 
-            # Parses cache-restored rules (output_cache.py "Cache HIT for <tool> (genome=...)").
+            # output_cache.py "Cache HIT for <tool> (genome=...)" lines.
             cache_match = CACHE_HIT_RE.search(line)
             if cache_match:
                 rule_name, cache_genome = cache_match.groups()
                 register_cached_job(rule_name, cache_genome)
 
-            # Per-file restores ("Restored from cache: .../<genome>/<tool>/<file>")
-            # become cache rows, so cache vs fresh provenance shows without a Cache HIT line.
+            # Per-file restores become cache rows even without a Cache HIT line.
             restored_match = RESTORED_FROM_CACHE_RE.search(line)
             if restored_match:
                 restored_path = restored_match.group(1).strip()
@@ -194,20 +188,18 @@ def run_ssh_task(job_id: str, command: str, connection: SSHConnection,
                     if cache_tool and cache_genome:
                         register_cached_job(cache_tool, cache_genome)
 
-            # Snakemake's --verbose "wildcards: genome=..." line, printed just before submission.
+            # "wildcards: genome=..." line, printed just before submission.
             wildcards_match = WILDCARDS_GENOME_RE.search(line)
             if wildcards_match:
                 last_genome = wildcards_match.group(1)
 
-            # Parses SLURM job IDs as they appear; log_path is kept for the
-            # checker's fallback genome backfill.
+            # SLURM job IDs; log_path feeds the checker's genome backfill.
             match = SLURM_SUBMIT_RE.search(line)
             if match:
                 slurm_id, log_path = match.groups()
                 rule_match = RULE_NAME_FROM_LOG_PATH_RE.search(log_path)
                 ungrouped_rule_name, group_name = rule_match.groups() if rule_match else (None, None)
-                # The path is the primary genome source (GENOME_FROM_LOG_PATH_RE);
-                # last_genome is the fallback.
+                # Path genome first; last_genome is the fallback.
                 path_genome_match = GENOME_FROM_LOG_PATH_RE.search(log_path)
                 genome = (path_genome_match.group(1) if path_genome_match else "") or last_genome
                 job_store.add_slurm_job(job_id, slurm_id, ungrouped_rule_name or group_name or "unknown", genome=genome, log_path=log_path)
@@ -222,8 +214,7 @@ def run_ssh_task(job_id: str, command: str, connection: SSHConnection,
                 done, total, pct = progress_match.groups()
                 job_store.update(job_id, steps_done=int(done), steps_total=int(total), progress=int(pct))
 
-            # The wrapper may report "success" even when Snakemake fails to parse
-            # the snakefile; such runs are never finalized as completed.
+            # Wrapper can exit 0 on a snakefile parse error; never completed.
             if "SyntaxError in file" in line or "Unexpected keyword" in line and "rule definition" in line:
                 saw_snakemake_syntax_error = True
 
@@ -237,8 +228,7 @@ def run_ssh_task(job_id: str, command: str, connection: SSHConnection,
             if "snakemake" in line.lower():
                 job_store.update(job_id, phase="Running Snakemake")
 
-        # Detached means watching stopped, not the run; exit_code is still 0, so
-        # finalizing here would report a live run as completed.
+        # Detached stops watching only; exit_code 0 must not mark it completed.
         if detached:
             job_store.append_log(
                 job_id,
@@ -258,9 +248,7 @@ def run_ssh_task(job_id: str, command: str, connection: SSHConnection,
         else:
             job_store.finalize(job_id, status="completed", phase="Done")
     except Exception as e:
-        # After launch the run is detached, so an exception here is a failure to
-        # watch, not of the analysis (which reports via __EXIT_CODE__). The status
-        # is left untouched and the checker thread keeps updating known SLURM jobs.
+        # After launch an exception is a watch failure, not an analysis failure.
         if launched:
             LOGGER.warning("Lost the log stream for job %s (%s); it continues on the cluster", job_id, e)
             job_store.append_log(
@@ -269,7 +257,7 @@ def run_ssh_task(job_id: str, command: str, connection: SSHConnection,
                 "The run itself is unaffected and continues on the cluster; "
                 "reopen this job to reattach. ===")
             job_store.update(job_id, phase="Running (detached)")
-            # force: nothing else writes provenance if the API stops before the next checker cycle.
+            # force: nothing else writes provenance if the API stops first.
             job_store.checkpoint(job_id, force=True)
         else:
             job_store.append_log(job_id, f"\nError: {str(e)}")

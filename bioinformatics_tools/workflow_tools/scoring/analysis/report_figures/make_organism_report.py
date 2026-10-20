@@ -30,9 +30,7 @@ def _table_units(members) -> float:
     return L.member_table_units(members)
 
 
-# ---------------------------------------------------------------------------
-# fig01 -- confidence tiers and the confidence-score distribution
-# ---------------------------------------------------------------------------
+# ---- fig01: confidence tiers and the confidence-score distribution ----
 def fig01(genes: pd.DataFrame, outdir: Path, org_label: str) -> None:
     """Draws genes per confidence tier and the final-score histogram (numpy)."""
     coding = genes[genes["confidence_tier"] != L.NONCODING_TIER]
@@ -77,9 +75,7 @@ def fig01(genes: pd.DataFrame, outdir: Path, org_label: str) -> None:
                 outdir / "fig01_confidence_score_histogram.tsv")
 
 
-# ---------------------------------------------------------------------------
-# fig02 -- preliminary -> operon-adjusted -> final confidence
-# ---------------------------------------------------------------------------
+# ---- fig02: preliminary -> operon-adjusted -> final confidence ----
 def fig02(genes: pd.DataFrame, outdir: Path, org_label: str) -> None:
     """Draws preliminary vs final confidence, the operon-correction histogram and before/after means.
 
@@ -98,7 +94,7 @@ def fig02(genes: pd.DataFrame, outdir: Path, org_label: str) -> None:
 
     fig, (axA, axB, axC) = plt.subplots(1, 3, figsize=(16.2, 5.4))
 
-    # (a) preliminary vs final -- olive=raised, dark red=lowered, hollow black=unchanged
+    # (a) preliminary vs final: olive raised, dark red lowered, hollow unchanged
     axA.plot([0, 1], [0, 1], color="black", lw=1.3, ls="--", zorder=1)
     axA.scatter(prelim[eq], final[eq], s=13, facecolor="none", edgecolor="black",
                 linewidths=0.5, label="unchanged", zorder=2)
@@ -164,9 +160,7 @@ def fig02(genes: pd.DataFrame, outdir: Path, org_label: str) -> None:
                 outdir / "fig02_confidence_stage_means.tsv")
 
 
-# ---------------------------------------------------------------------------
-# fig03 -- operon-context score and pangenome breadth by operon size
-# ---------------------------------------------------------------------------
+# ---- fig03: operon-context score and pangenome breadth by operon size ----
 def _box_by_bin(ax, df, value_col, color, ylabel):
     """Draws box plots of value_col by operon size bin via reportfig_lib.box_by_bin."""
     return L.box_by_bin(ax, df, "size_bin", value_col, L.SIZE_BIN_ORDER, color,
@@ -192,8 +186,7 @@ def fig03(genes: pd.DataFrame, operons: pd.DataFrame, recurrence: dict,
     L.set_title(axA, "Operon-context score by operon size")
     L.panel_letter(axA, "a")
 
-    # (b) share of this organism's operons that also occur in >=2 pangenome
-    # organisms, by operon size (matched operons only).
+    # (b) operons also in >=2 pangenome organisms, by size (matched operons only)
     matched = ops[ops["pangenome_organisms"].notna()]
     labB, pctB, nB = [], [], []
     for b in L.SIZE_BIN_ORDER:
@@ -230,9 +223,7 @@ def fig03(genes: pd.DataFrame, operons: pd.DataFrame, recurrence: dict,
                 outdir / "fig03_recurrence_by_operon_size.tsv")
 
 
-# ---------------------------------------------------------------------------
-# fig04 -- distribution of each confidence component (C1..C4)
-# ---------------------------------------------------------------------------
+# ---- fig04: distribution of each confidence component (C1..C4) ----
 def fig04(genes: pd.DataFrame, outdir: Path, org_label: str) -> None:
     """Draws a histogram with median for each of C1-C4."""
     comps = [("C1", "c1_score"), ("C2", "c2_score_from_operon_probability"),
@@ -261,9 +252,7 @@ def fig04(genes: pd.DataFrame, outdir: Path, org_label: str) -> None:
     L.write_tsv(pd.DataFrame(rows), outdir / "fig04_component_summary.tsv")
 
 
-# ---------------------------------------------------------------------------
-# fig05 -- one real operon neighbourhood (gene track)
-# ---------------------------------------------------------------------------
+# ---- fig05: one real operon neighbourhood (gene track) ----
 def _pick_window(genes: pd.DataFrame, span: int = 11) -> pd.DataFrame:
     """Returns a window of genes on the largest contig centred on a boundary between two operons at least 100 bp apart."""
     g = genes.dropna(subset=["gene_start"]).copy()
@@ -334,10 +323,7 @@ def fig05(genes: pd.DataFrame, outdir: Path, org_label: str) -> None:
     L.write_tsv(out, outdir / "fig05_operon_neighbourhood.tsv")
 
 
-# ---------------------------------------------------------------------------
-# fig06 / fig07 / fig08 -- galleries of the most-reproduced, most-unique and
-# penalised operons: gene track plus full descriptors and confidence.
-# ---------------------------------------------------------------------------
+# ---- fig06/07/08: galleries of reproduced, unique and penalised operons ----
 _GALLERY_N = 10
 _GALLERY_CAP = 6   # members drawn per operon row
 
@@ -400,7 +386,7 @@ def fig06_07(operons: pd.DataFrame, recurrence: dict, outdir: Path, org_label: s
         lambda m: recurrence.get(m, {}).get("organism_count", 0))
     ops["pangenome_occurrences"] = ops["members_in_order"].map(
         lambda m: recurrence.get(m, {}).get("label_frequency", 0))
-    # show operons of named-function genes only (same informative gate as scoring)
+    # Keeps operons of named-function genes only (scoring's informative gate).
     ops["all_named"] = ops["members_in_order"].map(
         lambda m: L.operon_members_informative(m))
     ops["mostly_named"] = ops["members_in_order"].map(
@@ -457,8 +443,7 @@ def main() -> None:
     org_label = args.organism
     genes = L.load_organism_genes(run_root, args.organism)
     operons = L.build_operons(genes)
-    # Recurrence and the pool caption use the OCC reference's organisms,
-    # falling back to this run's organisms when the OCC is unreadable.
+    # Falls back to this run's organisms when the OCC reference is unreadable.
     restrict = L.load_occ_organisms() or set(L.discover_organisms(run_root))
     # Leave-one-out: the pool excludes this organism, as in its C3 scoring.
     restrict = set(restrict)

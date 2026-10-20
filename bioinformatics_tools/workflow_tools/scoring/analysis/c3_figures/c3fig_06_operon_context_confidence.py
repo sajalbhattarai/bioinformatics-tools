@@ -95,7 +95,7 @@ def make(genes, operons, outdir):
     hi_ex = _pick(high_specs, True)[:5]
     lo_ex = _pick(low_specs, False)[:5]
 
-    # ---- size / floor robustness (link_floor only affects aggregation, so ref is reused) ----
+    # ---- size / floor robustness (link_floor only affects aggregation) ----
     ref["params"]["link_floor"] = 0.20
     df_floor = O.compute_all_genes(genes, run_root, ref=ref)
     ref["params"]["link_floor"] = 0.0

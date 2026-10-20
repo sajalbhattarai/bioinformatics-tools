@@ -14,7 +14,7 @@ _KEYS = ("BSP_SECRET_KEY", "BSP_ENCRYPTION_KEY")
 
 
 def _repo_root() -> Path:
-    # Same root as api/main.py's _PROJECT_ROOT, so the .env written is the one it reads.
+    # Same root as api/main.py's _PROJECT_ROOT, so both use the same .env.
     return Path(__file__).resolve().parents[2]
 
 

@@ -16,7 +16,7 @@ from pathlib import Path
 
 csv.field_size_limit(10_000_000)
 
-# EC-capable databases (EGGNOG, RAST, KEGG, dbCAN, TCDB); the penalty weight is m/5.
+# EC-capable DBs (EGGNOG, RAST, KEGG, dbCAN, TCDB); penalty weight is m/5.
 N_EC_CAPABLE_TOOLS = 5
 
 _EC_BLANK = {"", "-", "--", "n/a", "na", "none", "null", "*"}

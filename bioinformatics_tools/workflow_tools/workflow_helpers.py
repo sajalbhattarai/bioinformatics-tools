@@ -9,12 +9,10 @@ from pathlib import Path
 
 LOGGER = logging.getLogger(__name__)
 
-# Repo root (the bioinformatics-tools checkout), used for machine-agnostic fallback paths.
+# Repo root (the bioinformatics-tools checkout) for machine-agnostic fallbacks.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# Per-workflow fallback defaults for the root-path settings, read by
-# workflow_registry.workflow_path_params() (the Profile UI) and by
-# sif_dir()/db_path()/do_margie_sb(). Input/output paths stay user-provided.
+# Fallback root-path defaults (Profile UI, sif_dir, db_path, do_margie_sb).
 WORKFLOW_PATH_DEFAULTS: dict[str, dict[str, str]] = {
     'margie_sb': {
         'sif_path': '',
@@ -201,9 +199,7 @@ def discover_genomes(input_path: str, recursive: bool = False) -> dict[str, str]
                 stem = genome_stem(entry.name)
                 previous = genomes.get(stem)
                 if previous is not None:
-                    # Two files sharing a stem are the same genome if their content
-                    # hash matches (either is kept); otherwise it is an error. Hashing
-                    # happens only on a stem collision.
+                    # Same stem is the same genome only if the content hashes match.
                     from bioinformatics_tools.workflow_tools.load_to_db import compute_fasta_hash
                     if compute_fasta_hash(previous) == compute_fasta_hash(str(entry)):
                         LOGGER.info(

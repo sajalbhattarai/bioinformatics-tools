@@ -13,6 +13,9 @@ import sys
 from pathlib import Path
 
 _THIS_DIR = Path(__file__).resolve().parent
+# Starter reference shipped with MARGIE (see reference/operon-db.manifest.txt);
+# a run's own reference is seeded from it the first time none exists.
+DEFAULT_REFERENCE = _THIS_DIR / "reference" / "operon-db.pkl"
 if str(_THIS_DIR) not in sys.path:
     sys.path.insert(0, str(_THIS_DIR))
 
@@ -78,6 +81,10 @@ def main() -> None:
         fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
         if reference_path.is_file():
             ref = c3_occ.load_reference(reference_path)
+        elif DEFAULT_REFERENCE.is_file():
+            ref = c3_occ.load_reference(DEFAULT_REFERENCE)
+            print(f"[update-occ-reference] no reference at {reference_path}; starting from the shipped "
+                  f"operon-db.pkl ({len(ref.get('organisms_added', ()))} organisms)")
         else:
             ref = c3_occ.new_reference()
 

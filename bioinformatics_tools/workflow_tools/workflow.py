@@ -53,7 +53,7 @@ def _scripts_versioned(step: str) -> str:
         _SCRIPT_VERSIONS[step] = f'{step}@{digest.hexdigest()[:12]}'
     return _SCRIPT_VERSIONS[step]
 
-# Mirrors margie_sb.smk's INTERPRO_ANALYSIS_TO_BASENAME.values(); the .smk is not importable.
+# Mirrors margie_sb.smk's INTERPRO_ANALYSIS_TO_BASENAME; the .smk is not importable.
 INTERPRO_DB_BASENAMES = [
     "antifam", "cdd", "coils", "funfam", "gene3d", "hamap", "mobidb", "ncbifam",
     "panther", "pfam", "pirsf", "pirsr", "prints", "prosite_patterns",
@@ -61,10 +61,7 @@ INTERPRO_DB_BASENAMES = [
 ]
 WORKFLOW_DIR = Path(__file__).parent
 
-# --cores for SLURM-mode runs. Not 'all': Snakemake clamps every rule's threads:
-# to --cores, and inside the small driver allocation (ssh_slurm.DRIVER_CPUS)
-# 'all' would shrink e.g. gtdbtk's 64 threads to 4. 256 is the largest node;
-# local rules are still bounded by --local-cores.
+# Not 'all': it would clamp every rule's threads to the small driver allocation.
 SLURM_MODE_CORES = 256
 
 
@@ -143,7 +140,7 @@ class _Stage1Waves:
             for proc in (batch, ready):
                 if proc is not None:
                     proc.wait()
-            # Only after the batch has landed and the first RASTtk wave has exited.
+            # Starts only after the batch lands and the first RASTtk wave exits.
             rest = self._start(pending_targets, 'RASTtk, after GTDB-Tk batch')
             if rest is not None:
                 rest.wait()
@@ -208,7 +205,7 @@ class WorkflowBase(ProgramBase):
         if max_jobs_override is not None:
             max_jobs = max_jobs_override
 
-        # 'all' only in dev mode, where every rule runs on this machine (see SLURM_MODE_CORES).
+        # 'all' only in dev mode, where every rule runs locally (see SLURM_MODE_CORES).
         cores = 'all' if mode == 'dev' else SLURM_MODE_CORES
 
         core_command = [
@@ -219,10 +216,9 @@ class WorkflowBase(ProgramBase):
             '--use-apptainer',
             '--sdm=apptainer',
             '--apptainer-args', '-B /home/ddeemer -B /depot/lindems/data/Databases/',  #TODO: HARDCODED!
-            # Needed by signalp4/signalp6, the only rules using envmodules: (see margie_sb.smk).
+            # Needed by signalp4/signalp6, the only envmodules: rules.
             '--use-envmodules',
-            # Prints each job's rule/wildcards/jobid block to the live log, where
-            # run_ssh_task reads the job's genome.
+            # Prints each job's rule/wildcards/jobid block, which run_ssh_task reads.
             '--verbose',
             f'--jobs={max_jobs}',
             '--latency-wait=60',
@@ -231,8 +227,7 @@ class WorkflowBase(ProgramBase):
 
         if target:
             core_command.append('--nolock')
-            # A list means explicit file targets; Stage 1 uses it for a subset of
-            # genomes (see _Stage1Waves).
+            # A list means explicit file targets (Stage 1 subsets, see _Stage1Waves).
             core_command.extend([target] if isinstance(target, str) else list(target))
 
         # Check for dry-run/test mode (from config or command line)
@@ -611,8 +606,7 @@ class WorkflowBase(ProgramBase):
             r_header, *r_rows = Path(results_path).read_text().splitlines()
             t_header, *t_rows = Path(translation_path).read_text().splitlines()
             result_header, translation_header = r_header, t_header
-            # Column 0 is set to this loop's genome: identical FASTAs under
-            # different names share one cached row.
+            # Column 0 becomes this genome: identical FASTAs share one cached row.
             if r_rows:
                 r_rows = ["\t".join([genome, *r_rows[0].split("\t")[1:]])]
             if t_rows:
@@ -626,8 +620,7 @@ class WorkflowBase(ProgramBase):
             "\n".join([translation_header, *translation_rows]) + "\n")
         Path(f"{batch_dir}/gtdbtk_batch.done").touch()
 
-        # Bumps each split file's mtime past the batch files just written, so
-        # Snakemake does not rerun the split and, in turn, RASTtk.
+        # Bumps split-file mtimes so Snakemake reruns neither the split nor RASTtk.
         for genome in genome_files:
             results_path, translation_path, _token_path = WorkflowBase._gtdbtk_split_paths(genome, smk_config)
             Path(results_path).touch()
@@ -704,27 +697,22 @@ class WorkflowBase(ProgramBase):
                     return 1
 
         db_path = smk_config.get('main_database')
-        # Off: nothing reads GTDB-Tk (GENOME_INFO comes from margie_sb.genome_info),
-        # so its batch is neither restored nor run.
+        # Off: nothing reads GTDB-Tk, so its batch is neither restored nor run.
         run_gtdbtk_enabled = smk_config.get('run_gtdbtk', True) not in (False, 'false', '0', 'no')
 
         restored: dict[str, dict[str, bool]] = {}
         rasttk_restored: dict[str, bool] = {}
         gtdbtk_batch_hit = False
-        # Genomes whose GTDB-Tk outputs are committed to output_cache this run,
-        # cached as soon as they exist rather than when RASTtk finishes.
+        # Genomes whose GTDB-Tk outputs are cached as soon as they exist.
         gtdbtk_stored: set[str] = set()
         if db_path:
-            # Phase4+ restore is deferred to just before each genome's Stage 2,
-            # so restored files are newer than the rast.faa Stage 1 writes.
+            # Deferred so restored files are newer than Stage 1's rast.faa.
             LOGGER.info('Phase4+ cache restore deferred to per-genome pre-Stage-2 (after rasttk outputs are fresh)')
 
-            # gtdbtk/rasttk are excluded from cache_map_fn (see _genome_cache_map);
-            # _restore_gtdbtk_batch handles the GTDB-Tk batch shape directly.
+            # gtdbtk/rasttk are not in cache_map_fn; the batch shape is handled here.
             gtdbtk_batch_hit = run_gtdbtk_enabled and self._restore_gtdbtk_batch(db_path, genome_files, smk_config)
             if gtdbtk_batch_hit:
-                # Only worth attempting after a full gtdbtk batch hit; otherwise
-                # gtdbtk reruns and forces rasttk to rerun too.
+                # Only after a full gtdbtk batch hit; otherwise rasttk reruns anyway.
                 for stem, genome_file in genome_files.items():
                     if stem in prodigal_genomes:
                         continue  # Prodigal's genes, not RASTtk's: never from the rasttk cache
@@ -735,9 +723,7 @@ class WorkflowBase(ProgramBase):
             LOGGER.info('GTDB-Tk batch cache hit: %s. RASTtk per-genome cache restore results: %s',
                         gtdbtk_batch_hit, rasttk_restored)
 
-        # Stage 1: phases 1-3 for every genome, in the background, split into
-        # waves (see _Stage1Waves). Every wave uses --jobs=1 and the RASTtk waves
-        # are sequenced, so BV-BRC sees one submission at a time.
+        # Stage 1: phases 1-3 in waves with --jobs=1, one BV-BRC submission at a time.
         def _stage1_targets(genome: str) -> list[str]:
             '''Returns the files rule rasttk_all asks for, for one genome: the
             RASTtk DB token, plus the GTDB-Tk one when GTDB-Tk is selected.'''
@@ -747,8 +733,7 @@ class WorkflowBase(ProgramBase):
                 targets.append(f"{prefix}gtdbtk/gtdbtk_db.tkn")
             return targets
 
-        # A genome is "ready" when its per-genome GTDB-Tk outputs are on disk
-        # (restored above), or always when GTDB-Tk is off.
+        # "Ready": per-genome GTDB-Tk outputs on disk, or always when GTDB-Tk is off.
         gtdbtk_ready = [g for g in genome_files
                         if not run_gtdbtk_enabled
                         or all(Path(p).exists() for p in self._gtdbtk_split_paths(g, smk_config))]
@@ -782,14 +767,13 @@ class WorkflowBase(ProgramBase):
         def _rasttk_token_path(genome: str) -> str:
             return f"{get_workflow_prefix_for(genome, smk_config)}rasttk/rasttk_db.tkn"
 
-        # With LLM enabled, Stage 2 stops before the GPU step and Stage 3
-        # (rule llm_all) submits all LLM jobs at once; gres=gpu:1 serialises them.
+        # With LLM on, Stage 2 stops before the GPU step; Stage 3 runs the LLM jobs.
         _run_llm_val = smk_config.get('run_llm', False)
         run_llm_enabled = _run_llm_val not in (False, 'false', '0', 'no')
         stage2_target = 'phase4_12_one_genome_no_llm' if run_llm_enabled else 'phase4_12_one_genome'
         LOGGER.info('LLM enabled: %s  →  Stage 2 target: %s', run_llm_enabled, stage2_target)
 
-        # What the per-protein cache reads: the account's config and this run's settings.
+        # Per-protein cache config: the account's config plus this run's settings.
         pc_cfg = {**(self.conf or {}), **smk_config}
         pc_on = bool(db_path) and key_name == 'margie_sb' and protein_cache.enabled(pc_cfg)
 
@@ -802,8 +786,7 @@ class WorkflowBase(ProgramBase):
         progress_memo: dict[str, tuple[int, int]] = {}  # genome -> completeness, for most-complete-first ordering
 
         while pending or queue:
-            # Caches each genome's GTDB-Tk outputs as soon as its own db token
-            # (gtdbtk_db.tkn) exists, so a later RASTtk failure keeps them cached.
+            # Caches GTDB-Tk outputs on their db token, so a RASTtk failure keeps them.
             if db_path and run_gtdbtk_enabled and not gtdbtk_batch_hit:
                 for genome in genome_files:
                     if genome in gtdbtk_stored:
@@ -825,8 +808,7 @@ class WorkflowBase(ProgramBase):
 
             if not queue:
                 if stage1.poll() is not None and pending:
-                    # Stage 1 exited without a token for these genomes: a phase1-3
-                    # failure for them, skipped here (--keep-going).
+                    # No token after Stage 1 exit: phase1-3 failure, skipped.
                     LOGGER.warning('Stage 1 exited without producing a RASTtk token for: %s -- skipping',
                                    sorted(pending))
                     skipped.extend(pending)
@@ -835,9 +817,7 @@ class WorkflowBase(ProgramBase):
                     time.sleep(15)
                 continue
 
-            # Most complete first among RASTtk-ready genomes; progress is memoised
-            # since pending genomes do not change, and the stable sort keeps FIFO
-            # order for ties.
+            # Most complete first; memoised since pending genomes do not change.
             if len(queue) > 1:
                 queue.sort(
                     key=lambda g: progress_memo.setdefault(
@@ -848,18 +828,14 @@ class WorkflowBase(ProgramBase):
             processed += 1
             LOGGER.info('=== SEQUENTIAL: genome %d/%d (%s) phase4-12 starting ===', processed, total, genome)
 
-            # Restores phase4+ cached outputs now, after rasttk produced rast.faa,
-            # so their mtime is newer and Snakemake skips them. Must precede the
-            # already-processed skip below, or a fresh output_dir misses these files.
+            # Restored after rast.faa so mtimes are newer; must precede the skip below.
             if db_path:
                 genome_cache_map_now = cache_map_fn(genome)
                 genome_restored = restore_all(db_path, genome_files[genome], genome_cache_map_now)
                 restored[genome] = genome_restored
                 LOGGER.info('Phase4+ cache restore for %s: %s', genome, genome_restored)
 
-                # Rewrites restored tables into this run's RASTtk namespace
-                # (6666666.<job>), so they join the freshly computed rasttk output
-                # (see realign_rast_genome_id).
+                # Rewrites restored tables into this run's RASTtk id namespace.
                 rast_ref = f"{get_workflow_prefix_for(genome, smk_config)}rasttk/rast.gff"
                 current_id = current_rast_genome_id(rast_ref)
                 if current_id:
@@ -875,9 +851,7 @@ class WorkflowBase(ProgramBase):
                     LOGGER.warning('No single RASTtk genome id readable from %s — skipping '
                                    'cache realignment for %s', rast_ref, genome)
 
-            # Per-protein cache (protein_cache.py): for each selected tool not
-            # restored whole, known proteins come from the cache and only the
-            # rest go to the tool; every genome's proteins are stored below.
+            # Per-protein cache: only proteins not in the cache go to each tool.
             pc_prefix = get_workflow_prefix_for(genome, smk_config)
             pc_faa_path = f"{pc_prefix}rasttk/rast.faa"
             pc_tools: list[str] = []
@@ -901,18 +875,16 @@ class WorkflowBase(ProgramBase):
                     for t in to_split:
                         protein_cache.clear(pc_prefix, t)
 
-            # Skips Stage 2 only when the genome is at PIPELINE_VERSION and every
-            # selected step was restored; otherwise Snakemake computes the missing steps.
+            # Skips Stage 2 only at PIPELINE_VERSION with every selected step restored.
             if db_path:
                 fasta_hash = fasta_hashes(genome_files[genome])
                 missing_selected = [
                     t for t, hit in genome_restored.items()
                     if not hit and smk_config.get(f"run_{t.split('@')[0]}", True) not in (False, 'false', '0', 'no')
                 ]
-                # Scoring is never cached (its OCC reference grows), so the
-                # fast path is never taken while scoring is selected.
+                # Scoring is never cached (its OCC reference grows), so no fast path.
                 scoring_always_recomputes = smk_config.get('run_scoring', True) not in (False, 'false', '0', 'no')
-                # A Prodigal genome restores nothing (see _genome_cache_map), so it always computes.
+                # A Prodigal genome restores nothing, so it always computes.
                 if (genome not in prodigal_genomes
                         and is_already_processed(db_path, fasta_hash, PIPELINE_VERSION)
                         and not missing_selected and not scoring_always_recomputes):
@@ -935,9 +907,7 @@ class WorkflowBase(ProgramBase):
             LOGGER.info('Starting Stage 2 (%s) for %s: %s', stage2_target, genome, ' '.join(stage2_command))
             stage2_proc = self._start_background_subprocess(stage2_command)
 
-            # Per-tool cache store, polled while Stage 2 runs: a tool is cached
-            # once all its outputs and its db token (written last by
-            # load_<tool>_to_db) exist, so another tool's failure cannot discard it.
+            # Stores each tool once its outputs and db token (written last) exist.
             genome_cache_map = cache_map_fn(genome)
             genome_restored = restored.get(genome, {})
             genome_stored: set[str] = set()
@@ -1000,8 +970,7 @@ class WorkflowBase(ProgramBase):
                 log_workflow_run(db_path, run_id, genome_files[genome], key_name,
                                  self._build_result(key_name, proc)['rules_summary'].get('completed', 0), status='success')
 
-        # Stage 3: LLM for all genomes at once, when enabled and at least one
-        # genome reached Stage 2; --keep-going lets one genome's failure pass.
+        # Stage 3: LLM for all genomes at once; --keep-going lets one failure pass.
         if run_llm_enabled and processed > 0:
             LOGGER.info('=== Stage 3: LLM scoring for all %d genome(s) (rule llm_all) ===', processed)
             stage3_command = self.build_executable(selected_wf, config_overrides=smk_config, mode=mode,
@@ -1048,8 +1017,7 @@ class WorkflowBase(ProgramBase):
                     finalize_proc.returncode if finalize_proc else None,
                 )
 
-        # Pangenome report figures from finished scoring outputs, as an isolated
-        # subprocess; a failure only logs a warning.
+        # Pangenome report figures in an isolated subprocess; a failure only warns.
         report_figures_enabled = smk_config.get('run_report_figures', True) not in (False, 'false', '0', 'no')
         if run_scoring_enabled and report_figures_enabled and processed > 0 and not skipped:
             LOGGER.info('=== FINALIZE: generate pangenome report figures ===')
@@ -1071,9 +1039,7 @@ class WorkflowBase(ProgramBase):
                     figures_proc.returncode if figures_proc else None,
                 )
 
-        # FINALIZE: reorganises each organism folder (FINAL tsv, coloured xlsx,
-        # diagrams/, per-tool-phased-output/). Runs last, outside Snakemake's DAG;
-        # a failure only logs a warning.
+        # FINALIZE: reorganises organism folders outside the DAG; a failure only warns.
         reorganize_enabled = smk_config.get('run_reorganize_outputs', True) not in (False, 'false', '0', 'no')
         output_dir = (smk_config.get('output_dir') or self.conf.get('output_dir', '') or '').rstrip('/')
         if run_scoring_enabled and reorganize_enabled and processed > 0 and not skipped and output_dir:
@@ -1114,8 +1080,7 @@ class WorkflowBase(ProgramBase):
         summary = (f'{processed}/{total} genome(s) processed'
                    f'{f", {len(skipped)} skipped" if skipped else ""}')
 
-        # No genome produced output: reported as a failure, since the GUI reads
-        # the exit code to decide completed vs failed.
+        # No output: reported as a failure, since the GUI decides by exit code.
         if total > 0 and processed == 0:
             self.failed(
                 msg=f'Workflow "{key_name}" produced nothing ({summary})'
@@ -1124,8 +1089,7 @@ class WorkflowBase(ProgramBase):
             )
             return stage1_rc or 1
 
-        # Some genomes finished: their outputs stand, but a partial run is
-        # reported as inconclusive (exit code 0, no "Success" banner).
+        # Partial run: outputs stand, but reported as inconclusive (exit 0, no banner).
         if skipped or stage1_rc:
             self.finished(
                 msg=f'Workflow "{key_name}" completed with gaps ({summary})'
@@ -1340,7 +1304,7 @@ class WorkflowBase(ProgramBase):
                 self.failed('SLURM account configuration is required for cluster execution')
                 return 1
 
-        # Recursive: synteny-input/<genome>/... reference genomes also run as primary genomes.
+        # Recursive: synteny-input/<genome>/ references also run as primary genomes.
         genomes = discover_genomes(input_path_value, recursive=True)
         if not genomes:
             LOGGER.error('No genome files found at %s', input_path_value)
@@ -1376,9 +1340,7 @@ class WorkflowBase(ProgramBase):
         for tool_key in _post_scoring_tools:
             config_overrides[_tool_to_run_flag.get(tool_key, f'run_{tool_key}')] = False
 
-        # margie_sb.selected_tools (set by the API per run) or else
-        # margie_sb.default_selected_tools picks the tools; with neither, the
-        # production defaults apply (stop at scoring).
+        # selected_tools, else default_selected_tools, else the production defaults.
         _margie_sb_conf = self.conf.get('margie_sb', {})
         selected_tools_raw = (
             _margie_sb_conf.get('selected_tools', '')
@@ -1390,18 +1352,13 @@ class WorkflowBase(ProgramBase):
             for tool in MARGIE_SB_PHASED_TOOLS:
                 run_flag = _tool_to_run_flag.get(tool['key'], f"run_{tool['key']}")
                 config_overrides[run_flag] = tool['key'] in selected_tool_keys
-            # rasttk cannot be deselected (it gates phase3); gtdbtk's SIF is needed
-            # only when GTDB-Tk runs. Selecting fingerprint_database also enables the
-            # operon-fingerprint databases, which grow alongside it.
+            # rasttk stays on; fingerprint_database also enables operon-fingerprint DBs.
             if config_overrides.get('run_fingerprint_database'):
                 config_overrides['run_operon_fingerprint'] = True
             sif_files_override = margie_sb_sif_files(selected_tool_keys | {'rasttk'} | (
                 {'gtdbtk'} if config_overrides.get('run_gtdbtk', True) else set()))
 
-        # ---- Licensing gate ----
-        # Requires accepted terms (interactive, or passed via env by the web app)
-        # and disables tools the operator is not licensed for. ensure_api_keys()
-        # creates the backend secret keys the gate's API imports need.
+        # ---- Licensing gate: accepted terms required, unlicensed tools disabled ----
         from bioinformatics_tools.workflow_tools.env_keys import ensure_api_keys
         ensure_api_keys()
         from bioinformatics_tools.workflow_tools.license_gate import (
@@ -1446,8 +1403,7 @@ class WorkflowBase(ProgramBase):
                 ', '.join(sorted(_disabled)),
             )
 
-        # Genomes Prodigal calls instead of RASTtk (GTDB-Tk off and no domain or
-        # genetic code in margie_sb.genome_info); they never touch output_cache.
+        # Prodigal genomes (GTDB-Tk off, no genome_info entry) never touch output_cache.
         _calls = genome_calls(genomes, {'run_gtdbtk': config_overrides.get('run_gtdbtk', True),
                                         'margie_sb': self.conf.get('margie_sb', {})})
         prodigal_genomes = {g for g, c in _calls.items() if c['gene_caller'] == 'prodigal'}
@@ -1484,7 +1440,7 @@ class WorkflowBase(ProgramBase):
                 interpro_paths += [f'{prefix}interpro/interpro_{db}_results.tsv',
                                     f'{prefix}interpro/interpro_{db}_db.tkn']
             cache_map['interpro'] = interpro_paths
-            # Phase 9 (consolidation): includes the wide merged TSV so labeling can rerun from cache.
+            # Phase 9: includes the wide merged TSV so labeling can rerun from cache.
             cache_map[_scripts_versioned('consolidation')] = [
                 f'{prefix}consolidation/detected-columns.json',
                 f'{prefix}consolidation/consolidated-merged-all-columns.tsv',
@@ -1502,12 +1458,10 @@ class WorkflowBase(ProgramBase):
                 f'{prefix}labeling/labeling_compute.tkn',
                 f'{prefix}labeling/labeling_db.tkn',
             ]
-            # Phase 11 (scoring) is not cached: its OCC operon reference grows, so
-            # scores are recomputed every run and archived by archive_scoring_to_depot.
-            # Phase 12 (fingerprint) is not cached either.
+            # Phases 11-12 are not cached: scoring's OCC reference grows every run.
             return cache_map
 
-        # RASTtk concurrency is enforced by a mkdir mutex in margie_sb.smk's run_rasttk rule.
+        # RASTtk concurrency: a mkdir mutex in margie_sb.smk's run_rasttk rule.
 
         # Number of phase4 tools running at once (margie_sb.phase4.max_parallel_tools).
         max_parallel_tools = self.conf.get('margie_sb', {}).get('phase4', {}).get('max_parallel_tools', 4)
@@ -1515,8 +1469,7 @@ class WorkflowBase(ProgramBase):
             'margie_sb_phase4_slot': max_parallel_tools,
         }
 
-        # margie_sb.resume is set by resume_job's relaunch into a copied output_dir;
-        # mtime-only rerun triggers then treat the copied outputs as done.
+        # Set by resume_job's relaunch; mtime-only triggers treat copied outputs as done.
         resume_raw = str(self.conf.get('margie_sb', {}).get('resume', '')).strip().lower()
         rerun_triggers = 'mtime' if resume_raw not in ('false', '0', 'no', 'off', '') else None
 

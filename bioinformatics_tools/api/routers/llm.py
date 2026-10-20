@@ -36,7 +36,7 @@ ADVERT_PATH = Path(os.getenv(
 FINAL_TSV = "FINAL_ANNOTATION_WITH_CONFIDENCE.tsv"
 TIERS = ["highest", "high", "medium", "fair", "low"]
 
-# Scoping rules shared with score-genes-llm.py's SYSTEM_PROMPT, plus the grounding and citation rules.
+# Scoping rules shared with score-genes-llm.py, plus grounding and citation rules.
 SYSTEM_PROMPT = """\
 You are explaining the results of a MARGIE(SB) genome annotation to the person \
 who ran it. You are given that pipeline's own records. Explain what they mean. \
@@ -132,9 +132,9 @@ class ChatRequest(BaseModel):
     gene_id: str | None = None    # optional: narrows context to one gene
     max_tokens: int = 1000
     stream: bool = False
-    # Recent turns, oldest first: [{"role": "you"|"margie", "text": ...}]; capped server-side.
+    # Recent turns, oldest first: [{"role": "you"|"margie", "text": ...}].
     history: list[dict] = []
-    # Gene the previous answer was about, echoed by the client so follow-ups stay on it.
+    # Gene of the previous answer, echoed by the client to keep follow-ups on it.
     subject_gene_id: str | None = None
 
 
@@ -157,7 +157,7 @@ def _read_final(job_id: str, organism: str, current_user: dict) -> list[dict]:
     """Reads this organism's FINAL table from the user's cluster as a list of row dicts."""
     conn = _build_connection(current_user)
     work_dir = _resolve_job_work_dir(job_id, current_user, conn)
-    # The table is at the organism top level after reorganising, under scoring/ mid-run.
+    # Lives at the organism top level once reorganised, under scoring/ mid-run.
     for rel in (f"{organism}/{FINAL_TSV}", f"{organism}/scoring/{FINAL_TSV}"):
         try:
             raw = b"".join(ssh_sftp.stream_remote_file(f"{work_dir}/{rel}", connection=conn))
@@ -181,7 +181,7 @@ def _col(row: dict, name: str) -> str:
     return ""
 
 
-# Meanings of the key FINAL columns, given to the model so it can read per-gene records.
+# Column meanings given to the model so it can read per-gene records.
 _SCHEMA_HELP = {
     "gene_id": "gene identifier, <accession>_<start><strand><len>",
     "organism_name": "genome this gene belongs to",
@@ -221,7 +221,7 @@ def _schema_block(rows: list[dict]) -> str:
             f"{len(rows)} rows, {len(names)} columns:\n" + "\n".join(names))
 
 
-# Words ignored in retrieval: question words and schema vocabulary, which would match arbitrary genes.
+# Question words and schema vocabulary; these would match arbitrary genes.
 _STOPWORDS = {
     "what", "which", "does", "have", "this", "that", "gene", "genes", "genome",
     "about", "there", "any", "can", "you", "tell", "give", "more", "into",
@@ -235,7 +235,7 @@ _STOPWORDS = {
     "annotation", "annotated", "evidence", "database", "databases", "tool",
     "tools", "hit", "hits", "value", "values", "column", "columns", "final",
 }
-# Shorter tokens substring-match too much to be used for retrieval.
+# Shorter tokens substring-match too many genes.
 _MIN_TOKEN = 5
 
 
@@ -245,12 +245,11 @@ def _search_genes(rows: list[dict], question: str, limit: int = 6) -> list[dict]
     words = {w for w in re.findall(r"[A-Za-z0-9_.\-]+", q)
              if len(w) >= _MIN_TOKEN and w not in _STOPWORDS}
 
-    # Numbers in the question are also matched as coordinates, thousands separators removed.
+    # Numbers also match as coordinates, thousands separators removed.
     coords = [int(n) for n in re.findall(r"\d{3,}", q.replace(",", ""))]
 
     scored = []
     for r in rows:
-        # All textual handles of the row: id, product, operon, feature id, EC status.
         hay = " ".join(filter(None, (
             _col(r, "gene_id"),
             _col(r, "best_consensus_product_descriptor"),
@@ -305,7 +304,6 @@ def _render_gene(r: dict) -> str:
         if bare == "RAST_na_sequence":
             v = f"<{len(v)} nt, omitted>"
         elif len(v) > 600:
-            # Long audit strings keep their head and are marked as truncated.
             v = v[:600] + f" …[truncated, {len(v)} chars total]"
         out.append(f"    {bare}: {v}")
     return "\n".join(out)
@@ -350,7 +348,6 @@ def _gene_context(rows: list[dict], gene_id: str, organism: str) -> tuple[str, d
         v = (v or "").strip()
         if not v:
             continue
-        # The nucleotide sequence is omitted.
         if k.split(":")[-1].strip() == "RAST_na_sequence":
             v = f"<{len(v)} nt, omitted>"
         lines.append(f"  {k.split(':')[-1].strip()}: {v}")
@@ -369,7 +366,7 @@ def _resolve_model_path(current_user: dict) -> str:
     except Exception as exc:
         LOGGER.warning("Could not read config for db_root: %s", exc)
 
-    # Same precedence as the workflow's db_path(): db.llm, else <workflow>.db_root/llm.
+    # Mirrors the workflow's db_path(): db.llm, else <workflow>.db_root/llm.
     explicit = (cfg.get("db") or {}).get("llm")
     root = None
     if explicit:
@@ -414,7 +411,7 @@ def start_chat(current_user: dict = Depends(get_current_user)):
                 detail=f"Base model not found at {model}. Check the database "
                        "folder set in Profile.",
             )
-        # The backend path is this package's location on the cluster.
+        # This package's root on the cluster.
         backend = str(Path(__file__).resolve().parents[3])
         sbatch = f"{backend}/bioinformatics_tools/workflow_tools/llm/chat-server.sbatch"
         cmd = (f"MARGIE_LLM_MODEL={model!r} MARGIE_BACKEND={backend!r} "
@@ -451,7 +448,7 @@ def stop_chat(current_user: dict = Depends(get_current_user)):
         LOGGER.info("chat server on %s asked to stop", adv.get("host"))
         return {"stopped": True}
     except Exception as exc:
-        # An unreachable server is already gone, so the stale advert is removed.
+        # An unreachable server is gone; the stale advert is dropped.
         try:
             ADVERT_PATH.unlink()
         except Exception:
@@ -471,7 +468,7 @@ def chat_status(current_user: dict = Depends(get_current_user)):
             return {"online": True, "model": json.loads(r.read()).get("model", ""),
                     "host": adv["host"]}
     except Exception as exc:
-        # An advert without a responding server means the job died without cleaning up.
+        # Advert but no server: the job died without cleaning up.
         return {"online": False, "detail": f"endpoint not responding: {exc}"}
 
 
@@ -485,7 +482,7 @@ def chat(body: ChatRequest, current_user: dict = Depends(get_current_user)):
     ep = _endpoint()
     rows = _read_final(body.job_id, body.organism, current_user)
 
-    # Keeps the last six turns, each truncated, for resolving "it" and "that gene".
+    # Keeps the last six turns, truncated, to resolve "it" and "that gene".
     hist = [h for h in (body.history or [])
             if isinstance(h, dict) and (h.get("text") or "").strip()][-6:]
     hist_text = "\n".join(
@@ -502,7 +499,7 @@ def chat(body: ChatRequest, current_user: dict = Depends(get_current_user)):
         context, summary = _genome_context(rows, body.organism)
         # Adds the full record of any gene the question names.
         matched = _search_genes(rows, question)
-        # A follow-up that names no gene falls back to the previous subject, then earlier turns.
+        # Falls back to the previous subject, then earlier turns.
         if not matched and body.subject_gene_id:
             keep = [r for r in rows if _col(r, "gene_id") == body.subject_gene_id]
             if keep:
@@ -525,7 +522,7 @@ def chat(body: ChatRequest, current_user: dict = Depends(get_current_user)):
                 # Capped so a large operon does not crowd out the question.
                 matched = matched + siblings[:24]
         if matched:
-            # The best match is labelled the subject and the rest context-only, so the model does not blend genes.
+            # Subject vs context-only split keeps the model from blending genes.
             primary, others = matched[0], matched[1:]
             context += (
                 "\n\nTHE GENE THIS QUESTION IS ABOUT — answer about THIS record "
@@ -579,7 +576,7 @@ def chat(body: ChatRequest, current_user: dict = Depends(get_current_user)):
             raise HTTPException(status_code=500, detail=f"Chat failed: {exc}")
         return {"answer": answer, "context_summary": summary, "model": ep["model"]}
 
-    # Streaming: the upstream connection opens before StreamingResponse so an unreachable backend is still a 503.
+    # Opens upstream before StreamingResponse so an unreachable backend is a 503.
     try:
         upstream = urllib.request.urlopen(req, timeout=300)
     except urllib.error.URLError as exc:

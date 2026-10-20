@@ -148,11 +148,9 @@ def _interactive_accept(current_version: str) -> dict:
     if not _ask_yes_no("\nDo you accept ALL of the acknowledgments above?"):
         raise LicenseError("You must accept the licensing terms to run MARGIE.")
 
-    # Who is accepting (for the record).
     name = _ask_required("\nYour name: ")
     email = _ask_required("Your email: ")
 
-    # Usage type.
     print("\nHow will you use MARGIE?")
     for i, u in enumerate(catalog.USAGE_TYPES, start=1):
         print(f"  {i}. {u['label']}")
@@ -164,7 +162,6 @@ def _interactive_accept(current_version: str) -> dict:
         else:
             print("  Please enter a valid number.")
 
-    # Which license-required tools has the user obtained themselves?
     to_ask = sorted(gated["blocked"])
     if usage_type == catalog.USAGE_COMMERCIAL:
         to_ask += sorted(gated["commercial_restricted"])
@@ -180,7 +177,6 @@ def _interactive_accept(current_version: str) -> dict:
             if _ask_yes_no(f"  Do you have a license for {label}?{suffix}"):
                 licensed.append(tid)
 
-    # Build + persist the record.
     accepted_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     timestamp_dir = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     import getpass
@@ -199,7 +195,7 @@ def _interactive_accept(current_version: str) -> dict:
         "accepted_acknowledgments": [item["id"] for item in catalog.ACK_ITEMS],
         "usage_type": usage_type,
         "licensed_tools": sorted(set(licensed)),
-        # Snapshot of the per-tool license details exactly as shown.
+        # Snapshot of the per-tool license details as shown.
         "license_catalog": cat,
         "source": "cli",
     }
@@ -210,7 +206,6 @@ def _interactive_accept(current_version: str) -> dict:
         terms_text=terms["text"], timestamp=timestamp_dir,
     )
     record["depot_record_path"] = depot_path
-    # Timestamped copy under the user's own data dir.
     local_archive = catalog.save_local_record(
         username=re_safe(name or os_user), record=record,
         terms_text=terms["text"], timestamp=timestamp_dir,

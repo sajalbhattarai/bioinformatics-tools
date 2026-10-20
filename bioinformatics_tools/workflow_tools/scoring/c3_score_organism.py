@@ -39,8 +39,7 @@ _NEUTRAL = 0.5
 
 
 # ---------------------------------------------------------------------------
-# Adjacency channel: Jeffreys posterior mean here (c3_score); c3_occ.rho_adj
-# gives the 95% lower bound (c3_lowerbound).
+# Adjacency channel: Jeffreys posterior mean; c3_occ.rho_adj gives the 95% lower bound.
 # ---------------------------------------------------------------------------
 def _enrich_w(key, na, nb, ref):
     """Returns the adjacency enrichment weight lift/(lift+lambda), as in c3_occ.finalize_reference."""
@@ -154,9 +153,7 @@ def is_informative(uninformative, clean_descriptor):
 
 
 # ---------------------------------------------------------------------------
-# Conflict signal: a mate's consensus partner (>= _CONFLICT_MIN_SUPPORT genomes)
-# differs from this descriptor, which has <= _CONFLICT_MINORITY of that support.
-# Reported as c3_descriptor_conflict; not applied to the score.
+# Conflict signal: a mate's consensus partner differs from this descriptor; reported only.
 _CONFLICT_MIN_SUPPORT = 3
 _CONFLICT_MINORITY = 0.34
 
@@ -253,8 +250,7 @@ def compute(genes, ref, pmap, allhyp_value=_NEUTRAL, c3_mode="adjacency"):
         n_inf = sum(1 for x in recs if x.inf_flag)
         all_hyp = (n_inf == 0)
 
-        # C3 is conservation only (UniOP probability enters later as C2); a
-        # never-seen adjacency is excluded rather than scored.
+        # C3 is conservation only (UniOP enters as C2); unseen adjacencies are excluded.
         terms_mean, terms_lb, w_terms = [], [], []
         n_zero = n_neutral = n_supported = n_nolink = 0
         for a, b in zip(recs[:-1], recs[1:]):
@@ -289,7 +285,7 @@ def compute(genes, ref, pmap, allhyp_value=_NEUTRAL, c3_mode="adjacency"):
             c3_lb = geomean(terms_lb)
             gclass = "operon_member"
 
-        # Operon ambiguity: fraction of adjacent pairs with a hypothetical member (review note only)
+        # Operon ambiguity: fraction of adjacent pairs with a hypothetical member.
         n_pairs_total = len(recs) - 1
         operon_ambiguity = (n_neutral / n_pairs_total) if n_pairs_total > 0 else 0.0
 
@@ -432,8 +428,7 @@ def main():
                             Path(args.operon_info), compute_hash=True)
     print(f"  genes: {len(genes)}")
 
-    # --- Leave-one-out: removes this genome from the reference when present,
-    # matched by content fingerprint, else by name.
+    # Leave-one-out: drops this genome from the reference by fingerprint, else by name.
     if args.leave_one_out:
         run_root = Path(args.genes_file).resolve().parents[2]
         fp = L.genome_fingerprint(genes["aa_hash"])

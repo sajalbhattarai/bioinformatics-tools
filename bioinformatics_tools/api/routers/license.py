@@ -86,7 +86,6 @@ def accept_terms(
     """Records the user's acceptance after checking the shown terms version and hash."""
     terms = licensing.load_terms()
 
-    # The accepted version must be the one currently served.
     if body.terms_version != terms["version"]:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -122,7 +121,7 @@ def accept_terms(
         result.get("depot_record_path"),
     )
     if result.get("depot_record_error"):
-        # Acceptance is still valid (DB row written); flag that the depot copy failed.
+        # Acceptance is still valid; only the depot copy failed.
         LOGGER.error(
             "License depot record write FAILED for user=%s: %s",
             current_user["username"], result["depot_record_error"],

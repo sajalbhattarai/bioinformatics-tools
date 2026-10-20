@@ -43,7 +43,7 @@ TIER = [
     ("NOT_APPLICABLE_NON_CODING", "#bdbdbd"),
 ]
 TCOL = dict(TIER)
-# Review-flag colour, separate from the tier colours; matches FLAG in gen_genome_viewer.py.
+# Review-flag colour; matches FLAG in gen_genome_viewer.py.
 REVIEW_COL = "#b32b1e"
 GAP_DEG = 4.0                 # angular gap between replicons/contigs
 GAP_BUDGET_DEG = 40.0         # total gap angle, so many-contig drafts still fit in 360 deg
@@ -63,8 +63,7 @@ GC_AMP = 0.13                        # GC deviation amplitude
 GC_SCALE = 0.09                      # GC deviation (frac) mapped to full amplitude
 
 
-# Gene-call columns carry the caller's prefix (RAST_start, PRODIGAL_start), so
-# they are matched by the part after the prefix.
+# Gene-call columns carry the caller's prefix, so they match on the suffix.
 GENE_CALLERS = ("rast", "rasttk", "prodigal")
 
 
@@ -108,7 +107,7 @@ def main():
     rows = [r for r in csv.DictReader(open(final, newline=""), delimiter="\t")]
     organism = col(rows[0], "organism_name")
 
-    # group genes by contig, record contig length = max end
+    # Groups genes by contig; contig length = max end.
     contigs = {}
     for r in rows:
         gid = col(r, "gene_id")
@@ -129,8 +128,7 @@ def main():
     gap_deg = min(GAP_DEG, GAP_BUDGET_DEG / n_gap)
     span_total = 360.0 - n_gap * gap_deg                        # angle available for sequence
 
-    # Span per contig proportional to length, with a floor capped at half the
-    # per-contig share so the arcs still close at 360.
+    # Spans scale with length; the floor is capped so the arcs still close at 360.
     min_span = min(MIN_SPAN_DEG, 0.5 * span_total / n_gap)
     floored = [c for c in order if span_total * contigs[c]["len"] / total_len < min_span]
     fixed = len(floored) * min_span
@@ -138,7 +136,7 @@ def main():
     rest = max(span_total - fixed, 0.0)
     spans = {c: (min_span if c in floored else rest * contigs[c]["len"] / big_len) for c in order}
 
-    # assign each contig a start angle going clockwise from START_DEG
+    # Assigns each contig a start angle clockwise from START_DEG.
     layout, cur = {}, START_DEG
     for c in order:
         cur -= gap_deg                                          # gap precedes each contig
@@ -154,7 +152,7 @@ def main():
     fig.patch.set_facecolor("white"); ax.set_facecolor("white")
     ax.set_xlim(-1.36, 1.36); ax.set_ylim(-1.42, 1.30); ax.set_aspect("equal"); ax.axis("off")
 
-    # genome-wide mean GC (length-weighted) for the deviation baseline
+    # Length-weighted genome-wide mean GC, the deviation baseline.
     tot_gc = tot_bp = 0.0
     for r in rows:
         seq = col(r, "RAST_na_sequence")
@@ -187,7 +185,7 @@ def main():
     if review_lines:
         ax.add_collection(LineCollection(review_lines, colors=REVIEW_COL, linewidths=0.7, alpha=0.9))
 
-    # GC ring: length-weighted mean GC in fixed-bp windows per contig -> smooth filled band
+    # GC ring: length-weighted mean GC in fixed-bp windows per contig.
     for c in order:
         L = contigs[c]["len"]
         nb = max(12, min(360, L // 6000))
@@ -225,7 +223,7 @@ def main():
         if spans[c] < TICK_MIN_SPAN_DEG:
             continue          # hairline arc
         step = 1_000_000 if L > 3_000_000 else 500_000
-        # Tick numerals only when replicons are captioned; draft contigs all restart at 0.
+        # Numerals only when replicons are captioned; draft contigs restart at 0.
         show_nums = L >= 250_000 and len(order) <= MAX_LABELLED
         p = 0
         while p <= L:
@@ -237,8 +235,7 @@ def main():
                 ax.text(xt, yt, f"{p/1e6:.1f}", ha="center", va="center", fontsize=7.5, color="#000000")
             p += step
 
-    # Replicon captions only for 2..MAX_LABELLED replicons; draft contigs are
-    # identified in FINAL_GENOME_VIEWER.html instead.
+    # Captions only for 2..MAX_LABELLED replicons; the HTML viewer names contigs.
     if 1 < len(order) <= MAX_LABELLED:
         placed = []                                            # (angle, radius) already used
         for c in order:
@@ -253,11 +250,11 @@ def main():
             ax.text(xl, yl, f"{c}\n{contigs[c]['len']/1e6:.2f} Mb", ha="center", va="center",
                     fontsize=fs, color="#000000", linespacing=0.95)
 
-    # centre block: stats only (the genome identifier / filename is the figure title)
+    # Centre block: stats only; the genome identifier is the figure title.
     n_flag = sum(1 for r in rows if col(r, "NEEDS_REVIEW?").strip().lower() == "yes")
     ax.text(0, 0.05, f"{total_len/1e6:.2f} Mb · {len(rows):,} genes", ha="center", va="center",
             fontsize=13, color="#000000")
-    # many pieces means a draft assembly, so they are called contigs
+    # Many pieces means a draft assembly, so they are called contigs.
     unit = "contig" if len(order) > MAX_LABELLED else "replicon"
     ax.text(0, -0.05, f"{len(order)} {unit}{'s' if len(order) > 1 else ''} · "
             f"{n_flag:,} flagged for review", ha="center", va="center", fontsize=11.5, color="#000000")

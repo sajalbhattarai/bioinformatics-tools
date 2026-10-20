@@ -25,9 +25,7 @@ from _shared import (
 
 csv.field_size_limit(10_000_000)
 
-# Per-tool row filters applied before merging. kegg_results.tsv holds every
-# KofamScan comparison, so only rows above threshold are kept; detect-columns.py
-# still sees the unfiltered table.
+# Row filters applied before merging; kegg keeps only above-threshold rows.
 TOOL_ROW_FILTERS: dict[str, tuple[str, str]] = {
     "kegg": ("KEGG_is_above_threshold", "true"),
 }
@@ -77,8 +75,7 @@ def merge_rows_for_gene(tool: ToolTable, fid: str) -> dict[str, str]:
         ordered_keyed.append((key, row))
 
     if len(ordered_keyed) == 1:
-        # Several raw rows sharing one key (e.g. GeneProp's per-step rows)
-        # are a single value, so they render bare.
+        # Rows sharing one key (e.g. GeneProp steps) form one value, rendered bare.
         return {col: ordered_keyed[0][1].get(col, "") for col in tool.tool_columns}
 
     key_cols = set(spec.columns) if spec.kind in ("column",) else set()
@@ -230,8 +227,7 @@ def build_merged_rows(
             rast_merged = merge_rows_for_gene(rast, fid)
             for col in rast.tool_columns:
                 row[col] = rast_merged.get(col, "")
-            # Identity columns are GLOBAL_COLUMNS, absent from tool_columns,
-            # so they come from rasttk's first raw row.
+            # Identity columns (GLOBAL_COLUMNS) come from rasttk's first raw row.
             rast_rows = rast.rows_by_feature.get(fid, [])
             if rast_rows:
                 r0 = rast_rows[0]

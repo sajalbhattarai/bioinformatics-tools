@@ -17,9 +17,7 @@ All subcommands write to the same .db file so all results live together.
 """
 
 # ---- Pipeline version ----
-# Bumped whenever a scoring/labeling/consolidation change makes DB rows stale;
-# rows at another version are reloaded, and is_already_processed() skips Stage 2
-# for genomes already at this version.
+# Bumped when a scoring/labeling/consolidation change makes DB rows stale.
 PIPELINE_VERSION = "1.7.2027"
 import argparse
 import csv
@@ -36,13 +34,11 @@ try:
 except ImportError:  # run as a script, or imported from margie_sb.smk
     from genome_identity import genome_hash, genome_hashes
 
-# consolidated-merged-all-columns.tsv has fields (sequences, joined command_used)
-# beyond csv's 131072-byte default limit.
+# Sequence and command_used fields exceed csv's 131072-byte default limit.
 csv.field_size_limit(10_000_000)
 
 
-# Hardened connections as in output_cache.py: retries on lock contention, which
-# InterPro's 18-way concurrent load needs.
+# Retries on lock contention (as output_cache.py); InterPro loads 18-way.
 
 def _get_connection(db_path: str, timeout: float = 120.0) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path, timeout=timeout)
@@ -93,8 +89,7 @@ CREATE TABLE IF NOT EXISTS run_log (
 """
 
 _RUN_LOG_NEW_COLS = [("fasta_hash", "TEXT"), ("pipeline_version", "TEXT"),
-                     # organism_name lets a reload clear rows written under an
-                     # earlier name for the same genome (see _organism_names_for_fasta).
+                     # Lets a reload clear rows written under an earlier name.
                      ("organism_name", "TEXT")]
 
 
@@ -107,9 +102,7 @@ def _compute_file_hash(file_path: str) -> str:
     return sha256.hexdigest()
 
 
-# A genome's identity in run_log is its sequence hash (genome_identity); older
-# records carry the file's byte hash, so lookups take both (fasta_hashes) and
-# new records use the first.
+# run_log identity is the sequence hash; older records carry the byte hash.
 compute_fasta_hash = genome_hash
 fasta_hashes = genome_hashes
 
@@ -472,8 +465,7 @@ def load_csv_to_db(csv_path: str, db_path: str, table_name: str,
     placeholders = ", ".join("?" for _ in headers)
     insert_sql = f"INSERT INTO {table_name} ({', '.join(quoted_headers)}) VALUES ({placeholders});"
 
-    # Casts values to the inferred types, falling back to a looser type or the
-    # raw string when a later row does not fit (e.g. quast's report.tsv).
+    # Casts to inferred types, falling back when a later row does not fit.
     def cast_row(row):
         result = []
         for val, typ in zip(row, col_types):
@@ -563,13 +555,12 @@ def main():
         sys.exit(1)
 
     label = args.source_tool if args.format == "gff" else args.table_name
-    # Looked up under the sequence hash and the older byte hash; recorded under the first.
+    # Looked up under both hashes, recorded under the sequence hash.
     hashes = fasta_hashes(args.fasta) if getattr(args, "fasta", None) else []
     fasta_hash = hashes[0] if hashes else None
     organism_name = getattr(args, "delete_organism", None)
 
-    # Skips a FASTA already loaded at PIPELINE_VERSION. --force reloads anyway;
-    # scoring uses it every run since its OCC reference grows (see load_scoring_to_db).
+    # Skips a FASTA already loaded at PIPELINE_VERSION unless --force.
     input_hash = _compute_file_hash(args.input_file)
     if not getattr(args, "force", False) and _already_loaded(args.db_path, input_hash, label, fasta_hash=hashes):
         print(f"Skipped {label}: already at pipeline version {PIPELINE_VERSION}")
@@ -578,7 +569,7 @@ def main():
             Path(args.token).write_text(f"0 rows loaded from {label} (already current)\n")
         return
 
-    # Clears this organism's existing rows first; current-version rows would have exited above.
+    # Clears this organism's existing rows first.
     if organism_name:
         deleted = _delete_stale_organism_rows(args.db_path, label, organism_name,
                                               fasta_hash=hashes)

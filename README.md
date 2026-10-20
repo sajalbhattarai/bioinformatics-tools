@@ -81,7 +81,7 @@ These are configured under `margie_sb.*` in `~/.config/bioinformatics-tools/conf
 | Config key | Purpose | Category | Required for a successful core run? | Auto-created if missing? |
 | --- | --- | --- | --- | --- |
 | `main_database` | Stores run metadata + loaded result tables | Pipeline-critical | **Yes** | **File is created by pipeline/sqlite if directory is writable** |
-| `margie_sb.operon_database.occ_reference_pkl` | Cross-genome OCC reference used by C3 scoring | Pipeline-critical | **Yes** | **Yes** (file initialized on first update) |
+| `margie_sb.operon_database.occ_reference_pkl` | Cross-genome OCC reference used by C3 scoring | Pipeline-critical | **Yes** | **Yes** (seeded on first update from the starter `scoring/reference/operon-db.pkl`, 29 genomes; see its manifest) |
 | `margie_sb.fingerprint_database.path` | Shared gene-fingerprint pool across genomes/runs | Pipeline-critical | **Yes** | **Yes** (file initialized on first update) |
 | `margie_sb.genome_pool.path` | Shared FASTA/FAA pool used by ANI/AAI/synteny staging | Pipeline-critical | **Yes** | **Directory created as needed** |
 | `margie_sb.scoring_results_historical.path` | Immutable per-run scoring history archive | Record-keeping | No (but strongly recommended) | **Directory created as needed** |

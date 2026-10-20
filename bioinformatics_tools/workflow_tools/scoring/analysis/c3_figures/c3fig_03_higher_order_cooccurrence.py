@@ -181,7 +181,7 @@ def make(genes, operons, outdir):
     L.boldticks(axB)
     axB.grid(False)
 
-    # ---- (c) THE TRUST-DECAY CURVE ----
+    # ---- (c) trust-decay curve ----
     kx = np.array(KS)
     axC.fill_between(kx, A["flagship_top10_min"], A["flagship_top10_max"],
                      color=L.BLUE, alpha=0.16,

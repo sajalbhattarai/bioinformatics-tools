@@ -14,7 +14,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Loads the project-root .env first; shell environment values take precedence.
+# Loads the project-root .env; shell environment values take precedence.
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(dotenv_path=_PROJECT_ROOT / '.env', override=False)
 load_dotenv(override=False)  # Must run before local imports that read env vars at import time
@@ -43,12 +43,12 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# CORS defaults to "*" for local development; BSP_CORS_ALLOWED_ORIGINS takes a
-# comma-separated list of origins for a public deployment.
+# CORS defaults to "*"; BSP_CORS_ALLOWED_ORIGINS takes a comma-separated list.
 _cors_origins_env = os.getenv('BSP_CORS_ALLOWED_ORIGINS', '*')
 _cors_origins = ["*"] if _cors_origins_env == '*' else [
     origin.strip() for origin in _cors_origins_env.split(',') if origin.strip()
 ]
+# Add CORS middleware (adjust origins for production)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
@@ -57,8 +57,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Records the node and pid this API runs on, so a launcher on any login node can
-# find and stop an abandoned server. Lives under $HOME, which login nodes share.
+# Records node and pid under $HOME so any login node can stop a stale server.
 API_ADVERT = Path(
     os.getenv('BSP_API_ADVERT',
               os.path.expanduser('~/.local/share/bsp/api-endpoint.json'))

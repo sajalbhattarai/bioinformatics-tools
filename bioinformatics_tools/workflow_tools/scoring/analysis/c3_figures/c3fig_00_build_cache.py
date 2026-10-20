@@ -47,7 +47,6 @@ def main():
     L.save_cache(pairs, cache / "adjacent_pairs.pkl")
     print(f"[build_cache] adjacent_pairs: {len(pairs):,} rows", file=sys.stderr)
 
-    # Writes a human-readable manifest of the cache sizes.
     with open(cache / "cache-manifest.txt", "w") as fh:
         fh.write(f"organisms\t{genes['organism'].nunique()}\n")
         fh.write(f"genes_total\t{len(genes)}\n")

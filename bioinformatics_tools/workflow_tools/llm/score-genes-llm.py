@@ -53,7 +53,7 @@ LOGGER = logging.getLogger("score_genes_llm")
 
 H = "=" * 100
 
-# ---- Calibration coefficients: mechanical C1/C2 pass through; LLM-assessed C3/C4/C5 replace the mechanical ones ----
+# ---- Calibration coefficients (mechanical C1/C2; LLM-assessed C3/C4/C5) ----
 _INTERCEPT = 0.111
 _W = {"c1": 0.741, "c2": 0.063, "c3": 0.111, "c4": 0.068, "c5": -0.056}
 _TOPOLOGY_PENALTY = -0.05   # applied when TOPOLOGY == "inconsistent"
@@ -524,7 +524,7 @@ def parse_report_fields(doc: str) -> dict:
     f["end"]    = lm.group(2) if lm else ""
     f["strand"] = lm.group(3) if lm else ""
 
-    # ── Only parse the main-gene section (before OPERON MEMBERS) ─────────────
+    # ── Main-gene section only (before OPERON MEMBERS) ───────────────────────
     om_m = re.search(r"^OPERON MEMBERS", doc, re.MULTILINE)
     pre  = doc[:om_m.start()] if om_m else doc
 
@@ -724,7 +724,6 @@ def main() -> None:
 
                 mech_score = mech_score_str
 
-                # LLM section appended to the report file.
                 llm_section = (
                     f"\n{H}\n"
                     f"LLM CONFIDENCE ASSESSMENT\n"

@@ -29,10 +29,7 @@ _IDENTITY_COLUMNS = [
 ]
 
 # ─── Uninformative hit category ──────────────────────────────────────────────
-# Descriptions matching these groups name no function and count 0 toward C1.
-# Kept identical to labeling/assign-canonical-label.py. Only an activity word
-# (…ase, transport, regulator, …) rescues an unknown-function phrase; location
-# words do not.
+# No-function descriptions count 0 toward C1; mirrors assign-canonical-label.py.
 
 # Group 1 — exact null / boilerplate tokens.
 _UNINFORMATIVE = frozenset({
@@ -73,7 +70,7 @@ _PROTEIN_DOMAINS_DUF_RE = re.compile(r'^\s*protein containing domains?\s+duf', r
 _HYPOTHETICAL_ANYWHERE_RE = re.compile(r'\bhypothetical\b', re.IGNORECASE)
 _PROTEIN_CONSERVED_IN_BACTERIA_RE = re.compile(r'\bprotein\s+conserved\s+in\s+bacteria\b', re.IGNORECASE)
 _INTEGRAL_MEMBRANE_PROTEIN_RE = re.compile(r'^\s*integral\s+membrane\s+protein\s*$', re.IGNORECASE)
-# Function-word guard for Groups 3 & 7 (activity words only, no location words).
+# Function-word guard for Groups 3 & 7 (activity words, not location words).
 _FUNCTION_SIGNAL_RE = re.compile(
     r'(ase\b|transport|permease|pump|export|import|channel|carrier|symport|antiport|'
     r'bind|synth|kinas|reductas|hydrolas|transferas|isomeras|ligas|lyas|mutas|oxidas|'

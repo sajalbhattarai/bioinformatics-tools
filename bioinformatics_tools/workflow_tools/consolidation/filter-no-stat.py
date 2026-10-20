@@ -43,7 +43,7 @@ def coalesce_phobius_topology(row: dict[str, str]) -> str:
     label_val = row.get("PHOBIUS_segment_label", "")
     if not type_val and not label_val:
         return ""
-    # Both columns share the same ordered segment keys, so entries pair by index.
+    # Both columns share ordered segment keys, so entries pair by index.
     type_parts = type_val.split("; ") if type_val else []
     label_parts = label_val.split("; ") if label_val else []
     combined: list[str] = []
@@ -60,8 +60,7 @@ def coalesce_phobius_topology(row: dict[str, str]) -> str:
 
 
 # ─── Column plan ────────────────────────────────────────────────────────────────
-# Entries are (output column, source column, kind); kind is "copy",
-# "dedup" (strip keys, dedup labels) or "phobius" (two-column coalesce).
+# (output column, source column, kind); kind is copy, dedup or phobius.
 
 IDENTITY_COLUMNS: list[tuple[str, str, str]] = [
     ("feature_id", "feature_id", "copy"),

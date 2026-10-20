@@ -63,7 +63,7 @@ _OUT_COLS = [
     "confidence_tier",
     "needs_review",
     "needs_review_reason",
-    # ── Copies of label and coordinates placed next to the confidence columns ─
+    # ── Label and coordinate copies ──────────────────────────────────
     "gene_id_copy",
     "gene_start_copy",
     "gene_end_copy",
@@ -137,7 +137,7 @@ def main() -> None:
             lab = lab_by_gene.get(fid, {})
             fp  = fp_by_gene.get(fid, {})
 
-            # The full fingerprint already reads "pattern hash: ... || label: ... || fingerprint: ...".
+            # Full fingerprint already includes pattern hash, label and fingerprint.
             fp_pattern = fp.get("fingerprint", "")
             if fp_pattern:
                 gene_fp = fp_pattern

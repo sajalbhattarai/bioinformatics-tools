@@ -22,7 +22,7 @@ _CATALOG_PATH = _HERE / "licensing_catalog.json"
 _DEFAULT_RECORDS_DIR = ""
 _VERSION_RE = re.compile(r"terms_version:\s*([0-9A-Za-z._-]+)")
 
-# Acknowledgments the user must check; ids are stored in each record, text mirrors terms.md.
+# Acknowledgments the user must check; ids go in each record, text mirrors terms.md.
 ACK_ITEMS = [
     {
         "id": "lawful_use",
@@ -51,7 +51,7 @@ ACK_ITEMS = [
 ]
 _REQUIRED_ACK_IDS = {item["id"] for item in ACK_ITEMS}
 
-# Usage types; commercial use gates the commercial_restricted tools. Ids are stored in each record.
+# Usage types; commercial use gates the commercial_restricted tools.
 USAGE_ACADEMIC = "academic"
 USAGE_COMMERCIAL = "commercial"
 USAGE_TYPES = [

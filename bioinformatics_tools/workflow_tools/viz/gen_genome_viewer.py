@@ -22,9 +22,7 @@ csv.field_size_limit(10 ** 8)
 TIERS = ["highest", "high", "medium", "fair", "low"]          # index 0..4; -1 = non-coding
 TIER_IDX = {t: i for i, t in enumerate(TIERS)}
 
-# Evidence trail entries (display name, group, candidate columns) read from the
-# consolidated per-tool matrix; decision databases first, then domain
-# signatures, then specialised callers.
+# Evidence trail entries (name, group, candidate columns), decision databases first.
 EVIDENCE = [
     ("RAST", "decision", ["RAST_description"]),
     ("COG", "decision", ["COG_description"]),
@@ -56,7 +54,7 @@ EV_NAMES = [e[0] for e in EVIDENCE]
 EV_GROUPS = [e[1] for e in EVIDENCE]
 _UNINF = re.compile(r"^(hypothetical|uncharacter|unknown|putative uncharacter|domain of unknown"
                     r"|conserved (hypothetical|protein)|duf\d)", re.I)
-# alignment-based tools carry a % identity worth showing on the evidence trail
+# Alignment-based tools carry a % identity shown on the evidence trail.
 IDENTITY_COL = {"UniProt": "UNIPROT_percent_identity", "COG": "COG_identity",
                 "MEROPS": "MEROPS_percent_identity", "TCDB": "TCDB_percent_identity"}
 
@@ -72,8 +70,7 @@ def fmt_pid(v):
     return f"{round(x)}% id"
 
 
-# Gene-call columns carry the caller's prefix (RAST_start, PRODIGAL_start), so
-# they are matched by the part after the prefix.
+# Gene-call columns carry the caller's prefix (RAST_start), so the suffix is matched.
 GENE_CALLERS = ("rast", "rasttk", "prodigal")
 
 
@@ -113,8 +110,7 @@ def num(v, nd=2):
         return None
 
 
-# Locations of the consolidated matrix relative to the FINAL table's directory,
-# before and after reorganize_outputs.py; --consolidated overrides them.
+# Consolidated matrix locations relative to the FINAL table; --consolidated overrides.
 _CONS_NAME = "consolidated-merged-all-columns.tsv"
 _CONS_CANDIDATES = (
     Path("per-tool-phased-output") / "consolidation" / _CONS_NAME,  # reorganized
@@ -187,7 +183,7 @@ def main():
         raise SystemExit(f"no rows in {final}")
     organism = col(rows[0], "organism_name")
 
-    # consolidated per-tool matrix (for the evidence trail); join by feature_id
+    # Consolidated per-tool matrix for the evidence trail, keyed by feature_id.
     cons_path = find_consolidated(final, explicit_cons)
     cons = {}
     if cons_path is not None:
@@ -243,7 +239,7 @@ def main():
         return {"pid": pidv, "en": en, "desc": desc[:80],
                 "inf": bool(desc) and not _UNINF.match(clean_ev(desc))}
 
-    # contig lengths (max end), largest first
+    # Contig lengths (max end), largest first.
     clen = {}
     for r in rows:
         gid = col(r, "gene_id")
@@ -261,8 +257,7 @@ def main():
 
     fps = load_fingerprints(final)
     genes = []
-    # Longer per-gene report text in XF order, gzipped into the page and unpacked
-    # only when a report is downloaded.
+    # Per-gene report text in XF order, gzipped into the page, unpacked on download.
     XF = ["gene_id", "FEATURE_TYPE", "ENVELOPE", "ENVELOPE_reason", "best_consensus_product_descriptor_source_hierarchy_order",
           "best_consensus_product_descriptor_source_audit_trail", "specialized_database_hits", "localization_and_topology_hits",
           "C1_reasoning", "C2_score_formula", "C2_score_reasoning", "C3_score_formula", "C3_score_reasoning",
@@ -316,7 +311,6 @@ def main():
 
     n_op = len({g["op"] for g in genes if g["op"]})
     n_flag = sum(g["rv"] for g in genes)
-    # Display label is the genome identifier as given.
     short = organism
 
     data = {
@@ -331,7 +325,7 @@ def main():
     html = TEMPLATE.replace("/*__DATA__*/", json.dumps(data, separators=(",", ":"))).replace("__XTRA__", packed)
 
     if "--artifact" in sys.argv:
-        # Artifact mode emits only title, style and body content; the host supplies the document shell.
+        # Artifact mode emits title, style and body only; the host supplies the shell.
         style = re.search(r"<style>.*?</style>", html, re.S).group(0)
         inner = re.search(r"<body>(.*)</body>", html, re.S).group(1)
         html = (f"<title>{short} genome — MARGIE confidence viewer</title>\n"

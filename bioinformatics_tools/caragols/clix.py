@@ -184,8 +184,7 @@ class App:
         """
         LOGGER.debug('Cognizing %s', comargs)
 
-        # Prefers the most specific match (highest gravity), so do_margie_sb
-        # ['margie', 'sb'] is not shadowed by do_margie ['margie'].
+        # Highest gravity wins so do_margie_sb is not shadowed by do_margie.
         candidates = [d for d in self.dispatches if comargs[:d.gravity] == d.tokens]
         matched: Dispatch | None = max(candidates, key=lambda d: d.gravity) if candidates else None
 

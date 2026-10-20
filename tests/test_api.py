@@ -210,8 +210,7 @@ class TestJobStore:
 
         job_store.finalize("j6", status="completed", phase="Done")
 
-        # add_slurm_job checkpoints provenance as it goes, so the last write is
-        # finalize's full snapshot.
+        # The last write is finalize's full snapshot, not a checkpoint.
         _, kwargs = mock_history.record_job_updated.call_args
         assert kwargs["status"] == "completed"
         assert kwargs["phase"] == "Done"
@@ -259,7 +258,7 @@ class TestJobStore:
         for i in range(50):
             job_store.add_slurm_job("j-throttle", slurm_id=str(9000 + i), rule="run_scoring")
 
-        # One immediate write, then the throttle holds the rest until the interval elapses.
+        # One immediate write; the throttle holds the rest for the interval.
         assert mock_history.record_job_updated.call_count == 1
 
         job_store.checkpoint("j-throttle", force=True)
@@ -326,7 +325,13 @@ class TestJobStatusEndpoint:
         assert body["job_id"] == "test-job-1"
         assert body["status"] == "pending"
 
-    def test_job_status_404(self, authed_client):
+    @patch("bioinformatics_tools.api.routers.ssh.job_history_client")
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_sftp")
+    @patch("bioinformatics_tools.api.routers.ssh._build_connection")
+    def test_job_status_404(self, mock_build_conn, mock_sftp, mock_history, authed_client):
+        """A job unknown to both the live store and the persisted history is a 404."""
+        mock_sftp.read_remote_yaml.return_value = {"main_database": "~/my-db.db"}
+        mock_history.get_job.return_value = None
         resp = authed_client.get("/v1/ssh/job_status/nonexistent")
         assert resp.status_code == 404
 
@@ -426,8 +431,35 @@ class TestJobStatusHistoryReconciliation:
 
         resp = authed_client.get("/v1/ssh/job_status/resumed-job")
         body = resp.json()
-        assert body["status"] == "running"  # status field itself untouched
         assert body["still_active"] is False
+        # Past the submit grace window with nothing in squeue, the stale
+        # 'running' row is reported, and persisted, as interrupted.
+        assert body["status"] == "cancelled"
+        assert body["phase"] == "Interrupted (no active jobs)"
+        mock_history.record_job_updated.assert_called_once()
+        assert mock_history.record_job_updated.call_args.kwargs == {
+            "status": "cancelled", "phase": "Interrupted (no active jobs)",
+        }
+
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_slurm")
+    @patch("bioinformatics_tools.api.routers.ssh.job_history_client")
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_sftp")
+    @patch("bioinformatics_tools.api.routers.ssh._build_connection")
+    def test_fresh_row_with_no_squeue_match_stays_running_within_submit_grace(
+        self, mock_build_conn, mock_sftp, mock_history, mock_slurm, authed_client,
+    ):
+        """A row too young to have SLURM jobs yet is still being submitted, not interrupted."""
+        from datetime import datetime, timezone
+        mock_sftp.read_remote_yaml.return_value = {"main_database": "~/my-db.db"}
+        row = {**self._history_row(), "created_at": datetime.now(timezone.utc).isoformat()}
+        mock_history.get_job.return_value = row
+        self._unreplayable(mock_slurm)
+        mock_slurm.find_active_jobs_in_workdir.return_value = []
+
+        body = authed_client.get("/v1/ssh/job_status/resumed-job").json()
+        assert body["status"] == "running"
+        assert body["still_active"] is True
+        mock_history.record_job_updated.assert_not_called()
 
     @patch("bioinformatics_tools.api.routers.ssh.ssh_slurm")
     @patch("bioinformatics_tools.api.routers.ssh.job_history_client")
@@ -690,16 +722,26 @@ class TestFileEndpointsHistoryFallback:
 class TestSSHEndpointsMocked:
     """Endpoints that call external SSH/SLURM services — all mocked."""
 
+    @patch("bioinformatics_tools.api.licensing.has_accepted_current_terms", return_value=True)
+    @patch("bioinformatics_tools.api.routers.ssh.tool_assets")
+    @patch("bioinformatics_tools.api.routers.ssh.user_stores")
     @patch("bioinformatics_tools.api.routers.ssh._build_connection")
     @patch("bioinformatics_tools.api.routers.ssh.job_runner")
     @patch("bioinformatics_tools.api.routers.ssh.ssh_sftp")
-    def test_run_margie(self, mock_sftp, mock_runner, mock_build_conn, authed_client):
+    def test_run_margie(self, mock_sftp, mock_runner, mock_build_conn, mock_stores, mock_assets,
+                        mock_accepted, authed_client):
         # Mock the config file read and genome file check
         mock_sftp.read_remote_yaml.return_value = {
             "main_database": "~/my-db.db",
             "compute": {"cluster_default": {"account": "test-account"}}
         }
         mock_sftp.check_remote_file.return_value = None  # No exception = file exists
+        # Pre-flight gates for margie_sb: licence accepted (above), the user's
+        # databases already on scratch, and no missing containers/databases.
+        mock_stores.apply_finished.return_value = False
+        mock_stores.status.return_value = {"ready": True, "op": {}}
+        mock_stores.point_config.return_value = False
+        mock_assets.missing_for_run.return_value = []
 
         resp = authed_client.post(
             "/v1/ssh/run_workflow",
@@ -753,10 +795,10 @@ class TestJobsHistoryPagination:
     @patch("bioinformatics_tools.api.routers.ssh._build_connection")
     def test_response_includes_pagination_fields(self, mock_build_conn, mock_sftp, mock_history, authed_client):
         mock_sftp.read_remote_yaml.return_value = {"main_database": "~/my-db.db"}
-        mock_history.list_jobs.return_value = [
-            {"job_id": "j1", "status": "completed", "workflow": "margie_sb", "created_at": "t1"},
-        ]
-        mock_history.count_jobs.return_value = 45
+        mock_history.list_jobs_and_count.return_value = (
+            [{"job_id": "j1", "status": "completed", "workflow": "margie_sb", "created_at": "t1"}],
+            45,
+        )
 
         resp = authed_client.get("/v1/ssh/jobs", params={"page": 2, "page_size": 20})
         assert resp.status_code == 200
@@ -772,12 +814,11 @@ class TestJobsHistoryPagination:
     @patch("bioinformatics_tools.api.routers.ssh._build_connection")
     def test_offset_computed_from_page(self, mock_build_conn, mock_sftp, mock_history, authed_client):
         mock_sftp.read_remote_yaml.return_value = {"main_database": "~/my-db.db"}
-        mock_history.list_jobs.return_value = []
-        mock_history.count_jobs.return_value = 0
+        mock_history.list_jobs_and_count.return_value = ([], 0)
 
         authed_client.get("/v1/ssh/jobs", params={"page": 3, "page_size": 20})
 
-        _, kwargs = mock_history.list_jobs.call_args
+        _, kwargs = mock_history.list_jobs_and_count.call_args
         assert kwargs["offset"] == 40  # (3 - 1) * 20
         assert kwargs["limit"] == 20
 
@@ -804,6 +845,12 @@ class TestResumeAndRestartJob:
     """/v1/ssh/resume_job and /v1/ssh/restart_job -- relaunch a prior job,
     with or without copying its work_dir forward."""
 
+    #: A relaunch needs a SLURM account as well as main_database.
+    USER_CONFIG = {
+        "main_database": "~/my-db.db",
+        "compute": {"cluster_default": {"account": "test-account"}},
+    }
+
     def _create_job(self, status="failed", work_dir="/remote/work/2026-06-21-1118", selected_tools=None):
         jid = str(uuid.uuid4())
         job_store.create(
@@ -813,18 +860,39 @@ class TestResumeAndRestartJob:
         job_store.update(jid, status=status, work_dir=work_dir)
         return jid
 
+    @staticmethod
+    def _quiet_remote_shell(mock_build_conn, exit_code: int = 0, output: bytes = b""):
+        """Makes the mocked connection answer every exec_command like a quiet shell.
+
+        Resolving the per-user main_database (_main_db_for -> _run_remote_check)
+        unpacks (stdin, stdout, stderr), reads stdout.channel.recv_exit_status()
+        and both streams: no ownership marker, so the shared template is
+        promoted to a user copy."""
+        stdout, stderr = MagicMock(), MagicMock()
+        stdout.channel.recv_exit_status.return_value = exit_code
+        stdout.read.return_value = output
+        stderr.read.return_value = b""
+        mock_build_conn.return_value.connect.return_value.exec_command.return_value = (
+            MagicMock(), stdout, stderr,
+        )
+
     @patch("bioinformatics_tools.api.routers.ssh._build_connection")
     @patch("bioinformatics_tools.api.routers.ssh.job_runner")
     @patch("bioinformatics_tools.api.routers.ssh.ssh_sftp")
     def test_resume_job_copies_and_relaunches(self, mock_sftp, mock_runner, mock_build_conn, authed_client):
         jid = self._create_job(status="failed", selected_tools="quast,gtdbtk")
-        mock_sftp.read_remote_yaml.return_value = {"main_database": "~/my-db.db"}
+        mock_sftp.read_remote_yaml.return_value = dict(self.USER_CONFIG)
+        self._quiet_remote_shell(mock_build_conn)
 
         resp = authed_client.post(f"/v1/ssh/resume_job/{jid}")
         assert resp.status_code == 200
         body = resp.json()
         assert body["success"] is True
         assert body["job_id"] != jid
+
+        # The shared template DB was promoted to a per-user copy and persisted to the config.
+        persisted = mock_sftp.write_remote_yaml.call_args[0][1]
+        assert persisted["main_database"] == "/home/testuser/testuser-my-db-v1.db"
 
         mock_sftp.copy_remote_directory.assert_called_once()
         copy_args = mock_sftp.copy_remote_directory.call_args[0]
@@ -856,7 +924,8 @@ class TestResumeAndRestartJob:
     ):
         """Checks that a stale 'running' job is resumable once confirmed inactive."""
         jid = self._create_job(status="running")
-        mock_sftp.read_remote_yaml.return_value = {"main_database": "~/my-db.db"}
+        mock_sftp.read_remote_yaml.return_value = dict(self.USER_CONFIG)
+        self._quiet_remote_shell(mock_build_conn)
         mock_slurm.find_active_jobs_in_workdir.return_value = []
 
         resp = authed_client.post(f"/v1/ssh/resume_job/{jid}")
@@ -883,7 +952,8 @@ class TestResumeAndRestartJob:
         self, mock_sftp, mock_runner, mock_build_conn, authed_client,
     ):
         jid = self._create_job(status="completed", selected_tools="quast")
-        mock_sftp.read_remote_yaml.return_value = {"main_database": "~/my-db.db"}
+        mock_sftp.read_remote_yaml.return_value = dict(self.USER_CONFIG)
+        self._quiet_remote_shell(mock_build_conn)
 
         resp = authed_client.post(f"/v1/ssh/restart_job/{jid}")
         assert resp.status_code == 200
@@ -1019,7 +1089,7 @@ class TestViewFile:
         assert mock_sftp.read_remote_file_page.call_args.kwargs["known_total_lines"] == 5
 
     def test_view_file_page_size_bounds(self, authed_client):
-        # Query(..., le=500) rejects this before the handler or any SSH call runs.
+        # Query(..., le=500) rejects this before the handler or SSH runs.
         resp = authed_client.get(
             "/v1/ssh/view_file/any-job-id",
             params={"path": "results.tsv", "page_size": 99999},
@@ -1049,11 +1119,18 @@ class TestAuth:
     }
 
     def _mock_ssh_conn(self, home_dir: str = "/home/authtest"):
-        """Return a MagicMock SSHConnection whose connect() returns a stub SSH client."""
+        """Return a MagicMock SSHConnection whose connect() returns a stub SSH client.
+
+        Every command prints home_dir and exits 0: register reads $HOME, then
+        ensure_remote_dane_wf() provisions the workflow environment over the
+        same connection and checks the exit status and both streams."""
         mock_stdout = MagicMock()
         mock_stdout.read.return_value = home_dir.encode() + b"\n"
+        mock_stdout.channel.recv_exit_status.return_value = 0
+        mock_stderr = MagicMock()
+        mock_stderr.read.return_value = b""
         mock_ssh = MagicMock()
-        mock_ssh.exec_command.return_value = (None, mock_stdout, None)
+        mock_ssh.exec_command.return_value = (MagicMock(), mock_stdout, mock_stderr)
         mock_conn = MagicMock()
         mock_conn.connect.return_value = mock_ssh
         return mock_conn

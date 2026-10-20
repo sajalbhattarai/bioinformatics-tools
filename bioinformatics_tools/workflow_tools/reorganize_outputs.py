@@ -18,8 +18,7 @@ from pathlib import Path
 
 FINAL_TSV = "FINAL_ANNOTATION_WITH_CONFIDENCE.tsv"
 FINAL_XLSX = "FINAL_ANNOTATION_WITH_CONFIDENCE.xlsx"
-# Written at the organism top level by rule run_genome_viewer_one_genome; kept
-# there because the GUI looks for it there.
+# Left at the organism top level because the GUI looks for it there.
 GENOME_VIEWER = "FINAL_GENOME_VIEWER.html"
 PTP = "per-tool-phased-output"
 # Run-level folders that are never organisms
@@ -51,7 +50,7 @@ def reorganize_one(org_dir, figures_dirname: str = "diagrams",
         final_src = final_scoring if final_scoring.is_file() else (
             final_top if final_top.is_file() else None)
 
-        # 1. colored Excel next to the FINAL tsv (skip if already there)
+        # 1. Builds the colored Excel next to the FINAL tsv (skipped if present)
         if excel_script and final_src is not None:
             xlsx_dst = final_src.parent / FINAL_XLSX
             if xlsx_dst.is_file():
@@ -68,20 +67,20 @@ def reorganize_one(org_dir, figures_dirname: str = "diagrams",
                     result["actions"].append(
                         f"excel-gen-failed: {(proc.stderr or '').strip()[:200]}")
 
-        # 2. scoring/figures -> <figures-dirname>/ at the organism top level
+        # 2. Moves scoring/figures to <figures-dirname>/ at the organism top level
         figsrc = scoring / "figures"
         if figsrc.is_dir() and not diag.exists():
             shutil.move(str(figsrc), str(diag))
             result["actions"].append(f"figures -> {figures_dirname}/")
 
-        # 3. promote FINAL tsv + xlsx to the top level
+        # 3. Promotes FINAL tsv + xlsx to the top level
         for name in (FINAL_TSV, FINAL_XLSX):
             src = scoring / name
             if src.is_file() and not (org / name).exists():
                 shutil.move(str(src), str(org / name))
                 result["actions"].append(f"promote {name}")
 
-        # 4. everything else -> per-tool-phased-output/
+        # 4. Moves everything else to per-tool-phased-output/
         keep = {figures_dirname, PTP, FINAL_TSV, FINAL_XLSX, GENOME_VIEWER}
         ptp.mkdir(exist_ok=True)
         for entry in list(org.iterdir()):

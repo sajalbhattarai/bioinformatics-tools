@@ -90,9 +90,7 @@ def is_uninformative(val: str) -> bool:
     return False
 
 
-# ─── Descriptor cleaning ─────────────────────────────────────────────────────
-# Leading "SOURCE: " tags are stripped so the same function from different
-# sources groups together.
+# ─── Descriptor cleaning: SOURCE: tags stripped so sources group together ───
 _SOURCE_PREFIX_RE = re.compile(
     r'^(?:'
     r'JCVI|NCBIFAM|NCBI Protein Cluster \(PRK\)|PRK|TIGR|TIGRFAM|PGAP|HAMAP|'
@@ -108,11 +106,11 @@ def clean_descriptor(desc: str) -> str:
     d = (desc or "").strip()
     if not d:
         return ""
-    # "5S rRNA ## 5S ribosomal RNA" -> keep the more descriptive right side
+    # "5S rRNA ## 5S ribosomal RNA" -> keeps the more descriptive right side.
     if " ## " in d:
         left, right = d.split(" ## ", 1)
         d = right.strip() if right.strip() else left.strip()
-    # strips leading SOURCE: tags until none remain (e.g. "JCVI: PRK: x")
+    # Strips leading SOURCE: tags until none remain (e.g. "JCVI: PRK: x").
     prev = None
     while prev != d:
         prev = d

@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 #
-# Runs the API on 127.0.0.1:8000 with this computer as its cluster (after ./setup.sh)
-# and creates a dev account that reaches it over SSH with the setup key.
+# Runs the API locally with this computer as its cluster and creates a dev account.
 #
 #   ./start.sh          start (or reuse a running API) and print the sign-in
 #   ./start.sh --stop   stop the API it started
@@ -17,7 +16,7 @@ LOG="$STATE/api.log"
 ACCOUNT="$STATE/account"          # username and password of the dev account
 mkdir -p "$STATE"; chmod 700 "$STATE"
 
-# Finds the API by its port, since $! from a backgrounded subshell is not the server's pid.
+# Finds the API by port; $! of a backgrounded subshell is not the server's pid.
 api_pid() {
     local p
     p="$(lsof -nP -iTCP:8000 -sTCP:LISTEN -t 2>/dev/null | head -1)"
@@ -40,8 +39,7 @@ fi
 [[ -f "$KEY" ]] || { echo "Run ./setup.sh first (no $KEY)." >&2; exit 1; }
 [[ -f "$REPO/.env" ]] || { echo "No $REPO/.env: copy .env.example and set BSP_SECRET_KEY and BSP_ENCRYPTION_KEY." >&2; exit 1; }
 
-# 1. The API on localhost; BSP_SKIP_DANE_WF_SYNC keeps submissions from resetting
-#    ~/bioinformatics-tools (this checkout) to origin.
+# 1. The API; BSP_SKIP_DANE_WF_SYNC stops submissions resetting this checkout to origin.
 if curl -sf "$API/health" >/dev/null 2>&1; then
     echo "API already running at $API"
 else

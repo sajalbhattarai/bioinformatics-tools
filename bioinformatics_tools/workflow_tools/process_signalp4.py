@@ -14,7 +14,7 @@ Usage:
 import argparse
 import csv
 
-# Data columns after the name column (the FASTA id up to the first whitespace).
+# Data columns after the name column (FASTA id up to the first whitespace).
 _DATA_COLUMNS = (
     "signalp4_cmax", "signalp4_cmax_pos", "signalp4_ymax", "signalp4_ymax_pos",
     "signalp4_smax", "signalp4_smax_pos", "signalp4_smean", "signalp4_d",

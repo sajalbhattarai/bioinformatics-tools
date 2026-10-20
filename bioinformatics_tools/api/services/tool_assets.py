@@ -26,10 +26,10 @@ DB_SUB = 'reference-databases'
 # Heavy tools run only when chosen, so their absence never blocks other runs.
 OPTIONAL = {'gtdbtk', 'llm'}
 
-# Gene caller for genomes without a domain or genetic code when GTDB-Tk is off (workflow_helpers.genome_calls).
+# Gene caller when GTDB-Tk is off and a genome lacks a domain or genetic code.
 GENE_CALLER = {'key': 'prodigal', 'label': 'Prodigal', 'sif': 'prodigal.sif'}
 
-# margie-build locations tried after margie_sb.build_repo: the lab's depot copy, then the user's clone.
+# Tried after margie_sb.build_repo: the lab's depot copy, then the user's clone.
 BUILD_FOLDER = f'{user_stores.DEPOT}/margie-build'
 CLONE_NAME = 'margie-build'
 # Clone source when neither location has margie-build.
@@ -40,7 +40,7 @@ BUILDABLE_IMAGES = {'quast', 'gtdbtk', 'prodigal', 'rasttk', 'cog', 'dbcan', 'eg
                     'deepsig', 'psortb'}
 BUILDABLE_DATABASES = {'cog', 'dbcan', 'eggnog', 'geneprop', 'gtdbtk', 'interpro', 'kegg', 'merops', 'pfam', 'pgap',
                        'rasttk', 'tcdb', 'tigrfam', 'tmbed', 'uniprot'}
-# build.sh refuses these without --accept-<tool>-licence and this statement, word for word.
+# build.sh refuses these without --accept-<tool>-licence and this exact statement.
 GATED = {'interpro', 'merops', 'tcdb', 'tmbed', 'phobius'}
 LICENCE_STATEMENT = ('I accept that I am using these tools for non-commercial purposes '
                      'and have received all permissions from the upstream developers.')
@@ -94,7 +94,7 @@ def inventory(cfg: dict, home: str) -> list[dict]:
     return rows
 
 
-# Shell helpers for one cluster round-trip: has() prints ok/missing/unknown, writable() prints w/r.
+# Probe helpers: has() prints ok/missing/unknown, writable() prints w/r.
 _PROBE = r'''
 near() { d="$1"; while [ ! -e "$d" ] && [ "$d" != / ]; do d=$(dirname "$d"); done; printf '%s' "$d"; }
 has() {
@@ -303,7 +303,7 @@ def plan(conn, cfg: dict, home: str, include_builds: bool = True, accept: set[st
         items.append({**_item(r), 'dst': f"{sif_target}/{r['name']}"})
     ready_images = {r['tool'] for r in rows if r['kind'] == 'image' and r['status'] == 'ok'} | {r['tool'] for r in images}
 
-    # Databases go to the chosen folder, the configured path, or scratch; db.<tool> follows them.
+    # Databases go to the chosen folder, configured path or scratch; db.<tool> follows.
     db_home = db_choice or f'{root}/{DB_SUB}'
     for r in todo:
         if r['kind'] != 'database' or not usable(r):

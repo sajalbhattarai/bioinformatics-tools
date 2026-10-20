@@ -24,23 +24,17 @@ import paramiko
 
 LOGGER = logging.getLogger(__name__)
 
-# The repository margie-frontend's hpc-connect.sh clones for the API
-# (BACKEND_REPO_URL), so the workflow checkout and the API share one codebase.
+# Repo that hpc-connect.sh clones, so the API and workflow share one codebase.
 _DANE_WF_REPO_URL = 'https://github.com/sajalbhattarai/margie-backend.git'
-# Branch that margie_sb remote checkouts track (override with BSP_MARGIE_SB_REF).
-# The margie workflow is never auto-synced, so this applies only to margie_sb.
+# Branch margie_sb checkouts track (BSP_MARGIE_SB_REF); margie is never synced.
 _MARGIE_SB_REF = os.getenv('BSP_MARGIE_SB_REF', 'for-website-deployment')
 
-# ---- Connection pool ----
-# Clients are reused per (host, username, key) to avoid a full SSH handshake per
-# request; a dead client is discarded and replaced on the next request.
+# ---- Connection pool: clients reused per (host, username, key) ----
 _POOL: dict = {}
 _POOL_LOCK = threading.Lock()
-# A pooled client is kept for as long as it works (an unclosed paramiko
-# transport keeps its thread alive); keepalives let a dropped one be replaced.
+# Keepalives detect dropped clients; a working one is kept indefinitely.
 _KEEPALIVE_SECONDS = 30
-# Connections per user, used in turn: sshd allows 10 sessions per connection
-# (MaxSessions), which one busy page can exceed.
+# Connections per user, used in turn; one busy page can exceed sshd MaxSessions.
 _POOL_SIZE = 4
 
 
@@ -53,7 +47,7 @@ def _alive(client) -> bool:
 
 
 def _pool_key(host, username, pkey, key_filename):
-    # Keys are identified by fingerprint, so the key material is not held in the dict key.
+    # Keyed by fingerprint so the key material is not held in the dict key.
     fp = None
     if pkey is not None:
         try:
@@ -121,7 +115,7 @@ class SSHConnection:
             connect_kwargs['pkey'] = self.pkey
         elif self.key_filename:
             connect_kwargs['key_filename'] = self.key_filename
-        # With neither set, paramiko falls back to the system SSH agent.
+        # If neither is set, paramiko falls back to the system SSH agent (CLI default)
         ssh.connect(self.host, **connect_kwargs)
         transport = ssh.get_transport()
         if transport is not None:
@@ -151,8 +145,7 @@ class SSHConnection:
             slot = entry['next']
             entry['next'] = (slot + 1) % _POOL_SIZE
             client = entry['slots'][slot]
-        # is_active() alone is not enough: a closed client has _transport None,
-        # so anything not verifiably usable is replaced.
+        # A closed client has _transport None, so is_active() alone is not enough.
         if client is not None and _alive(client):
             LOGGER.debug('Reusing pooled SSH connection %d to %s', slot, self.host)
             return client

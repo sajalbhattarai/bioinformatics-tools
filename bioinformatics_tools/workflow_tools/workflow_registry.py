@@ -13,9 +13,7 @@ from bioinformatics_tools.workflow_tools.workflow_helpers import WORKFLOW_PATH_D
 
 LOGGER = logging.getLogger(__name__)
 
-# Root for the per-user writable stores a run appends to (OCC operon reference,
-# fingerprint databases, genome pool, scoring archive). {user} is filled in by
-# resolve_user_paths(); read-only reference data stays shared.
+# Root of each user's writable stores; {user} is filled by resolve_user_paths().
 MARGIE_DEPOT_ROOT = os.environ.get('MARGIE_SHARED_ROOT', '').rstrip('/')
 MARGIE_USER_ROOT = f'{MARGIE_DEPOT_ROOT}/users/{{user}}'
 
@@ -79,9 +77,7 @@ REQUIRED_SYSTEM_PARAMS = [
         'type': 'int'
     },
     {
-        # Walltime of the driver job that runs Snakemake and queues every rule
-        # job (default_runtime caps those). Adjustable so it can be lowered to
-        # fit before a maintenance reservation, which blocks longer requests.
+        # Driver walltime; lowered to fit before a maintenance reservation.
         'param': 'compute.cluster_default.driver_walltime',
         'default': '3-00:00:00',
         'description': ('SLURM walltime for the workflow driver job (D-HH:MM:SS or HH:MM:SS). '
@@ -134,8 +130,7 @@ def workflow_path_params(wf_id: str, include_sif: bool = True, include_db_root: 
     return params
 
 
-# 'database': the tool reads a reference database from db.<key>, else
-# <margie_sb.db_root>/<key> (margie_sb.smk's db_path calls).
+# 'database': reads a reference database from db.<key>, else <db_root>/<key>.
 MARGIE_SB_PHASED_TOOLS = [
     {'key': 'quast', 'label': 'QUAST', 'phase': 1, 'sif': 'quast.sif', 'purpose': 'Assembly quality metrics'},
     {'key': 'gtdbtk', 'label': 'GTDB-Tk', 'phase': 2, 'sif': 'gtdbtk.sif', 'purpose': 'Taxonomic assignment', 'database': True},
@@ -155,8 +150,7 @@ MARGIE_SB_PHASED_TOOLS = [
     {'key': 'operon', 'label': 'Operon', 'phase': 5, 'sif': 'operon.sif', 'purpose': 'Operon prediction'},
     {'key': 'phobius', 'label': 'Phobius', 'phase': 6, 'sif': 'phobius.sif', 'purpose': 'Signal peptide and topology prediction'},
     {'key': 'tmbed', 'label': 'TMbed', 'phase': 6, 'sif': 'tmbed.sif', 'purpose': 'Transmembrane topology prediction', 'database': True},
-    # SignalP 4 and 6 run from RCAC's own modules (envmodules:, not container:
-    # in margie_sb.smk), so neither has a .sif to check or set up.
+    # SignalP 4 and 6 run from RCAC modules (envmodules:), so there is no .sif.
     {'key': 'signalp6', 'label': 'SignalP6', 'phase': 6, 'sif': 'signalp6.sif', 'purpose': 'Signal peptide prediction (HPC module, no envelope dependency)', 'uses_container': False},
     {'key': 'envelope', 'label': 'Envelope', 'phase': 7, 'sif': 'envelope.sif', 'purpose': 'Gram envelope type inference'},
     {'key': 'psortb', 'label': 'PSORTb', 'phase': 8, 'sif': 'psortb.sif', 'purpose': 'Subcellular localization'},
@@ -164,8 +158,7 @@ MARGIE_SB_PHASED_TOOLS = [
     {'key': 'signalp4', 'label': 'SignalP4', 'phase': 8, 'sif': 'signalP4.sif', 'purpose': 'Signal peptide prediction (HPC module; kept until SignalP6 is confirmed)', 'uses_container': False},
     {'key': 'consolidation', 'label': 'Consolidation', 'phase': 9, 'sif': 'consolidation.sif', 'purpose': 'Consolidate upstream outputs', 'uses_container': False},
     {'key': 'labeling', 'label': 'Labeling', 'phase': 10, 'sif': 'labeling.sif', 'purpose': 'Label assignment', 'uses_container': False},
-    # Host-side Python like consolidation/labeling (margie_sb.smk's run_fingerprint and
-    # update_fingerprint_database have no container:), so no .sif is checked or listed.
+    # Host-side Python with no container: in margie_sb.smk, so no .sif is checked.
     {'key': 'fingerprint', 'label': 'Fingerprint', 'phase': 11, 'sif': 'fingerprint.sif', 'purpose': 'Feature fingerprinting', 'uses_container': False},
     {'key': 'scoring_heuristic', 'label': 'Scoring', 'phase': 12, 'sif': 'scoring-heuristic.sif', 'purpose': 'Confidence scoring (statistical model)', 'uses_container': False},
     {'key': 'fingerprint_database', 'label': 'Fingerprint Database', 'phase': 13, 'sif': 'fingerprint-database.sif', 'purpose': 'Fingerprint DB stage', 'uses_container': False},
@@ -519,9 +512,7 @@ WORKFLOWS: dict[str, WorkflowKey] = {
                 'description': 'Default runtime limit in minutes for MARGIE(SB) tools unless overridden per tool',
                 'type': 'int'
             },
-            # Folder for each user's growing databases and run archives, copied
-            # from the bases on the first run and tracked by api/services/user_stores.py.
-            # Empty: /scratch/<cluster>/<cluster user>/margie-2026.
+            # Per-user stores; empty: /scratch/<cluster>/<user>/margie-2026.
             {
                 'param': 'margie_sb.stores_root',
                 'default': '',

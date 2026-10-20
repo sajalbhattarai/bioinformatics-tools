@@ -45,8 +45,7 @@ LOGGER = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/ssh", tags=["ssh"])
 
-# compute.cluster_default.* defaults from the registry that also builds the
-# default config.yaml and the Profile form.
+# compute.cluster_default.* defaults from the same registry as config.yaml.
 _CLUSTER_DEFAULTS: dict[str, object] = {
     p['param'].split('.')[-1]: p.get('default')
     for p in REQUIRED_SYSTEM_PARAMS
@@ -73,8 +72,7 @@ def _cluster_default(user_config: dict, key: str) -> str | None:
 # Workflows visible on the frontend but not yet implemented.
 STUB_WORKFLOWS: set[str] = {"custom_microbiome"}
 
-# (job_id, path) -> (mtime, size, total_lines); saves a wc -l per page view of
-# an unchanged output file. Cleared on API restart.
+# (job_id, path) -> (mtime, size, total_lines); cleared on API restart.
 _line_count_cache: dict[tuple[str, str], tuple[float, int, int]] = {}
 
 
@@ -191,8 +189,7 @@ def _classify_path_scope(current_user: dict, conn, path: str, *, is_dir: bool) -
                 ),
             )
 
-    # Fallback for pre-marker paths; the cluster username also counts, since the
-    # scratch stores (services/user_stores.py) are named after it.
+    # Pre-marker fallback; scratch stores are named after the cluster username.
     if _is_user_scoped_db(path, current_user["username"]):
         return "user"
     cluster_user = current_user.get("cluster_username") or ""
@@ -593,9 +590,7 @@ _TIER_FONT_COLORS: dict[str, str] = {
 }
 
 
-# FINAL publication file colouring: each row is tinted with its
-# CONFIDENCE_TIER_HYBRID colour, as in the operon figures (reportfig_lib) and
-# workflow_tools/fingerprint/make-final-excel.py; review rows get a border.
+# FINAL rows are tinted by CONFIDENCE_TIER_HYBRID; review rows get a border.
 _TIER_BRIGHT = {
     "highest": "1F77FF",   # blue
     "high":    "00B84D",   # green
@@ -617,8 +612,7 @@ def _tint_hex(h: str, toward_white: float = 0.86) -> str:
 
 
 def _norm_col(name: str) -> str:
-    # FINAL_ANNOTATION_WITH_CONFIDENCE headers may be prefixed, e.g.
-    # "[AN]-NEEDS_REVIEW?" or "Column-AN: NEEDS_REVIEW?".
+    # Strips header prefixes such as "[AN]-" or "Column-AN: ".
     return re.sub(r"^(?:\[[A-Z]+\]-|Column-[A-Z]+:\s*)", "", str(name or "").strip(), flags=re.IGNORECASE).strip().lower()
 
 
@@ -731,9 +725,7 @@ def _get_available_workflows(cluster_username: str | None = None) -> list[dict]:
         wf_dict['id'] = wf_key.cmd_identifier
         wf_dict['containers'] = [{'name': sif[0], 'version': sif[1]} for sif in wf_key.sif_files]
 
-        # Merges system-wide params, this workflow's root-path params and its own
-        # params, in that order. sif_path and db_root appear only when the workflow
-        # uses them (see workflow_path_params()).
+        # Merges system, root-path and workflow params, in that order.
         path_params = workflow_path_params(
             wf_id,
             include_sif=wf_key.local_sif_only,
@@ -746,7 +738,6 @@ def _get_available_workflows(cluster_username: str | None = None) -> list[dict]:
 
         workflows.append(wf_dict)
 
-    # Adds stub workflows (not yet implemented but visible)
     # Even stub workflows get system params since they'll need them when implemented
     workflows.append({
         'id': 'custom_microbiome',
@@ -853,7 +844,6 @@ def _default_params_for_workflow(workflow_id: str, workflow) -> list[dict]:
     )
     combined = path_params + (workflow.configurable_params or [])
 
-    # De-duplicates by key, keeping first-seen order.
     seen: set[str] = set()
     unique: list[dict] = []
     for param in combined:
@@ -871,15 +861,18 @@ def _build_default_config_payload(cluster_username: str | None = None) -> dict:
     cluster_username scopes the writable stores to this user (see
     workflow_registry.resolve_user_paths); None keeps the shared paths.
     """
+    # Build default config from REQUIRED_SYSTEM_PARAMS
     config: dict = {
         'main_database': '~/.local/share/bioinformatics-tools/my-db.db',
         'compute': {'cluster_default': {}},
     }
 
+    # Populate compute.cluster_default with all defaults from REQUIRED_SYSTEM_PARAMS
     for param in resolve_user_paths(REQUIRED_SYSTEM_PARAMS, cluster_username):
         if param['param'].startswith('compute.cluster_default.'):
             key = param['param'].split('.')[-1]
             default_value = param.get('default')
+            # Use empty string for required fields with no default, otherwise use the default
             config['compute']['cluster_default'][key] = default_value if default_value is not None else ''
 
     for workflow_id, workflow in WORKFLOWS.items():
@@ -891,8 +884,7 @@ def _build_default_config_payload(cluster_username: str | None = None) -> dict:
         for param in resolve_user_paths(_ordered_workflow_params(workflow_id, params), cluster_username):
             parts = param['param'].split('.')
 
-            # Namespaced params ("margie_sb.sif_path") are stored under one
-            # workflow block, e.g. margie_sb: {sif_path: ...}.
+            # Namespaced params ("margie_sb.sif_path") nest under the workflow block.
             if parts and parts[0] == workflow_id:
                 parts = parts[1:]
             if not parts:
@@ -936,8 +928,7 @@ def ssh_status(current_user: dict = Depends(get_current_user)):
         # Not closed: the client is pooled and shared across requests.
         return {"connected": True, "host": current_user["cluster_host"]}
     except HTTPException as exc:
-        # Raised when the stored key cannot be decrypted (BSP_ENCRYPTION_KEY was
-        # regenerated); the key is unrecoverable, so the user must re-register.
+        # Undecryptable stored key (BSP_ENCRYPTION_KEY regenerated): re-register.
         detail = str(getattr(exc, "detail", exc))
         undecryptable = "decrypt" in detail.lower()
         LOGGER.warning("SSH status check failed for user %s: %s",
@@ -1142,8 +1133,7 @@ def _launch_job(
     """
     selected_tools_csv = ",".join(selected_tools) if selected_tools is not None else None
     selected_tools_arg = f" {workflow}.selected_tools: {selected_tools_csv}" if selected_tools_csv else ""
-    # Opt-in full-genome operon atlas; the smk reads the top-level
-    # run_full_operon_map flag and runs it after the report figures.
+    # Opt-in full operon atlas; the smk runs it after the report figures.
     full_operon_map_arg = " run_full_operon_map: true" if run_full_operon_map else ""
 
     job_id = str(uuid.uuid4())
@@ -1168,13 +1158,10 @@ def _launch_job(
     )
     job_store.update(job_id, work_dir=output_dir)
 
-    # caragols matches do_<a>_<b> against the separate tokens "<a> <b>", so
-    # do_margie_sb is invoked as "margie sb"; config keys stay underscore-joined.
+    # caragols dispatches do_margie_sb as the tokens "margie sb".
     dispatch_tokens = workflow.replace('_', ' ')
     resume_arg = f" {workflow}.resume: true" if copy_from_work_dir else ""
-    # Licence acceptance was verified in run_workflow; it and the user's entitlement
-    # pass to the CLI so its gate does not re-prompt and disables the same tools
-    # (see workflow_tools/license_gate.py).
+    # Passes the verified acceptance so the CLI licence gate does not re-prompt.
     from bioinformatics_tools.api import licensing
     _lic_ent = licensing.get_entitlement(current_user["username"])
     _lic_csv = ",".join(_lic_ent.get("licensed_tools") or [])
@@ -1183,10 +1170,7 @@ def _launch_job(
         f"MARGIE_USAGE_TYPE='{_lic_ent.get('usage_type') or ''}' "
         f"MARGIE_LICENSED_TOOLS='{_lic_csv}' "
     )
-    # Runs dane_wf from the editable install in ~/bioinformatics-tools/.venv rather
-    # than `uvx --from`, which re-resolves slowly and can serve a stale build.
-    # A best-effort git fetch + SHA check first picks up a new margie_sb
-    # deployment (see sync_remote_dane_wf); the margie workflow is left as is.
+    # Uses the editable install, not `uvx --from`, which is slow and may be stale.
     if workflow == 'margie_sb':
         try:
             sync_remote_dane_wf(conn)
@@ -1209,7 +1193,7 @@ def _launch_job(
     return {"success": True, "job_id": job_id, "output_dir": output_dir, "message": "Job submitted successfully"}
 
 
-# ---- Per-user databases on scratch and their depot backups (services/user_stores.py) ----
+# ---- Per-user databases on scratch and their depot backups ----
 
 STORES_NOT_READY = "stores-not-ready"
 
@@ -1306,9 +1290,7 @@ def setup_stores(current_user: dict = Depends(get_current_user)):
     return _stores_call(user_stores.start_setup, conn, user_config, current_user["cluster_username"])
 
 
-# ---- Genome viewer refresh ----
-# Rebuilds FINAL_GENOME_VIEWER.html with this backend's viewer script, as the
-# user, writing beside the old file and moving it over only once complete.
+# ---- Genome viewer refresh (rebuilt beside the old file, then moved over) ----
 
 @router.post("/genome-viewer/refresh")
 def refresh_genome_viewer(body: dict | None = None, current_user: dict = Depends(get_current_user)):
@@ -1341,10 +1323,7 @@ def refresh_genome_viewer(body: dict | None = None, current_user: dict = Depends
     return {"viewer": f"{folder}/{viewer}"}
 
 
-# ---- AI keys for "Chat with the genome" ----
-# Kept in ~/.config/margie (mode 700, file 600) on the cluster so they work from
-# any computer. The file is JSON {"keys": {...}} or one provider=key line each
-# (anthropic, openai, gemini, custom).
+# ---- AI keys: ~/.config/margie on the cluster, JSON or provider=key lines ----
 
 _AI_KEYS_DIR = ".config/margie"
 _AI_KEYS_FILE = "ai-keys.json"
@@ -1419,8 +1398,7 @@ def backup_store(store_id: str, current_user: dict = Depends(get_current_user)):
     return _stores_call(user_stores.start_backup, conn, user_config, current_user["cluster_username"], store_id)
 
 
-# ---- Tool containers and reference databases (services/tool_assets.py) ----
-# Setup uses the same copy job as the stores and shares GET /stores/progress.
+# ---- Tool containers and reference databases (share the stores copy job) ----
 
 @router.get("/assets")
 def get_assets(current_user: dict = Depends(get_current_user)):
@@ -1511,8 +1489,7 @@ def _check_margie_sb_assets(genome_data: GenomeSend, genome_path: str, user_conf
 @router.post("/run_workflow")
 def run_workflow(genome_data: GenomeSend, current_user: dict = Depends(get_current_user)):
     """Submit a genome analysis workflow by name."""
-    # Server-side licence gate: a run never proceeds without a recorded
-    # acceptance of the current terms.
+    # Server-side licence gate: no run without acceptance of the current terms.
     from bioinformatics_tools.api import licensing
     if not licensing.has_accepted_current_terms(current_user["username"]):
         raise HTTPException(
@@ -1566,14 +1543,14 @@ def run_workflow(genome_data: GenomeSend, current_user: dict = Depends(get_curre
         )
 
     if genome_data.workflow == 'margie_sb':
-        # A run needs the user's store copies on scratch first and never starts during a copy.
+        # Store copies must be on scratch; never starts during a copy.
         main_db = _margie_sb_stores_ready(current_user, conn, user_config)
         _validate_margie_sb_shared_paths(user_config, conn, current_user["home_dir"])
     else:
-        # Promotes a shared template DB to a per-user DB so users do not share one SQLite file.
+        # Promotes a shared template DB to a per-user DB (no shared SQLite file).
         main_db = _resolve_effective_main_db(current_user, conn, user_config, persist=True)
 
-    # Falls back to the config's input_path / output_path when the request omits them.
+    # Falls back to the config's input_path / output_path.
     genome_path = genome_data.genome_path or user_config.get(genome_data.workflow, {}).get('input_path')
     if not genome_path or str(genome_path).strip() == '':
         raise HTTPException(
@@ -1584,9 +1561,7 @@ def run_workflow(genome_data: GenomeSend, current_user: dict = Depends(get_curre
 
     _check_genome_path_exists(genome_path, genome_data.workflow, conn)
 
-    # A subset of a folder is staged into its own folder and run from there,
-    # since a workflow annotates everything it is pointed at. An empty list is
-    # rejected rather than running the whole folder.
+    # A folder subset is staged into its own folder; an empty list is rejected.
     if genome_data.genomes is not None:
         if not genome_data.genomes:
             raise HTTPException(status_code=400, detail="No genomes were selected.")
@@ -1608,8 +1583,7 @@ def run_workflow(genome_data: GenomeSend, current_user: dict = Depends(get_curre
             len(genome_data.genomes), genome_path,
         )
 
-    # Validates the tool selection so typos fail here. An explicit empty list
-    # means "run nothing", unlike None ("run everything").
+    # Validates tool keys; [] means "run nothing", None "run everything".
     if genome_data.selected_tools is not None:
         if not genome_data.selected_tools:
             raise HTTPException(
@@ -1625,7 +1599,7 @@ def run_workflow(genome_data: GenomeSend, current_user: dict = Depends(get_curre
                 detail=f"Unknown tool key(s) in selected_tools: {sorted(unknown)}. "
                        f"Available: {sorted(valid_tool_keys)}",
             )
-        # Refuses tools the user is not licensed for (mirrors the CLI gate and the UI).
+        # Refuses tools the user is not licensed for (mirrors the CLI gate).
         _ent = licensing.get_entitlement(current_user["username"])
         _disabled = licensing.disabled_tool_ids(
             _ent.get("usage_type"), _ent.get("licensed_tools")
@@ -1644,7 +1618,6 @@ def run_workflow(genome_data: GenomeSend, current_user: dict = Depends(get_curre
 
     base_dir = (genome_data.output_dir or user_config.get(genome_data.workflow, {}).get('output_path') or current_user['home_dir']).rstrip('/')
 
-    # run_full_operon_map is on if the request or the saved per-workflow config asks for it.
     saved_full_operon_map = bool(
         user_config.get(genome_data.workflow, {}).get('run_full_operon_map', False))
     effective_full_operon_map = bool(genome_data.run_full_operon_map) or saved_full_operon_map
@@ -1677,7 +1650,7 @@ def _job_from_history_row(row: dict) -> dict:
         "selected_tools": row.get("selected_tools"),
         "relaunched_from": row.get("relaunched_from"),
         "start_time": row.get("created_at"),
-        # A finished row is last written when it finishes, so that is its end.
+        # A finished row's updated_at is its end time.
         "end_time": row.get("updated_at") if row.get("status") in _TERMINAL_STATUSES else None,
         "sub_jobs": [],
         "slurm_jobs": row.get("slurm_jobs") or [],
@@ -1722,9 +1695,7 @@ def _load_job_for_action(job_id: str, current_user: dict, conn) -> dict:
 _TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 _POTENTIALLY_STALE_STATUSES = {"pending", "running", "snakemake"}
 
-# A row that is still being submitted has no .rc sentinel, driver or SLURM jobs
-# yet, so it looks interrupted; rows younger than this grace window are never
-# judged dead.
+# Rows younger than this look interrupted mid-submission; never judged dead.
 _SUBMIT_GRACE_SECONDS = 300
 
 
@@ -1746,13 +1717,11 @@ def _within_submit_grace(row: dict) -> bool:
     """Returns True while a row is too young to be judged interrupted."""
     age = _row_age_seconds(row)
     return age is not None and age < _SUBMIT_GRACE_SECONDS
-# squeue states in which a job still occupies the cluster; COMPLETING and
-# CONFIGURING count as active.
+# squeue states that still occupy the cluster (COMPLETING/CONFIGURING count).
 _ACTIVE_SLURM_STATES = ("RUNNING", "PENDING", "COMPLETING", "CONFIGURING",
                         "RESIZING", "SUSPENDED", "REQUEUED")
 
-# Stops two overlapping polls (sync endpoints run in a threadpool) from both
-# reattaching a watcher to the same run.
+# Stops overlapping polls from reattaching a watcher to the same run.
 _REATTACH_LOCK = threading.Lock()
 
 
@@ -1777,9 +1746,7 @@ def _try_reattach(job_id: str, row: dict, conn, main_db: str | None,
     re-derives its SLURM jobs, containers and progress. Returns the live job
     dict, or None if the run is not replayable or another thread claimed it.
     """
-    # Checked before claiming: `tail -F` on a log that never grows would block a
-    # worker forever. Replay suits a run still writing its log or one with an
-    # exit sentinel (see ssh_slurm.is_replayable).
+    # `tail -F` on a log that never grows would block a worker forever.
     try:
         probe = ssh_slurm.probe_run(job_id, connection=conn)
     except Exception as exc:
@@ -1799,10 +1766,9 @@ def _try_reattach(job_id: str, row: dict, conn, main_db: str | None,
             selected_tools=row.get("selected_tools"),
             relaunched_from=row.get("relaunched_from"),
         )
-        # create() would insert a duplicate history row, so persistence is attached afterwards.
+        # create() would insert a duplicate history row.
         job_store.attach_persistence(job_id, main_db, conn)
-        # Carries the row's status/phase over; create() would start it at
-        # "pending" and the UI would drop its Emergency Stop button.
+        # Carries status/phase over; "pending" would hide the Emergency Stop button.
         job_store.update(job_id, work_dir=row.get("work_dir"),
                          status=row.get("status") or "running",
                          phase=row.get("phase") or "Reattaching to running job")
@@ -1864,8 +1830,7 @@ def _job_status(job_id: str, current_user: dict) -> dict:
     if row is None:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    # A non-terminal row was still going when dane-api lost track of it: it is
-    # reattached by replaying its log, with the squeue check below as fallback.
+    # Non-terminal rows lost on restart are reattached by replaying the log.
     if row["status"] not in _TERMINAL_STATUSES:
         live = _try_reattach(job_id, row, conn, main_db, current_user)
         if live is not None:
@@ -1908,15 +1873,14 @@ def _job_status(job_id: str, current_user: dict) -> dict:
                     for m in enriched
                 ]
         elif _within_submit_grace(row):
-            # No active SLURM jobs yet, but the row is fresh: still being submitted.
+            # Fresh row with no SLURM jobs yet: still being submitted.
             result["still_active"] = True
             result["status_note"] = (
                 "This run is still being submitted to the cluster -- "
                 "live updates will appear once its jobs are queued."
             )
         else:
-            # No active jobs and the row is past the grace window: marked
-            # interrupted so it no longer appears as running.
+            # Past the grace window with no active jobs: marked interrupted.
             result["status"] = "cancelled"
             result["phase"] = "Interrupted (no active jobs)"
             try:
@@ -1963,9 +1927,7 @@ def _reconcile_running(conn, main_db: str, rows: list[dict], cluster_username: s
             # Strict matching: substring matches left finished jobs marked running.
             escaped = re.escape(jid)
             stem = ssh_slurm.run_file_stem(jid)
-            # drv: driver process on the login node (in_slurm=False).
-            # dj/ds: the driver's own SLURM job id (<stem>.jobid from
-            # build_driver_launch) and its squeue state.
+            # drv: login-node driver process; dj/ds: driver SLURM job id and state.
             probe = (
                 f'rc=$(cat $HOME/.local/share/bsp/jobs/{jid}.rc 2>/dev/null); '
                 f'drv=$(pgrep -u $USER -f "dane_wf.*{escaped}" 2>/dev/null | wc -l); '
@@ -1989,12 +1951,11 @@ def _reconcile_running(conn, main_db: str, rows: list[dict], cluster_username: s
             elif drv_n > 0 or ds.strip() in _ACTIVE_SLURM_STATES:  # genuinely still going
                 continue
             elif _within_submit_grace(row):    # too young -- still submitting
-                # Mid-submission looks identical to interrupted, so a fresh row is left running.
+                # Mid-submission looks like interrupted; a fresh row stays running.
                 continue
             elif row.get("work_dir") and _has_active_workdir_jobs(
                 conn, row["work_dir"], cluster_username):
-                # The driver has exited, but active workers under this work_dir
-                # show the run is still going.
+                # Driver exited, but active workers under work_dir mean the run continues.
                 continue
             else:                              # no sentinel, no driver, no jobs
                 status, phase = "cancelled", "Interrupted (driver stopped)"
@@ -2089,7 +2050,7 @@ def cancel_job(job_id: str, current_user: dict = Depends(get_current_user)):
             raise HTTPException(status_code=404, detail="Job not found")
         slurm_ids = [sj["job_id"] for sj in (row.get("slurm_jobs") or [])]
 
-    # The driver is cancelled first; otherwise Snakemake would resubmit its children.
+    # Driver first; otherwise Snakemake resubmits its children.
     driver = None
     try:
         driver = ssh_slurm.driver_job_id(job_id, connection=conn)
@@ -2104,9 +2065,7 @@ def cancel_job(job_id: str, current_user: dict = Depends(get_current_user)):
         ssh_slurm.cancel_slurm_jobs(slurm_ids, connection=conn)
         LOGGER.info("Cancelled %d SLURM jobs for job %s", len(slurm_ids), job_id)
 
-    # Sweeps any active job under the run's work_dir that the parsed slurm_ids
-    # missed (new or orphaned workers). The driver lives in $HOME, so it and
-    # other runs are untouched.
+    # Sweeps untracked work_dir jobs; the driver lives in $HOME, so it is untouched.
     work_dir = job.get("work_dir") if job is not None else row.get("work_dir")
     swept_ids: list[str] = []
     if work_dir:
@@ -2122,13 +2081,12 @@ def cancel_job(job_id: str, current_user: dict = Depends(get_current_user)):
             ssh_slurm.cancel_slurm_jobs(swept_ids, connection=conn)
             LOGGER.info("Cancelled %d untracked work_dir jobs for %s", len(swept_ids), job_id)
 
-    # Only for runs with no driver job (driver on the login node): the pkill
-    # matches by name across the account and would hit other runs.
+    # Only without a driver job: pkill by name would hit other runs.
     if not driver:
         ssh_slurm.kill_remote_process("dane_wf", connection=conn)
         LOGGER.info("Killed remote dane_wf process for job %s", job_id)
 
-    # Marks the job cancelled, which also stops any status checker daemon.
+    # Cancelling also stops any status checker daemon.
     if job is not None:
         job_store.cancel(job_id)
     else:
@@ -2178,7 +2136,7 @@ def resume_job(job_id: str, current_user: dict = Depends(get_current_user)):
                 detail=f"Cannot resume a job with status '{status}' -- only failed/cancelled jobs, "
                        "or non-terminal jobs no longer actually active on the cluster, can be resumed.",
             )
-        # A non-terminal status may be stale after a dane-api restart, so the cluster is checked.
+        # Non-terminal status may be stale after a restart, so the cluster is checked.
         still_active = True
         if work_dir:
             try:
@@ -2315,8 +2273,7 @@ def download_file(
     if format == "excel":
         xlsx_filename = re.sub(r"\.(tsv|csv)$", "", filename, flags=re.IGNORECASE) + ".xlsx"
 
-        # Serves the pre-generated .xlsx from make-final-excel.py when present,
-        # read eagerly so FileNotFoundError is caught here.
+        # Pre-generated .xlsx wins; eager read so FileNotFoundError lands here.
         if re.search(r"\.(tsv|csv)$", path, re.IGNORECASE):
             xlsx_remote_path = re.sub(r"\.(tsv|csv)$", ".xlsx", remote_path, flags=re.IGNORECASE)
             try:
@@ -2557,7 +2514,6 @@ def final_summary(path: str, current_user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail=f"Path not found on cluster: '{path}'")
     except Exception as exc:
         raise HTTPException(status_code=_permission_status(exc), detail=f"Could not read {path}: {exc}")
-    # Keeps at most 64 entries, dropping the oldest.
     while len(_FINAL_SUMMARIES) > 64:
         _FINAL_SUMMARIES.pop(next(iter(_FINAL_SUMMARIES)))
     return _FINAL_SUMMARIES[key]

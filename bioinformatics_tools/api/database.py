@@ -69,8 +69,7 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_license_user_version
             ON license_acceptances (username, terms_version)
         """)
-        # Add newer columns to license_acceptances tables created before they
-        # existed (SQLite has no "ADD COLUMN IF NOT EXISTS").
+        # Adds columns older tables lack; SQLite has no ADD COLUMN IF NOT EXISTS.
         _existing = {row[1] for row in conn.execute("PRAGMA table_info(license_acceptances)")}
         for _col in ("usage_type", "licensed_tools"):
             if _col not in _existing:

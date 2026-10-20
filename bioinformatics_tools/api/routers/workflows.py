@@ -36,7 +36,7 @@ async def run_quick_example(current_user: dict = Depends(get_current_user)):
     job_id = str(uuid.uuid4())
     job_store.create(job_id, "quick_example (selftest)", user_id=current_user["user_id"])
 
-    # Direct venv invocation rather than `uvx --from` (see ssh.py's run_workflow).
+    # Calls the venv directly rather than `uvx --from` (see ssh.py run_workflow).
     command = "~/bioinformatics-tools/.venv/bin/dane_wf quick example"
     # Runs on the login node so the self-test answers quickly.
     job_runner.submit_job(job_id, command, connection=conn, in_slurm=False)

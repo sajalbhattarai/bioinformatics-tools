@@ -278,7 +278,7 @@ def stage_selected_genomes(
     if not names:
         raise ValueError('No genomes were selected.')
     for name in names:
-        # Names come from the browser; anything with a slash could escape source_dir.
+        # Browser-supplied names; a slash could escape source_dir.
         if not name or '/' in name or name in ('.', '..'):
             raise ValueError(f'Not a genome file name: {name!r}')
 

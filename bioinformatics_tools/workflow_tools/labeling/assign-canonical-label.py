@@ -73,9 +73,7 @@ _DB_ID_HYPOTHETICAL_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Further uninformative patterns, kept identical to scoring/score-c1-tool-coverage.py:
-# eggNOG UPF families, bare DUF tags, "protein containing domains DUF", and
-# mid-string "of unknown function"/"uncharacterized" unless a function word appears.
+# More uninformative patterns, kept identical to scoring/score-c1-tool-coverage.py.
 _UPF_ONLY_RE = re.compile(r'^\s*belongs to the upf\d+', re.IGNORECASE)
 # eggNOG's "Psort location ..." descriptions give localisation only, not a product.
 _PSORT_ONLY_RE = re.compile(r'^\s*psort location\b', re.IGNORECASE)
@@ -249,8 +247,7 @@ def evaluate_accession_tool(
     chosen, overrode = select_best_hit(hits, rank_mode="min")
     stat_norm = normalize_evalue(chosen.stat)
 
-    # Uninformative hits do not qualify in pass 1; a missing description falls
-    # back to the accession for pass 2.
+    # Uninformative hits fail pass 1; no description falls back to the accession.
     desc_norm = chosen.description.strip().lower()
     if desc_norm and desc_norm not in _NULLISH_UNINFORMATIVE:
         effective_desc = chosen.description
@@ -394,8 +391,7 @@ _EVALUATORS: list[Callable[[dict[str, str]], ToolEvaluation]] = [
 
 
 # ─── CONFIRMATORY TOOLS ──────────────────────────────────────────────────────────
-# MEROPS/TCDB/dbCAN (peptidases, transporters, CAZymes) never pick the label;
-# their hits are reported for cross-checking.
+# MEROPS/TCDB/dbCAN never pick the label; their hits are reported for cross-checking.
 def eval_merops(row: dict[str, str]) -> ToolEvaluation:
     """Evaluates MEROPS hits as confirmatory evidence."""
     return evaluate_accession_tool(row, "MEROPS", "MEROPS_id", "MEROPS_description", "MEROPS_evalue",
@@ -502,9 +498,7 @@ def assign_label(
 
 
 # ─── CLI ──────────────────────────────────────────────────────────────────────
-# Output columns: identity and envelope, the label with its decision metadata,
-# each decision tool's all-hit and best-hit evidence, RAST_description, then
-# confirmatory tools and their summary.
+# Output column order: identity, label, per-tool evidence, RAST, confirmatory tools.
 
 _IDENTITY_COLUMNS = [
     "organism_name", "feature_id", "na_seq", "aa_seq", "na_length", "aa_length",

@@ -318,10 +318,7 @@ def load_reference(path):
     return ref
 
 
-# ---------------------------------------------------------------------------
-# Members sidecar: genome content fingerprint -> organism token, stored next to
-# the pickle so leave-one-out can match a genome by content.
-# ---------------------------------------------------------------------------
+# ---- Members sidecar: genome fingerprint -> organism token (leave-one-out) ----
 def members_sidecar_path(reference_path):
     """Returns the members sidecar path, <reference>.members.tsv."""
     from pathlib import Path
@@ -356,10 +353,7 @@ def record_member(reference_path, fingerprint, organism):
             w.writerow([fp, org])
 
 
-# ---------------------------------------------------------------------------
-# Pool-stats sidecar: per-genome gene and operon tallies for figure provenance,
-# keyed by organism token so figures can aggregate any subset.
-# ---------------------------------------------------------------------------
+# ---- Pool-stats sidecar: per-genome tallies keyed by organism token ----
 POOL_STAT_COLS = ("total_genes", "operonic_genes", "singleton_genes",
                   "n_operons", "n_informative_operons", "n_uninformative_operons")
 

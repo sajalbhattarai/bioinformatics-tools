@@ -29,8 +29,7 @@ ROOT_NAME = 'margie-2026'
 STATE_DIR = '.margie'
 
 # ---- Stores ----
-# kind 'file' is one file plus companions; kind 'dir' is a folder copied whole.
-# config maps config.yaml keys to the store (for a 'dir', to a file inside it; '' is the folder).
+# kind 'file' (plus companions) or 'dir' (whole folder); config: config.yaml keys.
 STORES: list[dict] = [
     {
         'id': 'job_db',
@@ -208,7 +207,7 @@ def _backups(conn, store: dict, user: str, cfg: dict | None = None) -> list[int]
     return sorted(found)
 
 
-# ---- State: <root>/.margie/stores.json holds working versions; op.* is the current or last copy ----
+# ---- State: stores.json holds working versions; op.* the current or last copy ----
 
 def _state_path(root: str, name: str) -> str:
     return f'{root}/{STATE_DIR}/{name}'
@@ -301,8 +300,7 @@ def _op_from(sections: dict, root: str) -> dict:
             op[k] = v
     if not op:
         return {}
-    # A running op whose script is gone is failed: checked by squeue, by pid on the same
-    # login node, or by a log idle for five minutes on another node.
+    # Marks a running op failed if its script is gone (squeue, pid, or idle log).
     squeue = [l.strip() for l in sections.get('squeue', []) if l.strip()]
     job = next((l[4:] for l in squeue if l.startswith('job=')), '')
     slurm_line = next((l for l in squeue if not l.startswith('job=')), '')
@@ -367,18 +365,7 @@ def _settle_pid(conn, op: dict) -> dict:
     return op
 
 
-# ---- Copy script: runs a plan of tab-separated steps and writes op.status/op.log ----
-#   copy<TAB>label<TAB>src<TAB>dst<TAB>bytes   rsync src -> dst (via dst.partial)
-#   files<TAB>label<TAB>srcdir<TAB>dst<TAB>bytes<TAB>name,name,...
-#   move<TAB>src<TAB>dst                        rename (same filesystem: instant)
-#   mkdir<TAB>path
-#   link<TAB>src<TAB>dst                        symlink dst -> src, unless dst exists
-#   pull<TAB>label<TAB>url<TAB>dst              apptainer pull url -> dst (via dst.partial)
-#   repo<TAB>folder                             margie-build's folder on the cluster, for build
-#   build<TAB>label<TAB>mode<TAB>tool<TAB>sifdir<TAB>dbdir<TAB>statement
-#                                               margie-build's build.sh --<mode> <tool>;
-#                                               a statement accepts a gated tool's licence
-# (link, pull, repo and build are used by tool_assets.py.)
+# ---- Copy script: runs the tab-separated plan, writes op.status/op.log ----
 COPY_SCRIPT = r'''#!/bin/bash
 set -u
 dir="$1"; plan="$dir/op.plan"; status="$dir/op.status"; log="$dir/op.log"
@@ -654,7 +641,7 @@ def _bytes(text: str) -> int | None:
 def depot_free(conn, where: str = DEPOT) -> int | None:
     """Returns the free bytes on depot: the smaller of the group's quota headroom (myquota) and df."""
     group = where.split('/')[2] if where.startswith('/depot/') and len(where.split('/')) > 2 else ''
-    # Runs df on the nearest existing folder, since the backup folder may not exist yet.
+    # Uses the nearest existing folder; the backup folder may not exist yet.
     code, out = _run(conn, f'myquota 2>/dev/null; echo "@@df"; d={shlex.quote(where)}; '
                            f'while [ ! -e "$d" ] && [ "$d" != / ]; do d=$(dirname "$d"); done; '
                            f'df -B1 --output=avail "$d" 2>/dev/null | tail -1')

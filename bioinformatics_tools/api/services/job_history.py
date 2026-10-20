@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS api_jobs (
 );
 """
 
-# Columns added after the first release; older databases get them by ALTER TABLE.
+# Added after the first release; older databases get them via ALTER TABLE.
 _ADDED_COLUMNS = (
     "owner_username",
     "owner_cluster_username",
@@ -46,10 +46,9 @@ _ADDED_COLUMNS = (
     "containers",
 )
 
-# job_store fields kept in history; logs/slurm_jobs/containers arrive only in the final snapshot.
+# From job_store; logs/slurm_jobs/containers arrive only in the final snapshot.
 _PERSISTED_UPDATE_FIELDS = ("status", "phase", "work_dir", "logs", "slurm_jobs", "containers")
 
-# List/dict fields stored as JSON text.
 _JSON_ENCODED_FIELDS = ("slurm_jobs", "containers")
 
 
@@ -205,7 +204,7 @@ def get_job(db_path: str, job_id: str,
         return None
 
 
-# Characters of each log's end included in list results.
+# Characters of log tail returned by list_jobs.
 LIST_LOG_TAIL = 8000
 
 
@@ -231,7 +230,7 @@ def list_jobs(db_path: str, workflow: str | None = None, limit: int = 100,
                 params.extend(owner_params)
 
             where_clause = f"WHERE {' AND '.join(conditions)} " if conditions else ""
-            # Lists carry only each log's tail and no SLURM jobs or containers; get_job has the full row.
+            # Log tail only, no slurm_jobs/containers; get_job has the full row.
             columns = [r[1] for r in conn.execute("PRAGMA table_info(api_jobs)")]
             select = ", ".join(
                 f"substr(logs, -{LIST_LOG_TAIL}) AS logs" if c == "logs"
@@ -300,7 +299,7 @@ def count_jobs(db_path: str, workflow: str | None = None,
         return 0
 
 
-# ---- CLI entry point: `<action>` argument, JSON payload on stdin, JSON result on stdout ----
+# ---- CLI: <action> argument, JSON payload on stdin, JSON result on stdout ----
 
 def dispatch(action: str, payload: dict):
     """Runs one action for the CLI or the in-process client; returns None for create/update."""

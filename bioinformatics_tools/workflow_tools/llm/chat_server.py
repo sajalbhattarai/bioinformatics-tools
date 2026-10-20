@@ -45,9 +45,9 @@ from pathlib import Path
 MODEL = None
 TOKENIZER = None
 MODEL_NAME = ""
-# Time of the last request; the idle watchdog frees the GPU when the page is gone.
+# Last request time; the idle watchdog frees the GPU when the page is gone.
 LAST_SEEN = time.time()
-# Serialises generation: concurrent .generate() calls would interleave KV cache state.
+# Serialises generation: concurrent .generate() calls interleave KV cache state.
 _GEN_LOCK = threading.Lock()
 
 
@@ -122,7 +122,7 @@ def generate(system: str, prompt: str, max_tokens: int) -> str:
             do_sample=False,              # deterministic output
             pad_token_id=TOKENIZER.pad_token_id,
         )
-    # Slice off the prompt so only the completion is returned.
+    # Slices off the prompt so only the completion is returned.
     return TOKENIZER.decode(out[0][inputs["input_ids"].shape[1]:],
                             skip_special_tokens=True).strip()
 
@@ -155,7 +155,7 @@ class Handler(BaseHTTPRequestHandler):
         global LAST_SEEN
         p = self.path.rstrip("/")
         if p == "/shutdown":
-            # Replies before stopping so the caller (often a sendBeacon) sees success.
+            # Replies first so the caller (often a sendBeacon) sees success.
             self._send(200, {"stopping": True})
             log("shutdown requested — exiting")
             threading.Thread(target=self.server.shutdown, daemon=True).start()

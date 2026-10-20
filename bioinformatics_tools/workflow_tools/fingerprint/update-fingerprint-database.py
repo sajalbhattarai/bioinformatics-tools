@@ -86,7 +86,7 @@ def _do_update(new_counts: dict[str, int], new_labels: dict[str, str], organism:
         if h in patterns:
             patterns[h]["gene_count"] += count
             patterns[h]["organisms"].add(organism)
-            # An identical hash is expected to carry the identical label.
+            # Identical hashes should carry identical labels.
             if patterns[h]["label"] != new_labels[h]:
                 print(f"[update-fingerprint-database] WARNING: hash {h} previously mapped to "
                       f"label '{patterns[h]['label']}', now seeing '{new_labels[h]}' from {organism} "

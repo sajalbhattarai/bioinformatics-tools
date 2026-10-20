@@ -1,0 +1,88 @@
+operon-db.pkl -- MARGIE's starter operon reference (OCC reference v1)
+=====================================================================
+
+What it is
+----------
+The cross-genome operon reference that MARGIE's scoring step reads to compute
+C3, the operon-context confidence of each gene. It holds additive counts of how
+often pairs of gene descriptors sit next to each other (adjacency) and in the
+same operon (co-operon) across the genomes it was built from. Only "qualifying"
+operons count: those where informative members outnumber uninformative ones
+(for example "hypothetical protein"). c3_occ.py builds, updates and scores
+against it; c3_occ.load_reference() reads it.
+
+Why it ships with MARGIE
+------------------------
+On a fresh install there is no reference yet, so the first genome would be
+scored against nothing. update-occ-reference-depot.py copies this file into
+place the first time a run needs a reference, and every genome annotated after
+that is added to the copy. The copy, not this file, is what grows:
+
+  cluster (margie-backend / margie_sb.smk):  <your store>/operon-database/occ_reference.pkl
+  this computer (margie-pipeline):           $MARGIE_SHARED_DIR/operon-database/occ_reference.pkl
+
+Scoring leaves the genome being scored out of the reference (matched by content
+fingerprint, else by name), so a genome that is already in here is not scored
+against itself.
+
+Format
+------
+Python pickle of one dict, schema version 2 (c3_occ.REF_VERSION):
+  version               2
+  present               descriptor -> number of organisms it is present in
+  adj_org, adj_inst     adjacent descriptor pair -> organisms / instances
+  coop_org, coop_inst   co-operon descriptor pair -> organisms / instances
+  deg_adj, deg_op       per-descriptor degrees for the two channels
+  M_adj, M_op           totals for the two channels
+  n_qualifying_operons  number of operons counted
+  organisms_added       the organisms it was built from (names below)
+Open it only with the matching c3_occ.py; the version check refuses others.
+
+Contents
+--------
+Built 2026-09-26 from 29 prokaryotic genomes annotated with MARGIE:
+  29 organisms, 19,409 qualifying operons, 17,526 descriptors,
+  23,636 adjacent pairs (M_adj 35,043), 59,633 co-operon pairs (M_op 85,558).
+
+  Afipia_carboxidovorans_OM5_GCF_000218565.1
+  Alicyclobacillus_acidocaldarius_subsp_acidocaldarius_DSM_446_GCF_000024285.1
+  Alteromonas_macleodii_ATCC_27126_GCF_050500325.1
+  Bacteroides_thetaiotaomicron_GCF_014131755.1
+  Candidatus_Nitrososphaera_gargensis_Ga9.2_enrichment_culture_Ga9.2_GCF_000303155.1
+  Cellulomonas_fimi_ATCC_484_GCF_000212695.1
+  Chloroherpeton_thalassium_ATCC_35110_GCF_000020525.1
+  Colwellia_psychrerythraea_34H_GCF_000012325.1
+  Escherichia_coli_str._K-12_substr._MG1655_K-12_MG1655_GCF_000005845.2
+  Haliangium_ochraceum_DSM_14365_GCF_000024805.1
+  Haloferax_volcanii_DS2_GCF_000025685.1
+  Mesoplasma_florum_L1_GCF_000008305.1
+  Mesorhizobium_jarvisii_GCF_013170785.1
+  Mycobacterium_tuberculosis_H37Rv_GCF_000195955.2
+  Mycobacteroides_abscessus_ATCC_19977_GCF_000069185.1
+  Mycoplasma_genitalium_G37_G37_GCF_000027325.1
+  Natronoglycomyces_albus_GCF_016925535.1
+  Planctomicrobium_stercoris_GCF_051465655.1
+  Sedimenticola_thiotaurini_GCF_001007875.1
+  Streptomyces_coelicolor_A3_2_GCF_008931305.1
+  Thauera_chlorobenzoica_GCF_001922305.1
+  Vibrio_cholerae_O1_biovar_El_Tor_str._N16961_GCF_000006745.1
+  clostridium-cochlearium-scaffolds
+  family__Candidatus_Nitrosocosmicus_franklandianus_GCF_900696045.1
+  family__Parelusimicrobium_proximum_GCF_050389785.1
+  genus__Cellulomonas_flavigena_GCF_000092865.1
+  order__Alistipes_communis_GCF_006542665.1
+  p-vulgatus-scaffolds
+  phocaeicola-dorei-scaffolds
+
+File
+----
+  size      5,273,855 bytes
+  sha256    4489b7c049c4e84fc5115d46403881c1b7499a292c1d7f1368a0c9b15efc2aad
+  source    sbhattarai-occ_reference-v1.pkl (Sajal Bhattarai, Purdue University)
+  licence   MIT, with MARGIE
+
+Rebuilding
+----------
+A reference can be rebuilt from any set of annotated genomes with
+scoring/analysis/c3_figures/score_occ.py build, or grown one genome at a time
+with update-occ-reference-depot.py, which is what a run does.
