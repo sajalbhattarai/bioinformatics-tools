@@ -22,12 +22,13 @@ Annotates prokaryotic genomes, finds operons, and scores how confident it is abo
 
 </div>
 
-<details>
-<summary><b>Tip: Prefer the web app?</b></summary>
+## Three ways to use MARGIE
 
-Prefer clicking to typing? MARGIE also has a **web interface**. Use the hosted app at **[bsp.anvilcloud.rcac.purdue.edu](https://bsp.anvilcloud.rcac.purdue.edu/)** with nothing to install, or run your own from **[biolab-fe](https://github.com/sajalbhattarai/biolab-fe)**. This page covers the **command-line** backend.
-
-</details>
+| | Best for | Start here |
+|---|---|---|
+| **Desktop app** | Most people. macOS, Windows and Linux; runs on your computer or on your HPC, and installs this backend in your cluster account for you. | [biolab-fe releases](https://github.com/sajalbhattarai/biolab-fe/releases) |
+| **GUI in the browser** | The same interface from source, or hosted for a group. | [biolab-fe, branch `margie-frontend`](https://github.com/sajalbhattarai/biolab-fe/tree/margie-frontend) |
+| **Command line** | A terminal on the HPC; no interface. **This page.** | [Install](#install) |
 
 ## Repo scope
 
@@ -62,7 +63,7 @@ main_database: path-to-sqlite-database.db
 `main_database` is the SQLite database file used to store run metadata and results.
 It is different from the `output_dir` folder used for generated run files, and different from fingerprint-related databases.
 
-Databases have no default location: set `db_root` (and any per-tool `db.<tool>` paths) in the config. Set `MARGIE_SHARED_ROOT` on the server when a group shares base databases; empty folders fill up as you run.
+Databases have no default location: set `db_root` (and any per-tool `db.<tool>` paths) in the config. Set `MARGIE_SHARED_ROOT` to your group's shared MARGIE folder when one exists (the desktop app asks for it under the HPC card's Advanced settings); a new account copies its base databases from there, and empty folders fill up as you run.
 
 If you use the GUI, you can also open the **File Explorer** page, browse to `~/.config/bioinformatics-tools/`, and edit `config.yaml` directly there. That same config file contains both the shared pipeline paths and the per-tool resource settings (threads, memory, runtime, partition overrides).
 
