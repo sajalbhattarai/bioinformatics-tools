@@ -1486,16 +1486,20 @@ def _check_margie_sb_assets(genome_data: GenomeSend, genome_path: str, user_conf
         raise HTTPException(status_code=409, detail=tool_assets.describe_missing(missing))
 
 
-@router.post("/run_workflow")
-def run_workflow(genome_data: GenomeSend, current_user: dict = Depends(get_current_user)):
-    """Submit a genome analysis workflow by name."""
-    # Server-side licence gate: no run without acceptance of the current terms.
+def _require_current_terms(current_user: dict) -> None:
+    """Server-side licence gate: nothing runs, resumes or restarts without acceptance of the current terms."""
     from bioinformatics_tools.api import licensing
     if not licensing.has_accepted_current_terms(current_user["username"]):
         raise HTTPException(
             status_code=403,
-            detail="You must accept the current MARGIE licensing terms before running an analysis.",
+            detail="You must accept the current MARGIE licensing terms before running, resuming or restarting an analysis.",
         )
+
+
+@router.post("/run_workflow")
+def run_workflow(genome_data: GenomeSend, current_user: dict = Depends(get_current_user)):
+    """Submit a genome analysis workflow by name."""
+    _require_current_terms(current_user)
 
     available_workflows = _get_available_workflows()
     allowed_ids = {wf["id"] for wf in available_workflows}
@@ -2124,6 +2128,7 @@ def _base_output_dir_from(path: str) -> str:
 def resume_job(job_id: str, current_user: dict = Depends(get_current_user)):
     """Resumes a failed or stale job: copies its work_dir into a new timestamped
     folder and relaunches with margie_sb.resume: true, so completed steps are skipped."""
+    _require_current_terms(current_user)
     conn = _build_connection(current_user)
     original = _load_job_for_action(job_id, current_user, conn)
 
@@ -2190,6 +2195,7 @@ def resume_job(job_id: str, current_user: dict = Depends(get_current_user)):
 def restart_job(job_id: str, current_user: dict = Depends(get_current_user)):
     """Restarts a job from scratch with the same genome_path/workflow/selected_tools
     in a new timestamped folder. Works from any status."""
+    _require_current_terms(current_user)
     conn = _build_connection(current_user)
     original = _load_job_for_action(job_id, current_user, conn)
 

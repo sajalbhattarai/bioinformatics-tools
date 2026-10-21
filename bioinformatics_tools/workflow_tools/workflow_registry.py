@@ -525,7 +525,14 @@ WORKFLOWS: dict[str, WorkflowKey] = {
                 'description': 'Where "Back up to depot" puts copies of your databases, beside the bases every user starts from',
                 'type': 'path'
             },
-            # Where a first run copies each database from. Empty: the group's shared folder (MARGIE_SHARED_ROOT).
+            # The group's shared MARGIE folder: base databases, containers and build recipes.
+            {
+                'param': 'margie_sb.shared_root',
+                'default': MARGIE_DEPOT_ROOT,
+                'description': "Your group's shared MARGIE folder on the cluster, where first runs copy the base databases from (empty: the server's MARGIE_SHARED_ROOT)",
+                'type': 'path'
+            },
+            # Where a first run copies each database from. Empty: under the group folder.
             {
                 'param': 'margie_sb.stores.base.job_db',
                 'default': '',

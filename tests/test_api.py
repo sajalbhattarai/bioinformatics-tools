@@ -845,6 +845,24 @@ class TestResumeAndRestartJob:
     """/v1/ssh/resume_job and /v1/ssh/restart_job -- relaunch a prior job,
     with or without copying its work_dir forward."""
 
+    @pytest.fixture(autouse=True)
+    def _terms_accepted(self, monkeypatch):
+        """Resume and restart are gated on the licence like a fresh run; these tests are about the rest."""
+        from bioinformatics_tools.api import licensing
+        monkeypatch.setattr(licensing, "has_accepted_current_terms", lambda username: True)
+
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_sftp")
+    @patch("bioinformatics_tools.api.routers.ssh._build_connection")
+    def test_resume_and_restart_refuse_without_accepted_terms(self, mock_build_conn, mock_sftp, authed_client, monkeypatch):
+        """Without the current terms accepted (or after a revoke), neither resume nor restart launches anything."""
+        from bioinformatics_tools.api import licensing
+        monkeypatch.setattr(licensing, "has_accepted_current_terms", lambda username: False)
+        for route in ("resume_job", "restart_job"):
+            resp = authed_client.post(f"/v1/ssh/{route}/some-job")
+            assert resp.status_code == 403, route
+            assert "licensing terms" in resp.json()["detail"]
+        mock_build_conn.assert_not_called()
+
     #: A relaunch needs a SLURM account as well as main_database.
     USER_CONFIG = {
         "main_database": "~/my-db.db",

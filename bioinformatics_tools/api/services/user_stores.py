@@ -23,6 +23,27 @@ LOGGER = logging.getLogger(__name__)
 DEPOT = os.environ.get('MARGIE_SHARED_ROOT', '').rstrip('/')
 # Base copies, one folder per database; each user's backups go beside them.
 GENERATED = f'{DEPOT}/databases/margie-generated-databases' if DEPOT else ''
+
+
+def depot(cfg: dict | None) -> str:
+    """The group folder: margie_sb.shared_root from the user's config, else the server's MARGIE_SHARED_ROOT."""
+    chosen = _cfg_get(cfg or {}, 'margie_sb.shared_root')
+    return chosen.strip().rstrip('/') if isinstance(chosen, str) and chosen.strip() else DEPOT
+
+
+def generated(cfg: dict | None) -> str:
+    """The folder of base databases under the group folder."""
+    d = depot(cfg)
+    return f'{d}/databases/margie-generated-databases' if d else ''
+
+
+def base_of(store: dict, cfg: dict | None) -> str:
+    """Where a first run copies a store from: its own setting, else its place under the group folder."""
+    chosen = _cfg_get(cfg or {}, f"margie_sb.stores.base.{store['id']}")
+    if isinstance(chosen, str) and chosen.strip():
+        return chosen.strip().rstrip('/')
+    g = generated(cfg)
+    return f"{g}/{store['base_rel']}" if g else ''
 # Folder under the user's scratch that holds every store and run output folder.
 ROOT_NAME = 'margie-2026'
 # Bookkeeping folder inside it: the store manifest and the copy under way.
@@ -36,7 +57,7 @@ STORES: list[dict] = [
         'label': 'Job database',
         'note': 'Every run’s results and the job history, in SQLite.',
         'kind': 'file',
-        'base': f'{GENERATED}/sqlite/margie-thesis-22-prokaryotes-base.db' if GENERATED else '',
+        'base_rel': 'sqlite/margie-thesis-22-prokaryotes-base.db',
         'depot_sub': 'sqlite',
         'sub': 'sqlite',
         'name': 'margie-thesis-22-prokaryotes-base',
@@ -49,7 +70,7 @@ STORES: list[dict] = [
         'label': 'Operon reference',
         'note': 'The cross-genome operon (OCC) reference scoring reads and adds each genome to.',
         'kind': 'file',
-        'base': f'{GENERATED}/operon-database/occ_reference.pkl' if GENERATED else '',
+        'base_rel': 'operon-database/occ_reference.pkl',
         'depot_sub': 'operon-database',
         'sub': 'operon-database',
         'name': 'occ_reference',
@@ -63,7 +84,7 @@ STORES: list[dict] = [
         'label': 'Fingerprint databases',
         'note': 'The gene fingerprint database and the four operon fingerprint databases beside it.',
         'kind': 'dir',
-        'base': f'{GENERATED}/fingerprint-database' if GENERATED else '',
+        'base_rel': 'fingerprint-database',
         # Only the database files, not the backups and locks beside them.
         'base_files': [
             'fingerprint-database.tsv',
@@ -91,7 +112,7 @@ STORES: list[dict] = [
         'label': 'Genome pool',
         'note': 'Genomes ANI and AAI compare against; every annotated genome joins it.',
         'kind': 'dir',
-        'base': f'{GENERATED}/genome-pool' if GENERATED else '',
+        'base_rel': 'genome-pool',
         # Only the genome folders, not the backups beside them.
         'base_files': ['fna', 'faa'],
         'depot_sub': 'genome-pool',
@@ -114,7 +135,7 @@ STORE_BY_ID = {s['id']: s for s in STORES}
 def backup_root(cfg: dict | None) -> str:
     """Returns margie_sb.backup_root if set, else the base folder on depot."""
     chosen = _cfg_get(cfg or {}, 'margie_sb.backup_root')
-    return chosen.strip().rstrip('/') if isinstance(chosen, str) and chosen.strip() else GENERATED
+    return chosen.strip().rstrip('/') if isinstance(chosen, str) and chosen.strip() else generated(cfg)
 
 
 def backup_dir(store: dict, cfg: dict | None) -> str:
@@ -547,7 +568,7 @@ def status(conn, cfg: dict, user: str) -> dict:
             'note': s['note'],
             'version': v if present else None,
             'path': path if present else '',
-            'base': (str(_cfg_get(cfg, f"margie_sb.stores.base.{s['id']}") or '').strip().rstrip('/')) or s['base'],
+            'base': base_of(s, cfg),
             'backup': ({'version': backups[-1],
                         'path': posixpath.join(backup_dir(s, cfg), versioned(s, user, backups[-1]))}
                        if backups else None),
@@ -606,10 +627,10 @@ def start_setup(conn, cfg: dict, user: str) -> dict:
             label = f"{s['label']} (from your backup v{backups[-1]})"
         else:
             # A source chosen in Settings (margie_sb.stores.base.<id>) wins over the group folder.
-            src = (str(_cfg_get(cfg, f"margie_sb.stores.base.{s['id']}") or '').strip().rstrip('/')) or s['base']
+            src = base_of(s, cfg)
             if not src:
-                raise StoreError("No shared databases to copy from. In the app, open the start page's Advanced "
-                                 "settings, fill in your group's folder on the HPC, and connect again "
+                raise StoreError("No shared databases to copy from. Enter your group's shared MARGIE folder in "
+                                 "Settings (Databases: Group folder) or on the start page's Advanced settings "
                                  "(on the server: MARGIE_SHARED_ROOT). Or restore from a backup of your own.", 409)
             version = 1
             label = s['label']
