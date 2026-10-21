@@ -19,8 +19,9 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(dotenv_path=_PROJECT_ROOT / '.env', override=False)
 load_dotenv(override=False)  # Must run before local imports that read env vars at import time
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import uvicorn
 
 from bioinformatics_tools.api.database import init_db
@@ -48,6 +49,15 @@ _cors_origins_env = os.getenv('BSP_CORS_ALLOWED_ORIGINS', '*')
 _cors_origins = ["*"] if _cors_origins_env == '*' else [
     origin.strip() for origin in _cors_origins_env.split(',') if origin.strip()
 ]
+
+@app.exception_handler(Exception)
+async def _unhandled(request: Request, exc: Exception):
+    """An unexpected error answers as JSON, through the CORS middleware, so a browser can read it
+    instead of reporting the request as unanswered."""
+    LOGGER.exception('Unhandled error in %s %s', request.method, request.url.path)
+    return JSONResponse(status_code=500, content={'detail': f'{type(exc).__name__}: {exc}'})
+
+
 # Add CORS middleware (adjust origins for production)
 app.add_middleware(
     CORSMiddleware,

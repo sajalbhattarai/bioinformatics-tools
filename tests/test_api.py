@@ -757,6 +757,33 @@ class TestSSHEndpointsMocked:
         call_args = mock_runner.submit_job.call_args
         assert call_args[0][0] == body["job_id"]
 
+
+    @patch("bioinformatics_tools.api.licensing.has_accepted_current_terms", return_value=True)
+    @patch("bioinformatics_tools.api.licensing.get_entitlement", return_value={"usage_type": "academic", "licensed_tools": []})
+    @patch("bioinformatics_tools.api.routers.ssh.tool_assets")
+    @patch("bioinformatics_tools.api.routers.ssh.user_stores")
+    @patch("bioinformatics_tools.api.routers.ssh._build_connection")
+    @patch("bioinformatics_tools.api.routers.ssh.job_runner")
+    @patch("bioinformatics_tools.api.routers.ssh.ssh_sftp")
+    def test_run_margie_with_selected_tools(self, mock_sftp, mock_runner, mock_build_conn, mock_stores, mock_assets,
+                                            mock_ent, mock_accepted, authed_client):
+        """With tools chosen, the run route checks the licence entitlement for each (the path a NameError once broke)."""
+        mock_sftp.read_remote_yaml.return_value = {
+            "main_database": "~/my-db.db",
+            "compute": {"cluster_default": {"account": "test-account"}}
+        }
+        mock_sftp.check_remote_file.return_value = None
+        mock_stores.apply_finished.return_value = False
+        mock_stores.status.return_value = {"ready": True, "op": {}}
+        mock_stores.point_config.return_value = False
+        mock_assets.missing_for_run.return_value = []
+
+        resp = authed_client.post(
+            "/v1/ssh/run_workflow",
+            json={"genome_path": "/depot/genomes/ecoli.fasta", "workflow": "margie_sb", "selected_tools": ["kegg", "pfam"]},
+        )
+        assert resp.status_code == 200, resp.json()
+        assert mock_ent.called  # once for the tool check, once more for the run's environment
     @patch("bioinformatics_tools.api.routers.ssh._build_connection")
     @patch("bioinformatics_tools.api.routers.ssh.ssh_slurm")
     def test_run_slurm(self, mock_slurm, mock_build_conn, authed_client):

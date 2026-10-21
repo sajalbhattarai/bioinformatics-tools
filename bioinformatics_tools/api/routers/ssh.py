@@ -26,6 +26,7 @@ from fastapi.responses import Response, StreamingResponse
 
 from dataclasses import asdict
 
+from bioinformatics_tools.api import licensing
 from bioinformatics_tools.api.auth import decrypt_private_key, get_current_user
 from bioinformatics_tools.api.models import GenomeSend, SlurmSend
 from bioinformatics_tools.api.services import job_history_client, job_runner, tool_assets, user_stores
@@ -1162,7 +1163,6 @@ def _launch_job(
     dispatch_tokens = workflow.replace('_', ' ')
     resume_arg = f" {workflow}.resume: true" if copy_from_work_dir else ""
     # Passes the verified acceptance so the CLI licence gate does not re-prompt.
-    from bioinformatics_tools.api import licensing
     _lic_ent = licensing.get_entitlement(current_user["username"])
     _lic_csv = ",".join(_lic_ent.get("licensed_tools") or [])
     license_env = (
@@ -1460,7 +1460,6 @@ def clone_build_recipes(body: dict | None = None, current_user: dict = Depends(g
 def _check_margie_sb_assets(genome_data: GenomeSend, genome_path: str, user_config: dict, conn, current_user: dict) -> None:
     """Refuses a run whose containers or databases are missing. An unreadable
     folder or a failed check never stops a run."""
-    from bioinformatics_tools.api import licensing
     all_keys = {tool['key'] for tool in MARGIE_SB_PHASED_TOOLS}
     if genome_data.selected_tools is not None:
         tools = set(genome_data.selected_tools)
@@ -1488,7 +1487,6 @@ def _check_margie_sb_assets(genome_data: GenomeSend, genome_path: str, user_conf
 
 def _require_current_terms(current_user: dict) -> None:
     """Server-side licence gate: nothing runs, resumes or restarts without acceptance of the current terms."""
-    from bioinformatics_tools.api import licensing
     if not licensing.has_accepted_current_terms(current_user["username"]):
         raise HTTPException(
             status_code=403,
