@@ -44,6 +44,27 @@ def base_of(store: dict, cfg: dict | None) -> str:
         return chosen.strip().rstrip('/')
     g = generated(cfg)
     return f"{g}/{store['base_rel']}" if g else ''
+
+
+def resolve_base(conn, store: dict, cfg: dict | None) -> str:
+    """The base that exists on the cluster: base_of(), or else the first file or folder of that
+    name anywhere under the group folder (a group may lay its folder out its own way). '' when none."""
+    guess = base_of(store, cfg)
+    if guess:
+        code, _ = _run(conn, f'test -e {shlex.quote(guess)}')
+        if code == 0:
+            return guess
+    d = depot(cfg)
+    if not d:
+        return ''
+    name = posixpath.basename(store['base_rel'])
+    kind = 'd' if store['kind'] == 'dir' else 'f'
+    code, out = _run(conn, f'find {shlex.quote(d)} -maxdepth 6 -type {kind} -name {shlex.quote(name)} 2>/dev/null | head -1')
+    return out.strip() if code == 0 and out.strip() else ''
+
+
+# Where the backend checkout keeps the starter operon reference (scoring/reference/operon-db.manifest.txt).
+STARTER_OCC = 'bioinformatics-tools/bioinformatics_tools/workflow_tools/scoring/reference/operon-db.pkl'
 # Folder under the user's scratch that holds every store and run output folder.
 ROOT_NAME = 'margie-2026'
 # Bookkeeping folder inside it: the store manifest and the copy under way.
@@ -54,8 +75,8 @@ STATE_DIR = '.margie'
 STORES: list[dict] = [
     {
         'id': 'job_db',
-        'label': 'Job database',
-        'note': 'Every run’s results and the job history, in SQLite.',
+        'label': 'MARGIE database',
+        'note': 'The main MARGIE database (SQLite): every run’s results, cached tool outputs and the job history.',
         'kind': 'file',
         'base_rel': 'sqlite/margie-thesis-22-prokaryotes-base.db',
         'depot_sub': 'sqlite',
@@ -433,6 +454,12 @@ while IFS=$'\t' read -r kind a b c d e f; do
     mkdir)
       mkdir -p "$a" || fail "Folders" "could not make $a"
       ;;
+    new)
+      label="$a"; dst="$b"
+      say running "$label" 0 ""
+      echo "== $label: $dst" >> "$log"
+      mkdir -p "$(dirname "$dst")" && : > "$dst" || fail "$label" "could not create $dst"
+      ;;
     link)
       [ -e "$b" ] || [ -L "$b" ] || ln -s "$a" "$b" || fail "Links" "could not link $b"
       ;;
@@ -568,7 +595,7 @@ def status(conn, cfg: dict, user: str) -> dict:
             'note': s['note'],
             'version': v if present else None,
             'path': path if present else '',
-            'base': base_of(s, cfg),
+            'base': resolve_base(conn, s, cfg),
             'backup': ({'version': backups[-1],
                         'path': posixpath.join(backup_dir(s, cfg), versioned(s, user, backups[-1]))}
                        if backups else None),
@@ -626,15 +653,30 @@ def start_setup(conn, cfg: dict, user: str) -> dict:
             version = backups[-1] + 1
             label = f"{s['label']} (from your backup v{backups[-1]})"
         else:
-            # A source chosen in Settings (margie_sb.stores.base.<id>) wins over the group folder.
-            src = base_of(s, cfg)
-            if not src:
-                raise StoreError("No shared databases to copy from. Enter your group's shared MARGIE folder in "
-                                 "Settings (Databases: Group folder) or on the start page's Advanced settings "
-                                 "(on the server: MARGIE_SHARED_ROOT). Or restore from a backup of your own.", 409)
+            # A source chosen in Settings (margie_sb.stores.base.<id>) wins over the group folder;
+            # with neither, the store starts from MARGIE's own defaults (below).
+            src = resolve_base(conn, s, cfg)
             version = 1
             label = s['label']
         dst = working_path(s, root, user, version)
+        if not src:
+            # No group folder and no chosen source: a fresh start.
+            if s['id'] == 'occ':
+                _, home = _run(conn, 'printf %s "$HOME"')
+                starter = f'{home.strip()}/{STARTER_OCC}'
+                code, _ = _run(conn, f'test -f {shlex.quote(starter)}')
+                if code != 0:
+                    raise StoreError('The starter operon reference is missing from the backend checkout on the cluster '
+                                     f'({starter}); connect again so it is updated, or choose a source in Settings.', 409)
+                plan.append(['copy', f"{s['label']} (MARGIE's starter, 29 genomes)", starter, dst, _size(conn, [starter])])
+            elif s['kind'] == 'file':
+                plan.append(['new', f"{s['label']} (new, empty)", dst])
+            else:
+                plan.append(['mkdir', dst])
+                for sub in (s.get('base_files') or []) if s['id'] == 'genome_pool' else []:
+                    plan.append(['mkdir', f'{dst}/{sub}'])
+            after['versions'][s['id']] = version
+            continue
         if s['kind'] == 'file':
             plan.append(['copy', label, src, dst, _size(conn, [src])])
             for c in s['companions']:

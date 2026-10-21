@@ -529,7 +529,7 @@ WORKFLOWS: dict[str, WorkflowKey] = {
             {
                 'param': 'margie_sb.shared_root',
                 'default': MARGIE_DEPOT_ROOT,
-                'description': "Your group's shared MARGIE folder on the cluster, where first runs copy the base databases from (empty: the server's MARGIE_SHARED_ROOT)",
+                'description': "Optional: your group's shared MARGIE folder on the cluster. Its base databases are found under it, in any layout; without it a first run starts from MARGIE's own defaults (empty: the server's MARGIE_SHARED_ROOT)",
                 'type': 'path'
             },
             # Where a first run copies each database from. Empty: under the group folder.
