@@ -547,7 +547,7 @@ def status(conn, cfg: dict, user: str) -> dict:
             'note': s['note'],
             'version': v if present else None,
             'path': path if present else '',
-            'base': s['base'],
+            'base': (str(_cfg_get(cfg, f"margie_sb.stores.base.{s['id']}") or '').strip().rstrip('/')) or s['base'],
             'backup': ({'version': backups[-1],
                         'path': posixpath.join(backup_dir(s, cfg), versioned(s, user, backups[-1]))}
                        if backups else None),
@@ -605,7 +605,8 @@ def start_setup(conn, cfg: dict, user: str) -> dict:
             version = backups[-1] + 1
             label = f"{s['label']} (from your backup v{backups[-1]})"
         else:
-            src = s['base']
+            # A source chosen in Settings (margie_sb.stores.base.<id>) wins over the group folder.
+            src = (str(_cfg_get(cfg, f"margie_sb.stores.base.{s['id']}") or '').strip().rstrip('/')) or s['base']
             if not src:
                 raise StoreError("No shared databases to copy from. In the app, open the start page's Advanced "
                                  "settings, fill in your group's folder on the HPC, and connect again "
@@ -619,7 +620,7 @@ def start_setup(conn, cfg: dict, user: str) -> dict:
                 code, _ = _run(conn, f'test -e {shlex.quote(src + c)}')
                 if code == 0:
                     plan.append(['copy', f"{s['label']} ({c.lstrip('.')})", src + c, dst + c, _size(conn, [src + c])])
-        elif s.get('base_files') and src == s['base']:
+        elif s.get('base_files') and not backups:
             files = [posixpath.join(src, f) for f in s['base_files']]
             plan.append(['files', label, src, dst, _size(conn, files), ','.join(s['base_files'])])
         else:
@@ -777,10 +778,22 @@ def point_config(conn, cfg: dict, user: str, root: str | None = None) -> bool:
     # Cached so later requests skip the cluster lookup.
     wanted['margie_sb.stores_root'] = root
     for key, value in wanted.items():
-        if _cfg_get(cfg, key) != value:
-            _cfg_set(cfg, key, value)
-            changed = True
+        current = _cfg_get(cfg, key)
+        if current == value:
+            continue
+        # A path the user pointed somewhere else (a moved file, a copy of their own) is kept;
+        # only empty keys and earlier working copies under the stores root are brought up to date.
+        if key != 'margie_sb.stores_root' and not _managed_path(current, root):
+            continue
+        _cfg_set(cfg, key, value)
+        changed = True
     return changed
+
+
+def _managed_path(value, root: str) -> bool:
+    """Returns whether a config value is empty or inside the stores root, so point_config may set it."""
+    v = str(value or '').strip()
+    return not v or v == root or v.startswith(root.rstrip('/') + '/')
 
 
 def is_ready(conn, cfg: dict, user: str) -> bool:

@@ -525,6 +525,56 @@ WORKFLOWS: dict[str, WorkflowKey] = {
                 'description': 'Where "Back up to depot" puts copies of your databases, beside the bases every user starts from',
                 'type': 'path'
             },
+            # Where a first run copies each database from. Empty: the group's shared folder (MARGIE_SHARED_ROOT).
+            {
+                'param': 'margie_sb.stores.base.job_db',
+                'default': '',
+                'description': 'The job database your first run starts from (empty: the group folder)',
+                'type': 'path'
+            },
+            {
+                'param': 'margie_sb.stores.base.occ',
+                'default': '',
+                'description': 'The operon reference (occ_reference.pkl) your first run starts from (empty: the group folder)',
+                'type': 'path'
+            },
+            {
+                'param': 'margie_sb.stores.base.fingerprint',
+                'default': '',
+                'description': 'The fingerprint-database folder your first run starts from (empty: the group folder)',
+                'type': 'path'
+            },
+            {
+                'param': 'margie_sb.stores.base.genome_pool',
+                'default': '',
+                'description': 'The genome-pool folder your first run starts from (empty: the group folder)',
+                'type': 'path'
+            },
+            # The databases a run reads and grows. Set to your working copies automatically; change one if you moved it.
+            {
+                'param': 'margie_sb.operon_database.occ_reference_pkl',
+                'default': '',
+                'description': 'The operon reference a run reads and adds each genome to (your working copy; change it if you moved the file)',
+                'type': 'path'
+            },
+            {
+                'param': 'margie_sb.fingerprint_database.path',
+                'default': '',
+                'description': 'The gene fingerprint database, fingerprint-database.tsv (your working copy; change it if you moved it)',
+                'type': 'path'
+            },
+            {
+                'param': 'margie_sb.report_figures.operon_db',
+                'default': '',
+                'description': 'The label-ordered operon fingerprint database the report figures read (beside the fingerprint database)',
+                'type': 'path'
+            },
+            {
+                'param': 'margie_sb.genome_pool.path',
+                'default': '',
+                'description': 'The genome pool ANI and AAI compare against (your working copy; change it if you moved it)',
+                'type': 'path'
+            },
             {
                 'param': 'margie_sb.phase4.max_parallel_tools',
                 'default': 4,
