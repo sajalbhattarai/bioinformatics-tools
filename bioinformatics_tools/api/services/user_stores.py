@@ -607,8 +607,9 @@ def start_setup(conn, cfg: dict, user: str) -> dict:
         else:
             src = s['base']
             if not src:
-                raise StoreError('No base databases to copy from: set MARGIE_SHARED_ROOT on the server, '
-                                 'or restore from a backup of your own.', 409)
+                raise StoreError("No shared databases to copy from. In the app, open the start page's Advanced "
+                                 "settings, fill in your group's folder on the HPC, and connect again "
+                                 "(on the server: MARGIE_SHARED_ROOT). Or restore from a backup of your own.", 409)
             version = 1
             label = s['label']
         dst = working_path(s, root, user, version)

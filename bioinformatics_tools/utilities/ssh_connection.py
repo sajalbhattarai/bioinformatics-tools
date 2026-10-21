@@ -24,10 +24,10 @@ import paramiko
 
 LOGGER = logging.getLogger(__name__)
 
-# Repo that hpc-connect.sh clones, so the API and workflow share one codebase.
-_DANE_WF_REPO_URL = 'https://github.com/sajalbhattarai/margie-backend.git'
+# Repo and branch that hpc-connect.sh clones, so the API and workflow share one codebase.
+_DANE_WF_REPO_URL = 'https://github.com/sajalbhattarai/bioinformatics-tools.git'
 # Branch margie_sb checkouts track (BSP_MARGIE_SB_REF); margie is never synced.
-_MARGIE_SB_REF = os.getenv('BSP_MARGIE_SB_REF', 'for-website-deployment')
+_MARGIE_SB_REF = os.getenv('BSP_MARGIE_SB_REF', 'margie-backend')
 
 # ---- Connection pool: clients reused per (host, username, key) ----
 _POOL: dict = {}

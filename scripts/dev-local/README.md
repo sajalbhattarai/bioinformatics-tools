@@ -81,7 +81,7 @@ pre-flight checks need, on this computer:
 
 `~/bioinformatics-tools` is a link to this repo, and every `margie_sb`
 submission runs `sync_remote_dane_wf`: a `git fetch`, then -- when the tree
-is clean and not at `origin/for-website-deployment` -- a checkout of that
+is clean and not at `origin/margie-backend` -- a checkout of that
 branch and `git reset --hard` to it. On a real cluster that keeps users
 current; here it would throw away the branch you are working on. `start.sh`
 starts the API with `BSP_SKIP_DANE_WF_SYNC=1`, which switches the sync off
