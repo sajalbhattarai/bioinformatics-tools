@@ -171,7 +171,11 @@ def serve(host: str = "0.0.0.0", port: int = 8000, reload: bool = False):
         host=host,
         port=port,
         reload=reload,
-        log_level="info"
+        log_level="info",
+        # Browsers reuse an idle connection for minutes; uvicorn's default closes it after 5 s,
+        # and a POST sent on a connection the server just closed fails without a retry.
+        # Keeping connections longer than the browser does removes that race.
+        timeout_keep_alive=620,
     )
 
 
